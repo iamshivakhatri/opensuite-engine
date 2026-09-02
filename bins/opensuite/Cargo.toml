@@ -8,7 +8,9 @@ rust-version.workspace = true
 
 [dependencies]
 opensuite-docx = { path = "../../crates/opensuite-docx" }
+opensuite-opc = { path = "../../crates/opensuite-opc" }
 opensuite-protocol = { path = "../../crates/opensuite-protocol" }
+serde_json = "1"
 
 [lints]
 workspace = true

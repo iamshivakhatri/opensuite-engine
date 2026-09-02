@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-Foundation — Week 1
+Foundation — Week 1: OPC package discovery
 
 ## Current Format
 
@@ -12,12 +12,17 @@ PPTX and XLSX have not started.
 
 ## Current Objective
 
-Establish the minimal Rust workspace, architectural boundaries, development
-workflow, CI, and project vocabulary before implementing the real DOCX engine.
+Establish the shared OPC package discovery layer before implementing DOCX
+semantics.
 
 ## Implemented
 
-Nothing yet.
+- Minimal Rust workspace, CI, and native CLI.
+- Read-only OPC package opening with safe ZIP entry indexing.
+- `[Content_Types].xml` Default and Override content type resolution.
+- Package-level `_rels/.rels` parsing and main office document discovery through
+  Transitional or Strict `officeDocument` relationships.
+- `opensuite inspect <path-to-office-file>` JSON package metadata output.
 
 ## Current Repository Target
 
@@ -28,7 +33,6 @@ Nothing yet.
 
 ## Explicitly Not Implemented Yet
 
-- OPC package parsing
 - DOCX parsing
 - document mutation
 - transactions
@@ -42,5 +46,5 @@ Nothing yet.
 
 ## Next Milestone
 
-Create a minimal compiling Rust workspace without prematurely implementing the
-document engine.
+Build the next explicitly selected OPC capability without starting DOCX
+semantic parsing.
