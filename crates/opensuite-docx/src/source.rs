@@ -20,6 +20,23 @@ pub struct XmlName {
     local_name: String,
 }
 
+/// An attribute recorded from an element start tag.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceAttribute {
+    local_name: String,
+    value: String,
+}
+
+impl SourceAttribute {
+    pub fn local_name(&self) -> &str {
+        &self.local_name
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
 impl XmlName {
     pub fn namespace_uri(&self) -> Option<&str> {
         self.namespace_uri.as_deref()
@@ -35,6 +52,7 @@ impl XmlName {
 pub enum SourceNodeKind {
     Element {
         name: XmlName,
+        attributes: Vec<SourceAttribute>,
         start_tag: SourceSpan,
         end_tag: Option<SourceSpan>,
     },
@@ -63,6 +81,16 @@ impl SourceNode {
 
     pub fn parent(&self) -> Option<NodeId> {
         self.parent
+    }
+
+    pub fn attribute(&self, local_name: &str) -> Option<&str> {
+        let SourceNodeKind::Element { attributes, .. } = &self.kind else {
+            return None;
+        };
+        attributes
+            .iter()
+            .find(|attribute| attribute.local_name == local_name)
+            .map(SourceAttribute::value)
     }
 }
 
@@ -101,6 +129,7 @@ impl SourceDocument {
                         &mut stack,
                         SourceNodeKind::Element {
                             name: xml_name(namespace_uri, element.local_name().as_ref())?,
+                            attributes: xml_attributes(&reader, &element)?,
                             start_tag: SourceSpan { start, end },
                             end_tag: None,
                         },
@@ -117,6 +146,7 @@ impl SourceDocument {
                         &mut stack,
                         SourceNodeKind::Element {
                             name: xml_name(namespace_uri, element.local_name().as_ref())?,
+                            attributes: xml_attributes(&reader, &element)?,
                             start_tag: SourceSpan { start, end },
                             end_tag: None,
                         },
@@ -266,6 +296,33 @@ fn xml_name(namespace_uri: Option<String>, local_name: &[u8]) -> Result<XmlName,
         namespace_uri,
         local_name,
     })
+}
+
+fn xml_attributes(
+    reader: &NsReader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> Result<Vec<SourceAttribute>, SourceError> {
+    element
+        .attributes()
+        .with_checks(false)
+        .map(|attribute| {
+            let attribute = attribute.map_err(|_| SourceError::MalformedXml)?;
+            let local_name = attribute
+                .key
+                .as_ref()
+                .rsplit(|byte| *byte == b':')
+                .next()
+                .unwrap_or(attribute.key.as_ref());
+            Ok(SourceAttribute {
+                local_name: String::from_utf8(local_name.to_vec())
+                    .map_err(|_| SourceError::MalformedXml)?,
+                value: attribute
+                    .decode_and_unescape_value(reader.decoder())
+                    .map_err(|_| SourceError::MalformedXml)?
+                    .into_owned(),
+            })
+        })
+        .collect()
 }
 
 fn tag_start(bytes: &[u8], end: usize) -> Result<usize, SourceError> {

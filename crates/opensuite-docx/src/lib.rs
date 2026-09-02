@@ -2,12 +2,18 @@
 
 mod semantic;
 mod source;
+mod styles;
 
 pub use semantic::{
     BodyBlock, Cell, DocxDocument, Paragraph, Row, Run, SemanticError, Table, Text,
 };
 pub use source::{
-    NodeId, SourceDocument, SourceError, SourceNode, SourceNodeKind, SourceSpan, XmlName,
+    NodeId, SourceAttribute, SourceDocument, SourceError, SourceNode, SourceNodeKind, SourceSpan,
+    XmlName,
+};
+pub use styles::{
+    EffectiveRunFormatting, RunFormatting, Style, StyleError, StyleId, StyleSheet, StyleType,
+    load_styles,
 };
 
 use opensuite_opc::{Package, Part};

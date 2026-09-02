@@ -2,7 +2,9 @@ use std::fmt;
 
 use quick_xml::escape::unescape;
 
-use crate::{NodeId, SourceDocument, SourceNodeKind};
+use crate::{
+    NodeId, RunFormatting, SourceDocument, SourceNodeKind, StyleError, StyleId, StyleSheet,
+};
 
 const WORDPROCESSINGML_NAMESPACES: [&str; 2] = [
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -84,6 +86,15 @@ impl<'a> Paragraph<'a> {
         self.source_id
     }
 
+    pub fn style_id(&self) -> Option<StyleId> {
+        child(self.source, self.source_id, "pPr")
+            .and_then(|id| child(self.source, id, "pStyle"))
+            .and_then(|id| self.source.node(id))
+            .and_then(|node| node.attribute("val"))
+            .filter(|value| !value.is_empty())
+            .map(|value| StyleId::new(value.to_owned()))
+    }
+
     pub fn runs(&self) -> impl Iterator<Item = Run<'a>> + '_ {
         self.source
             .children(self.source_id)
@@ -108,6 +119,39 @@ pub struct Run<'a> {
 impl<'a> Run<'a> {
     pub fn source_id(&self) -> NodeId {
         self.source_id
+    }
+
+    pub fn character_style_id(&self) -> Option<StyleId> {
+        child(self.source, self.source_id, "rPr")
+            .and_then(|id| child(self.source, id, "rStyle"))
+            .and_then(|id| self.source.node(id))
+            .and_then(|node| node.attribute("val"))
+            .filter(|value| !value.is_empty())
+            .map(|value| StyleId::new(value.to_owned()))
+    }
+
+    pub fn effective_formatting(&self, styles: &StyleSheet) -> Result<RunFormatting, StyleError> {
+        let paragraph_style = self
+            .source
+            .node(self.source_id)
+            .and_then(|node| node.parent())
+            .filter(|id| is_word_element(self.source, *id, "p"))
+            .and_then(|id| {
+                Paragraph {
+                    source: self.source,
+                    source_id: id,
+                }
+                .style_id()
+            });
+        let direct = child(self.source, self.source_id, "rPr")
+            .map(|id| crate::styles::run_formatting(self.source, id))
+            .transpose()?
+            .unwrap_or_default();
+        styles.effective_run_formatting(
+            paragraph_style.as_ref(),
+            self.character_style_id().as_ref(),
+            &direct,
+        )
     }
 
     pub fn texts(&self) -> impl Iterator<Item = Text<'a>> + '_ {
@@ -272,6 +316,12 @@ fn is_word_element(source: &SourceDocument, id: NodeId, local_name: &str) -> boo
         && name
             .namespace_uri()
             .is_some_and(|namespace| WORDPROCESSINGML_NAMESPACES.contains(&namespace))
+}
+
+fn child(source: &SourceDocument, parent: NodeId, local_name: &str) -> Option<NodeId> {
+    source
+        .children(parent)
+        .find(|id| is_word_element(source, *id, local_name))
 }
 
 #[cfg(test)]

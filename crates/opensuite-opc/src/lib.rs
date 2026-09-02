@@ -40,11 +40,21 @@ impl PartName {
     }
 
     fn resolve_root_target(target: &str) -> Result<Self, PackageError> {
+        Self::resolve_target_segments(&[], target)
+    }
+
+    fn resolve_relative_target(source: &PartName, target: &str) -> Result<Self, PackageError> {
+        let mut base: Vec<&str> = source.as_str()[1..].split('/').collect();
+        base.pop();
+        Self::resolve_target_segments(&base, target)
+    }
+
+    fn resolve_target_segments(base: &[&str], target: &str) -> Result<Self, PackageError> {
         if target.is_empty() || target.starts_with('/') || target.contains(['\\', '?', '#']) {
             return Err(PackageError::InvalidRelationshipTarget(target.to_owned()));
         }
 
-        let mut segments = Vec::new();
+        let mut segments = base.to_vec();
         for segment in target.split('/') {
             match segment {
                 "" => return Err(PackageError::InvalidRelationshipTarget(target.to_owned())),
@@ -140,6 +150,7 @@ pub enum PackageError {
     MissingContentTypes,
     MalformedContentTypes,
     MissingPackageRelationships,
+    MissingPartRelationships(PartName),
     MalformedRelationships,
     MissingOfficeDocument,
     ExternalOfficeDocument,
@@ -158,6 +169,7 @@ impl PackageError {
             Self::MissingContentTypes => "MISSING_CONTENT_TYPES",
             Self::MalformedContentTypes => "MALFORMED_CONTENT_TYPES",
             Self::MissingPackageRelationships => "MISSING_PACKAGE_RELATIONSHIPS",
+            Self::MissingPartRelationships(_) => "MISSING_PART_RELATIONSHIPS",
             Self::MalformedRelationships => "MALFORMED_RELATIONSHIPS",
             Self::MissingOfficeDocument => "MISSING_OFFICE_DOCUMENT",
             Self::ExternalOfficeDocument => "EXTERNAL_OFFICE_DOCUMENT",
@@ -178,6 +190,9 @@ impl fmt::Display for PackageError {
             Self::MissingContentTypes => write!(formatter, "missing [Content_Types].xml"),
             Self::MalformedContentTypes => write!(formatter, "malformed [Content_Types].xml"),
             Self::MissingPackageRelationships => write!(formatter, "missing _rels/.rels"),
+            Self::MissingPartRelationships(part) => {
+                write!(formatter, "missing relationships for part: {part}")
+            }
             Self::MalformedRelationships => write!(formatter, "malformed package relationships"),
             Self::MissingOfficeDocument => write!(
                 formatter,
@@ -227,7 +242,7 @@ impl Package {
 
         let content_types = parse_content_types(read_entry(&mut archive, CONTENT_TYPES_ENTRY)?)?;
         let relationships =
-            parse_relationships(read_entry(&mut archive, PACKAGE_RELATIONSHIPS_ENTRY)?)?;
+            parse_relationships(read_entry(&mut archive, PACKAGE_RELATIONSHIPS_ENTRY)?, None)?;
 
         Ok(Self {
             path,
@@ -251,6 +266,27 @@ impl Package {
 
     pub fn package_relationships(&self) -> &[Relationship] {
         &self.relationships
+    }
+
+    /// Reads relationships belonging to one package part without reading other parts.
+    pub fn part_relationships(&self, part: &Part) -> Result<Vec<Relationship>, PackageError> {
+        let entry_name = relationship_entry_name(&part.name)?;
+        let file = File::open(&self.path).map_err(PackageError::Io)?;
+        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        let content = read_named_entry(&mut archive, &entry_name)
+            .map_err(|_| PackageError::MissingPartRelationships(part.name.clone()))?;
+        parse_relationships(content, Some(&part.name))
+    }
+
+    /// Resolves a known package part name to its content type.
+    pub fn part(&self, name: &PartName) -> Result<Part, PackageError> {
+        if !self.parts.contains(name) {
+            return Err(PackageError::MissingTargetPart(name.clone()));
+        }
+        Ok(Part {
+            name: name.clone(),
+            content_type: self.content_type(name)?,
+        })
     }
 
     pub fn content_type(&self, part_name: &PartName) -> Result<ContentType, PackageError> {
@@ -346,6 +382,13 @@ fn read_entry(archive: &mut ZipArchive<File>, name: &str) -> Result<Vec<u8>, Pac
     Ok(content)
 }
 
+fn read_named_entry(archive: &mut ZipArchive<File>, name: &str) -> Result<Vec<u8>, PackageError> {
+    let mut entry = archive.by_name(name).map_err(PackageError::InvalidZip)?;
+    let mut content = Vec::new();
+    entry.read_to_end(&mut content).map_err(PackageError::Io)?;
+    Ok(content)
+}
+
 fn parse_content_types(content: Vec<u8>) -> Result<ContentTypes, PackageError> {
     let mut reader = Reader::from_reader(content.as_slice());
     reader.config_mut().trim_text(true);
@@ -388,7 +431,10 @@ fn parse_content_types(content: Vec<u8>) -> Result<ContentTypes, PackageError> {
     Ok(result)
 }
 
-fn parse_relationships(content: Vec<u8>) -> Result<Vec<Relationship>, PackageError> {
+fn parse_relationships(
+    content: Vec<u8>,
+    source_part: Option<&PartName>,
+) -> Result<Vec<Relationship>, PackageError> {
     let mut reader = Reader::from_reader(content.as_slice());
     reader.config_mut().trim_text(true);
     let mut relationships = Vec::new();
@@ -419,7 +465,7 @@ fn parse_relationships(content: Vec<u8>) -> Result<Vec<Relationship>, PackageErr
                 let target = match target_mode.as_deref() {
                     Some("External") => RelationshipTarget::External { original },
                     None | Some("Internal") => RelationshipTarget::Internal {
-                        part_name: PartName::resolve_root_target(&original)?,
+                        part_name: resolve_relationship_target(source_part, &original)?,
                         original,
                     },
                     Some(_) => return Err(PackageError::MalformedRelationships),
@@ -437,6 +483,29 @@ fn parse_relationships(content: Vec<u8>) -> Result<Vec<Relationship>, PackageErr
         buffer.clear();
     }
     Ok(relationships)
+}
+
+fn resolve_relationship_target(
+    source_part: Option<&PartName>,
+    target: &str,
+) -> Result<PartName, PackageError> {
+    match source_part {
+        Some(source_part) => PartName::resolve_relative_target(source_part, target),
+        None => PartName::resolve_root_target(target),
+    }
+}
+
+fn relationship_entry_name(part: &PartName) -> Result<String, PackageError> {
+    let path = part.as_str().trim_start_matches('/');
+    let (directory, file_name) = path.rsplit_once('/').unwrap_or(("", path));
+    if file_name.is_empty() {
+        return Err(PackageError::InvalidPartName(part.as_str().to_owned()));
+    }
+    Ok(if directory.is_empty() {
+        format!("_rels/{file_name}.rels")
+    } else {
+        format!("{directory}/_rels/{file_name}.rels")
+    })
 }
 
 fn local_name(name: &[u8]) -> &[u8] {

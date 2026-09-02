@@ -4,9 +4,10 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect" => inspect(path),
         (Some(command), Some(path), None) if command == "inspect-source" => inspect_source(path),
         (Some(command), Some(path), None) if command == "inspect-docx" => inspect_docx(path),
+        (Some(command), Some(path), None) if command == "inspect-styles" => inspect_styles(path),
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <inspect|inspect-source|inspect-docx> <path-to-office-file>"
+            "usage: opensuite <inspect|inspect-source|inspect-docx|inspect-styles> <path-to-office-file>"
                 .to_owned(),
         )),
     };
@@ -21,6 +22,30 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn inspect_styles(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let main = package
+        .main_office_document()
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let Some(styles) = opensuite_docx::load_styles(&package, &main)
+        .map_err(|error| (error.code(), error.to_string()))?
+    else {
+        return Ok(serde_json::json!({ "ok": true, "style_count": 0, "styles": [] }));
+    };
+    let mut styles: Vec<_> = styles.styles().collect();
+    styles.sort_by_key(|style| style.id().as_str());
+    let styles = styles
+        .into_iter()
+        .map(|style| serde_json::json!({
+            "id": style.id().as_str(),
+            "type": match style.style_type() { opensuite_docx::StyleType::Paragraph => "paragraph", opensuite_docx::StyleType::Character => "character" },
+            "based_on": style.based_on().map(opensuite_docx::StyleId::as_str),
+        }))
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({ "ok": true, "style_count": styles.len(), "styles": styles }))
 }
 
 fn inspect_docx(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {
