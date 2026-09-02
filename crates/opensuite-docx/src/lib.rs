@@ -12,8 +12,9 @@ pub use source::{
     XmlName,
 };
 pub use styles::{
-    EffectiveRunFormatting, RunFormatting, Style, StyleError, StyleId, StyleSheet, StyleType,
-    load_styles,
+    EffectiveParagraphFormatting, EffectiveRunFormatting, LineSpacing, LineSpacingRule,
+    ParagraphAlignment, ParagraphFormatting, RunFormatting, Style, StyleError, StyleId, StyleSheet,
+    StyleType, load_styles,
 };
 
 use opensuite_opc::{Package, Part};

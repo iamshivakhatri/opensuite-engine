@@ -67,12 +67,87 @@ impl RunFormatting {
 
 pub type EffectiveRunFormatting = RunFormatting;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParagraphAlignment {
+    Left,
+    Center,
+    Right,
+    Both,
+    Distribute,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineSpacingRule {
+    Auto,
+    Exact,
+    AtLeast,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineSpacing {
+    pub value: u32,
+    pub rule: Option<LineSpacingRule>,
+}
+
+/// Paragraph values where `None` means the property was not specified.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ParagraphFormatting {
+    pub alignment: Option<ParagraphAlignment>,
+    pub spacing_before_twips: Option<i32>,
+    pub spacing_after_twips: Option<i32>,
+    pub line_spacing: Option<LineSpacing>,
+    pub left_indent_twips: Option<i32>,
+    pub right_indent_twips: Option<i32>,
+    pub first_line_indent_twips: Option<i32>,
+    pub hanging_indent_twips: Option<i32>,
+    pub keep_with_next: Option<bool>,
+    pub keep_lines: Option<bool>,
+}
+
+impl ParagraphFormatting {
+    fn apply(&mut self, other: &Self) {
+        if other.alignment.is_some() {
+            self.alignment = other.alignment;
+        }
+        if other.spacing_before_twips.is_some() {
+            self.spacing_before_twips = other.spacing_before_twips;
+        }
+        if other.spacing_after_twips.is_some() {
+            self.spacing_after_twips = other.spacing_after_twips;
+        }
+        if other.line_spacing.is_some() {
+            self.line_spacing = other.line_spacing;
+        }
+        if other.left_indent_twips.is_some() {
+            self.left_indent_twips = other.left_indent_twips;
+        }
+        if other.right_indent_twips.is_some() {
+            self.right_indent_twips = other.right_indent_twips;
+        }
+        if other.first_line_indent_twips.is_some() {
+            self.first_line_indent_twips = other.first_line_indent_twips;
+        }
+        if other.hanging_indent_twips.is_some() {
+            self.hanging_indent_twips = other.hanging_indent_twips;
+        }
+        if other.keep_with_next.is_some() {
+            self.keep_with_next = other.keep_with_next;
+        }
+        if other.keep_lines.is_some() {
+            self.keep_lines = other.keep_lines;
+        }
+    }
+}
+
+pub type EffectiveParagraphFormatting = ParagraphFormatting;
+
 pub struct Style {
     source_id: NodeId,
     id: StyleId,
     style_type: StyleType,
     based_on: Option<StyleId>,
     formatting: RunFormatting,
+    paragraph_formatting: ParagraphFormatting,
 }
 
 impl Style {
@@ -94,6 +169,7 @@ impl Style {
 pub struct StyleSheet {
     source: SourceDocument,
     run_defaults: RunFormatting,
+    paragraph_defaults: ParagraphFormatting,
     styles: HashMap<StyleId, Style>,
     default_paragraph_style: Option<StyleId>,
 }
@@ -113,6 +189,14 @@ impl StyleSheet {
             .and_then(|id| child(&source, id, "rPrDefault"))
             .and_then(|id| child(&source, id, "rPr"))
             .map(|id| run_formatting(&source, id))
+            .transpose()?
+            .unwrap_or_default();
+        let paragraph_defaults = source
+            .children(source.root())
+            .find(|id| is_word_element(&source, *id, "docDefaults"))
+            .and_then(|id| child(&source, id, "pPrDefault"))
+            .and_then(|id| child(&source, id, "pPr"))
+            .map(|id| paragraph_formatting(&source, id))
             .transpose()?
             .unwrap_or_default();
         let mut styles = HashMap::new();
@@ -143,6 +227,10 @@ impl StyleSheet {
                 .map(|id| run_formatting(&source, id))
                 .transpose()?
                 .unwrap_or_default();
+            let paragraph_formatting = child(&source, source_id, "pPr")
+                .map(|id| paragraph_formatting(&source, id))
+                .transpose()?
+                .unwrap_or_default();
             if styles.contains_key(&id) {
                 return Err(StyleError::DuplicateStyle(id));
             }
@@ -157,12 +245,14 @@ impl StyleSheet {
                     style_type,
                     based_on,
                     formatting,
+                    paragraph_formatting,
                 },
             );
         }
         Ok(Self {
             source,
             run_defaults,
+            paragraph_defaults,
             styles,
             default_paragraph_style,
         })
@@ -190,21 +280,54 @@ impl StyleSheet {
         let mut result = self.run_defaults.clone();
         let paragraph_style = paragraph_style.or(self.default_paragraph_style.as_ref());
         if let Some(style) = paragraph_style {
-            result.apply(&self.style_formatting(style, StyleType::Paragraph)?);
+            result.apply(&self.style_run_formatting(style, StyleType::Paragraph)?);
         }
         if let Some(style) = character_style {
-            result.apply(&self.style_formatting(style, StyleType::Character)?);
+            result.apply(&self.style_run_formatting(style, StyleType::Character)?);
         }
         result.apply(direct);
         Ok(result)
     }
 
-    fn style_formatting(
+    pub fn effective_paragraph_formatting(
+        &self,
+        paragraph_style: Option<&StyleId>,
+        direct: &ParagraphFormatting,
+    ) -> Result<EffectiveParagraphFormatting, StyleError> {
+        let mut result = self.paragraph_defaults.clone();
+        let paragraph_style = paragraph_style.or(self.default_paragraph_style.as_ref());
+        if let Some(style) = paragraph_style {
+            result.apply(&self.style_paragraph_formatting(style)?);
+        }
+        result.apply(direct);
+        Ok(result)
+    }
+
+    fn style_run_formatting(
         &self,
         id: &StyleId,
         expected_type: StyleType,
     ) -> Result<RunFormatting, StyleError> {
         let mut result = RunFormatting::default();
+        for style in self.style_chain(id, expected_type)? {
+            result.apply(&style.formatting);
+        }
+        Ok(result)
+    }
+
+    fn style_paragraph_formatting(&self, id: &StyleId) -> Result<ParagraphFormatting, StyleError> {
+        let mut result = ParagraphFormatting::default();
+        for style in self.style_chain(id, StyleType::Paragraph)? {
+            result.apply(&style.paragraph_formatting);
+        }
+        Ok(result)
+    }
+
+    fn style_chain(
+        &self,
+        id: &StyleId,
+        expected_type: StyleType,
+    ) -> Result<Vec<&Style>, StyleError> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
         let mut current = Some(id);
@@ -222,10 +345,8 @@ impl StyleSheet {
             chain.push(style);
             current = style.based_on.as_ref();
         }
-        for style in chain.into_iter().rev() {
-            result.apply(&style.formatting);
-        }
-        Ok(result)
+        chain.reverse();
+        Ok(chain)
     }
 }
 
@@ -335,6 +456,82 @@ pub(crate) fn run_formatting(
     Ok(formatting)
 }
 
+pub(crate) fn paragraph_formatting(
+    source: &SourceDocument,
+    ppr: NodeId,
+) -> Result<ParagraphFormatting, StyleError> {
+    let mut formatting = ParagraphFormatting::default();
+    for id in source.children(ppr) {
+        let Some(node) = source.node(id) else {
+            continue;
+        };
+        if !is_word_element(source, id, node_element_name(node)?) {
+            continue;
+        }
+        match node_element_name(node)? {
+            "jc" => formatting.alignment = Some(parse_alignment(node.attribute("val"))?),
+            "spacing" => {
+                formatting.spacing_before_twips = parse_optional_i32(node.attribute("before"))?;
+                formatting.spacing_after_twips = parse_optional_i32(node.attribute("after"))?;
+                if let Some(value) = node.attribute("line") {
+                    formatting.line_spacing = Some(LineSpacing {
+                        value: value
+                            .parse()
+                            .map_err(|_| StyleError::InvalidFormattingValue)?,
+                        rule: parse_line_rule(node.attribute("lineRule"))?,
+                    });
+                }
+            }
+            "ind" => {
+                formatting.left_indent_twips = parse_optional_i32(node.attribute("left"))?;
+                formatting.right_indent_twips = parse_optional_i32(node.attribute("right"))?;
+                formatting.first_line_indent_twips =
+                    parse_optional_i32(node.attribute("firstLine"))?;
+                formatting.hanging_indent_twips = parse_optional_i32(node.attribute("hanging"))?;
+            }
+            "keepNext" => formatting.keep_with_next = Some(is_enabled(node.attribute("val"))?),
+            "keepLines" => formatting.keep_lines = Some(is_enabled(node.attribute("val"))?),
+            _ => {}
+        }
+    }
+    Ok(formatting)
+}
+
+fn node_element_name(node: &crate::SourceNode) -> Result<&str, StyleError> {
+    let SourceNodeKind::Element { name, .. } = node.kind() else {
+        return Err(StyleError::MalformedStyles);
+    };
+    Ok(name.local_name())
+}
+fn parse_optional_i32(value: Option<&str>) -> Result<Option<i32>, StyleError> {
+    value
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|_| StyleError::InvalidFormattingValue)
+        })
+        .transpose()
+}
+fn parse_alignment(value: Option<&str>) -> Result<ParagraphAlignment, StyleError> {
+    match value {
+        Some("left" | "start") => Ok(ParagraphAlignment::Left),
+        Some("center") => Ok(ParagraphAlignment::Center),
+        Some("right" | "end") => Ok(ParagraphAlignment::Right),
+        Some("both") => Ok(ParagraphAlignment::Both),
+        Some("distribute") => Ok(ParagraphAlignment::Distribute),
+        _ => Err(StyleError::InvalidFormattingValue),
+    }
+}
+fn parse_line_rule(value: Option<&str>) -> Result<Option<LineSpacingRule>, StyleError> {
+    match value {
+        None => Ok(None),
+        Some("auto") => Ok(Some(LineSpacingRule::Auto)),
+        Some("exact") => Ok(Some(LineSpacingRule::Exact)),
+        Some("atLeast") => Ok(Some(LineSpacingRule::AtLeast)),
+        Some(_) => Err(StyleError::InvalidFormattingValue),
+    }
+}
+
 fn is_enabled(value: Option<&str>) -> Result<bool, StyleError> {
     match value.unwrap_or("true") {
         "true" | "1" | "on" => Ok(true),
@@ -420,5 +617,39 @@ mod tests {
         let package = Package::open(no_styles).unwrap();
         let main = package.main_office_document().unwrap();
         assert!(load_styles(&package, &main).unwrap().is_none());
+    }
+
+    #[test]
+    fn resolves_paragraph_defaults_style_inheritance_and_direct_properties() {
+        let styles = StyleSheet::parse(format!(
+            "<w:styles xmlns:w=\"{WORD}\"><w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:before=\"100\" w:after=\"120\"/><w:keepNext/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type=\"paragraph\" w:styleId=\"Base\"><w:pPr><w:jc w:val=\"center\"/><w:ind w:left=\"240\"/><w:keepLines/></w:pPr></w:style><w:style w:type=\"paragraph\" w:styleId=\"Body\"><w:basedOn w:val=\"Base\"/><w:pPr><w:spacing w:after=\"300\" w:line=\"240\" w:lineRule=\"exact\"/><w:keepNext w:val=\"false\"/><w:unknown/></w:pPr></w:style></w:styles>"
+        ).into_bytes()).unwrap();
+        let source = SourceDocument::parse(format!(
+            "<x:document xmlns:x=\"{WORD}\"><x:body><x:p><x:pPr><x:pStyle x:val=\"Body\"/><x:jc x:val=\"right\"/><x:ind x:right=\"480\" x:firstLine=\"120\" x:hanging=\"60\"/><x:keepLines x:val=\"0\"/></x:pPr><x:r><x:t>Text</x:t></x:r></x:p></x:body></x:document>"
+        ).into_bytes()).unwrap();
+        let document = crate::DocxDocument::new(&source).unwrap();
+        let formatting = document
+            .paragraphs()
+            .next()
+            .unwrap()
+            .effective_formatting(&styles)
+            .unwrap();
+
+        assert_eq!(formatting.alignment, Some(ParagraphAlignment::Right));
+        assert_eq!(formatting.spacing_before_twips, Some(100));
+        assert_eq!(formatting.spacing_after_twips, Some(300));
+        assert_eq!(
+            formatting.line_spacing,
+            Some(LineSpacing {
+                value: 240,
+                rule: Some(LineSpacingRule::Exact)
+            })
+        );
+        assert_eq!(formatting.left_indent_twips, Some(240));
+        assert_eq!(formatting.right_indent_twips, Some(480));
+        assert_eq!(formatting.first_line_indent_twips, Some(120));
+        assert_eq!(formatting.hanging_indent_twips, Some(60));
+        assert_eq!(formatting.keep_with_next, Some(false));
+        assert_eq!(formatting.keep_lines, Some(false));
     }
 }

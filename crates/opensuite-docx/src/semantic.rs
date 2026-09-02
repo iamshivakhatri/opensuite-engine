@@ -3,7 +3,8 @@ use std::fmt;
 use quick_xml::escape::unescape;
 
 use crate::{
-    NodeId, RunFormatting, SourceDocument, SourceNodeKind, StyleError, StyleId, StyleSheet,
+    NodeId, ParagraphFormatting, RunFormatting, SourceDocument, SourceNodeKind, StyleError,
+    StyleId, StyleSheet,
 };
 
 const WORDPROCESSINGML_NAMESPACES: [&str; 2] = [
@@ -93,6 +94,17 @@ impl<'a> Paragraph<'a> {
             .and_then(|node| node.attribute("val"))
             .filter(|value| !value.is_empty())
             .map(|value| StyleId::new(value.to_owned()))
+    }
+
+    pub fn effective_formatting(
+        &self,
+        styles: &StyleSheet,
+    ) -> Result<ParagraphFormatting, StyleError> {
+        let direct = child(self.source, self.source_id, "pPr")
+            .map(|id| crate::styles::paragraph_formatting(self.source, id))
+            .transpose()?
+            .unwrap_or_default();
+        styles.effective_paragraph_formatting(self.style_id().as_ref(), &direct)
     }
 
     pub fn runs(&self) -> impl Iterator<Item = Run<'a>> + '_ {
