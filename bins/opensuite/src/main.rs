@@ -30,22 +30,43 @@ fn inspect_docx(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static
         .map_err(|error| (error.code(), error.to_string()))?;
     let document = opensuite_docx::DocxDocument::new(&source)
         .map_err(|error| (error.code(), error.to_string()))?;
-    let paragraphs = document
-        .paragraphs()
-        .map(|paragraph| {
-            let text = paragraph
-                .text()
-                .map_err(|error| (error.code(), error.to_string()))?;
-            Ok(serde_json::json!({ "text": text, "run_count": paragraph.runs().count() }))
-        })
+    let blocks = document
+        .blocks()
+        .map(|block| inspect_block(block))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(serde_json::json!({
         "ok": true,
         "part_name": part.name.as_str(),
-        "paragraph_count": paragraphs.len(),
-        "paragraphs": paragraphs,
+        "block_count": blocks.len(),
+        "blocks": blocks,
     }))
+}
+
+fn inspect_block(
+    block: opensuite_docx::BodyBlock<'_>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    match block {
+        opensuite_docx::BodyBlock::Paragraph(paragraph) => Ok(serde_json::json!({
+            "type": "paragraph",
+            "text": paragraph.text().map_err(|error| (error.code(), error.to_string()))?,
+            "run_count": paragraph.runs().count(),
+        })),
+        opensuite_docx::BodyBlock::Table(table) => {
+            let rows = table
+                .rows()
+                .map(|row| {
+                    let cells = row
+                        .cells()
+                        .map(|cell| cell.text().map(|text| serde_json::json!({ "text": text })))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|error| (error.code(), error.to_string()))?;
+                    Ok(serde_json::json!({ "cells": cells }))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(serde_json::json!({ "type": "table", "row_count": rows.len(), "rows": rows }))
+        }
+    }
 }
 
 fn inspect_source(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {

@@ -3,7 +3,9 @@
 mod semantic;
 mod source;
 
-pub use semantic::{DocxDocument, Paragraph, Run, SemanticError, Text};
+pub use semantic::{
+    BodyBlock, Cell, DocxDocument, Paragraph, Row, Run, SemanticError, Table, Text,
+};
 pub use source::{
     NodeId, SourceDocument, SourceError, SourceNode, SourceNodeKind, SourceSpan, XmlName,
 };
