@@ -148,13 +148,8 @@ impl SourceDocument {
                     text_count += 1;
                 }
                 Event::CData(text) if !stack.is_empty() && !text.is_empty() => {
-                    let start = cdata_start(&original_bytes, end)?;
-                    add_node(
-                        &mut nodes,
-                        &mut stack,
-                        SourceNodeKind::Text,
-                        SourceSpan { start, end },
-                    )?;
+                    let span = cdata_content_span(&original_bytes, end)?;
+                    add_node(&mut nodes, &mut stack, SourceNodeKind::Text, span)?;
                     text_count += 1;
                 }
                 Event::Eof => break,
@@ -186,6 +181,13 @@ impl SourceDocument {
 
     pub fn node(&self, id: NodeId) -> Option<&SourceNode> {
         self.nodes.get(id.0 as usize)
+    }
+
+    /// Returns the original, undecoded bytes for a text node.
+    pub fn text_bytes(&self, id: NodeId) -> Option<&[u8]> {
+        let node = self.node(id)?;
+        matches!(node.kind, SourceNodeKind::Text)
+            .then(|| self.original_bytes.get(node.span.start..node.span.end))?
     }
 
     pub fn children(&self, parent: NodeId) -> impl Iterator<Item = NodeId> + '_ {
@@ -284,6 +286,17 @@ fn cdata_start(bytes: &[u8], end: usize) -> Result<usize, SourceError> {
         .windows(b"<![CDATA[".len())
         .rposition(|window| window == b"<![CDATA[")
         .ok_or(SourceError::SourceSpanInconsistency)
+}
+
+fn cdata_content_span(bytes: &[u8], end: usize) -> Result<SourceSpan, SourceError> {
+    let start = cdata_start(bytes, end)? + b"<![CDATA[".len();
+    let end = end
+        .checked_sub(b"]]>".len())
+        .ok_or(SourceError::SourceSpanInconsistency)?;
+    if start > end {
+        return Err(SourceError::SourceSpanInconsistency);
+    }
+    Ok(SourceSpan { start, end })
 }
 
 fn add_node(

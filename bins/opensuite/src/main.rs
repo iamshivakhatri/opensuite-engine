@@ -3,9 +3,11 @@ fn main() {
     let result = match (arguments.next(), arguments.next(), arguments.next()) {
         (Some(command), Some(path), None) if command == "inspect" => inspect(path),
         (Some(command), Some(path), None) if command == "inspect-source" => inspect_source(path),
+        (Some(command), Some(path), None) if command == "inspect-docx" => inspect_docx(path),
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <inspect|inspect-source> <path-to-office-file>".to_owned(),
+            "usage: opensuite <inspect|inspect-source|inspect-docx> <path-to-office-file>"
+                .to_owned(),
         )),
     };
 
@@ -19,6 +21,31 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn inspect_docx(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (part, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let paragraphs = document
+        .paragraphs()
+        .map(|paragraph| {
+            let text = paragraph
+                .text()
+                .map_err(|error| (error.code(), error.to_string()))?;
+            Ok(serde_json::json!({ "text": text, "run_count": paragraph.runs().count() }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "part_name": part.name.as_str(),
+        "paragraph_count": paragraphs.len(),
+        "paragraphs": paragraphs,
+    }))
 }
 
 fn inspect_source(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {

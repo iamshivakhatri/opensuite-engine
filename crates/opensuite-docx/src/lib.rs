@@ -1,7 +1,9 @@
 //! Source-aware DOCX infrastructure built on OPC package discovery.
 
+mod semantic;
 mod source;
 
+pub use semantic::{DocxDocument, Paragraph, Run, SemanticError, Text};
 pub use source::{
     NodeId, SourceDocument, SourceError, SourceNode, SourceNodeKind, SourceSpan, XmlName,
 };
