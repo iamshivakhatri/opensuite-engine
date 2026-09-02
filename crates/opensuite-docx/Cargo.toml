@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 opensuite-opc = { path = "../opensuite-opc" }
+quick-xml = "0.37"
 
 [lints]
 workspace = true

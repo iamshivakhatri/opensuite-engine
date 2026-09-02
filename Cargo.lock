@@ -141,6 +141,7 @@ name = "opensuite-docx"
 version = "0.1.0"
 dependencies = [
  "opensuite-opc",
+ "quick-xml",
 ]
 
 [[package]]

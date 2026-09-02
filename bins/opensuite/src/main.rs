@@ -2,9 +2,10 @@ fn main() {
     let mut arguments = std::env::args_os().skip(1);
     let result = match (arguments.next(), arguments.next(), arguments.next()) {
         (Some(command), Some(path), None) if command == "inspect" => inspect(path),
+        (Some(command), Some(path), None) if command == "inspect-source" => inspect_source(path),
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite inspect <path-to-office-file>".to_owned(),
+            "usage: opensuite <inspect|inspect-source> <path-to-office-file>".to_owned(),
         )),
     };
 
@@ -18,6 +19,36 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn inspect_source(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (part, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let root = source.node(source.root()).ok_or((
+        "SOURCE_SPAN_INCONSISTENCY",
+        "source root is missing".to_owned(),
+    ))?;
+    let opensuite_docx::SourceNodeKind::Element { name, .. } = root.kind() else {
+        return Err((
+            "SOURCE_SPAN_INCONSISTENCY",
+            "source root is not an element".to_owned(),
+        ));
+    };
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "part_name": part.name.as_str(),
+        "source_bytes": source.original_bytes().len(),
+        "node_count": source.node_count(),
+        "element_count": source.element_count(),
+        "text_count": source.text_count(),
+        "root": {
+            "local_name": name.local_name(),
+            "namespace_uri": name.namespace_uri(),
+        },
+    }))
 }
 
 fn inspect(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {

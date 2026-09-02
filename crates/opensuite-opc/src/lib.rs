@@ -5,7 +5,7 @@ use std::{
     fmt,
     fs::File,
     io::{self, Read},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use quick_xml::{Reader, events::Event};
@@ -203,6 +203,7 @@ impl std::error::Error for PackageError {}
 
 /// Read-only OPC package metadata. ZIP entry storage remains private.
 pub struct Package {
+    path: PathBuf,
     entry_count: usize,
     parts: HashSet<PartName>,
     content_types: ContentTypes,
@@ -211,7 +212,8 @@ pub struct Package {
 
 impl Package {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PackageError> {
-        let file = File::open(path).map_err(PackageError::Io)?;
+        let path = path.as_ref().to_path_buf();
+        let file = File::open(&path).map_err(PackageError::Io)?;
         let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
         let entry_count = archive.len();
         let mut entries = HashSet::new();
@@ -228,6 +230,7 @@ impl Package {
             parse_relationships(read_entry(&mut archive, PACKAGE_RELATIONSHIPS_ENTRY)?)?;
 
         Ok(Self {
+            path,
             entry_count,
             parts: entries,
             content_types,
@@ -252,6 +255,16 @@ impl Package {
 
     pub fn content_type(&self, part_name: &PartName) -> Result<ContentType, PackageError> {
         self.content_types.resolve(part_name)
+    }
+
+    /// Reads one known package part without reading other ZIP entries.
+    pub fn read_part(&self, part: &Part) -> Result<Vec<u8>, PackageError> {
+        if !self.parts.contains(&part.name) {
+            return Err(PackageError::MissingTargetPart(part.name.clone()));
+        }
+        let file = File::open(&self.path).map_err(PackageError::Io)?;
+        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        read_entry(&mut archive, part.name.as_str().trim_start_matches('/'))
     }
 
     pub fn main_office_document(&self) -> Result<Part, PackageError> {
