@@ -1,9 +1,14 @@
 //! Source-aware DOCX infrastructure built on OPC package discovery.
 
+mod numbering;
 mod semantic;
 mod source;
 mod styles;
 
+pub use numbering::{
+    AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
+    NumberingInstance, NumberingLevel, load_numbering,
+};
 pub use semantic::{
     BodyBlock, Cell, DocxDocument, Paragraph, Row, Run, SemanticError, Table, Text,
 };

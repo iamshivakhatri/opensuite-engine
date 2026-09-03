@@ -6,9 +6,10 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-docx" => inspect_docx(path),
         (Some(command), Some(path), None) if command == "inspect-styles" => inspect_styles(path),
         (Some(command), Some(path), None) if command == "inspect-paragraphs" => inspect_paragraphs(path),
+        (Some(command), Some(path), None) if command == "inspect-numbering" => inspect_numbering(path),
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs> <path-to-office-file>"
+            "usage: opensuite <inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering> <path-to-office-file>"
                 .to_owned(),
         )),
     };
@@ -22,6 +23,43 @@ fn main() {
             );
             std::process::exit(1);
         }
+    }
+}
+
+fn inspect_numbering(
+    path: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let main = package
+        .main_office_document()
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let Some(numbering) = opensuite_docx::load_numbering(&package, &main)
+        .map_err(|error| (error.code(), error.to_string()))?
+    else {
+        return Ok(serde_json::json!({"ok":true,"abstract_count":0,"instance_count":0,"lists":[]}));
+    };
+    let mut instances: Vec<_> = numbering.instances().collect();
+    instances.sort_by_key(|instance| instance.num_id.0);
+    let lists = instances.into_iter().map(|instance| {
+        let levels = (0_u8..=8).filter_map(|level| numbering.resolve(opensuite_docx::ListReference { num_id: instance.num_id, level }).ok()).map(|level| serde_json::json!({"level":level.level,"format":number_format_name(&level.format),"text":level.text,"start":level.start,"suffix":level.suffix})).collect::<Vec<_>>();
+        serde_json::json!({"num_id":instance.num_id.0,"abstract_num_id":instance.abstract_num_id.0,"levels":levels})
+    }).collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({"ok":true,"abstract_count":numbering.abstract_count(),"instance_count":numbering.instance_count(),"lists":lists}),
+    )
+}
+
+fn number_format_name(format: &opensuite_docx::NumberFormat) -> &str {
+    match format {
+        opensuite_docx::NumberFormat::Decimal => "decimal",
+        opensuite_docx::NumberFormat::UpperRoman => "upperRoman",
+        opensuite_docx::NumberFormat::LowerRoman => "lowerRoman",
+        opensuite_docx::NumberFormat::UpperLetter => "upperLetter",
+        opensuite_docx::NumberFormat::LowerLetter => "lowerLetter",
+        opensuite_docx::NumberFormat::Bullet => "bullet",
+        opensuite_docx::NumberFormat::None => "none",
+        opensuite_docx::NumberFormat::Unknown(value) => value,
     }
 }
 

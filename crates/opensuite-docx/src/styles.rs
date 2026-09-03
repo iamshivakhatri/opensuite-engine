@@ -5,7 +5,7 @@ use std::{
 
 use opensuite_opc::{Package, PackageError, Part};
 
-use crate::{NodeId, SourceDocument, SourceError, SourceNodeKind};
+use crate::{ListReference, NodeId, SourceDocument, SourceError, SourceNodeKind};
 
 const WORDPROCESSINGML_NAMESPACES: [&str; 2] = [
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -148,6 +148,7 @@ pub struct Style {
     based_on: Option<StyleId>,
     formatting: RunFormatting,
     paragraph_formatting: ParagraphFormatting,
+    list_reference: Option<ListReference>,
 }
 
 impl Style {
@@ -231,6 +232,11 @@ impl StyleSheet {
                 .map(|id| paragraph_formatting(&source, id))
                 .transpose()?
                 .unwrap_or_default();
+            let list_reference = child(&source, source_id, "pPr")
+                .map(|id| crate::numbering::list_reference(&source, id))
+                .transpose()
+                .map_err(|_| StyleError::MalformedStyles)?
+                .flatten();
             if styles.contains_key(&id) {
                 return Err(StyleError::DuplicateStyle(id));
             }
@@ -246,6 +252,7 @@ impl StyleSheet {
                     based_on,
                     formatting,
                     paragraph_formatting,
+                    list_reference,
                 },
             );
         }
@@ -348,6 +355,21 @@ impl StyleSheet {
         chain.reverse();
         Ok(chain)
     }
+
+    pub(crate) fn effective_list_reference(
+        &self,
+        style: Option<&StyleId>,
+    ) -> Result<Option<ListReference>, StyleError> {
+        let style = style.or(self.default_paragraph_style.as_ref());
+        let Some(style) = style else { return Ok(None) };
+        let mut result = None;
+        for item in self.style_chain(style, StyleType::Paragraph)? {
+            if item.list_reference.is_some() {
+                result = item.list_reference;
+            }
+        }
+        Ok(result)
+    }
 }
 
 /// Loads styles.xml through the main part's OPC relationships.
@@ -381,6 +403,7 @@ pub enum StyleError {
     MissingStyle(StyleId),
     StyleTypeMismatch(StyleId),
     InvalidFormattingValue,
+    InvalidListReference,
     ExternalStylesPart,
 }
 
@@ -396,6 +419,7 @@ impl StyleError {
             Self::MissingStyle(_) => "MISSING_STYLE",
             Self::StyleTypeMismatch(_) => "STYLE_TYPE_MISMATCH",
             Self::InvalidFormattingValue => "INVALID_FORMATTING_VALUE",
+            Self::InvalidListReference => "INVALID_LIST_REFERENCE",
             Self::ExternalStylesPart => "EXTERNAL_STYLES_PART",
         }
     }
@@ -412,6 +436,7 @@ impl fmt::Display for StyleError {
             Self::MissingStyle(id) => write!(f, "missing style: {}", id.as_str()),
             Self::StyleTypeMismatch(id) => write!(f, "style type mismatch: {}", id.as_str()),
             Self::InvalidFormattingValue => write!(f, "invalid formatting value"),
+            Self::InvalidListReference => write!(f, "invalid list reference"),
             Self::ExternalStylesPart => write!(f, "styles relationship target is external"),
         }
     }

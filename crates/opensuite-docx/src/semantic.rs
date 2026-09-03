@@ -3,8 +3,8 @@ use std::fmt;
 use quick_xml::escape::unescape;
 
 use crate::{
-    NodeId, ParagraphFormatting, RunFormatting, SourceDocument, SourceNodeKind, StyleError,
-    StyleId, StyleSheet,
+    ListReference, NodeId, ParagraphFormatting, RunFormatting, SourceDocument, SourceNodeKind,
+    StyleError, StyleId, StyleSheet,
 };
 
 const WORDPROCESSINGML_NAMESPACES: [&str; 2] = [
@@ -105,6 +105,15 @@ impl<'a> Paragraph<'a> {
             .transpose()?
             .unwrap_or_default();
         styles.effective_paragraph_formatting(self.style_id().as_ref(), &direct)
+    }
+
+    pub fn list_reference(&self, styles: &StyleSheet) -> Result<Option<ListReference>, StyleError> {
+        let direct = child(self.source, self.source_id, "pPr")
+            .map(|id| crate::numbering::list_reference(self.source, id))
+            .transpose()
+            .map_err(|_| StyleError::InvalidListReference)?
+            .flatten();
+        Ok(direct.or(styles.effective_list_reference(self.style_id().as_ref())?))
     }
 
     pub fn runs(&self) -> impl Iterator<Item = Run<'a>> + '_ {
