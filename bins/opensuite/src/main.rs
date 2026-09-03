@@ -8,9 +8,10 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-paragraphs" => inspect_paragraphs(path),
         (Some(command), Some(path), None) if command == "inspect-numbering" => inspect_numbering(path),
         (Some(command), Some(path), None) if command == "inspect-sections" => inspect_sections(path),
+        (Some(command), Some(path), None) if command == "inspect-headers-footers" => inspect_headers_footers(path),
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections> <path-to-office-file>"
+            "usage: opensuite <inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers> <path-to-office-file>"
                 .to_owned(),
         )),
     };
@@ -24,6 +25,73 @@ fn main() {
             );
             std::process::exit(1);
         }
+    }
+}
+
+fn inspect_headers_footers(
+    path: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let main = package
+        .main_office_document()
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let source = opensuite_docx::SourceDocument::parse(
+        package
+            .read_part(&main)
+            .map_err(|error| (error.code(), error.to_string()))?,
+    )
+    .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let sections = document
+        .sections()
+        .map(|section| {
+            Ok(serde_json::json!({
+                "headers": section.header_references().map(|reference| inspect_header_footer(&package, &main, &reference)).collect::<Result<Vec<_>, _>>()?,
+                "footers": section.footer_references().map(|reference| inspect_header_footer(&package, &main, &reference)).collect::<Result<Vec<_>, _>>()?,
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::json!({ "ok": true, "sections": sections }))
+}
+
+fn inspect_header_footer(
+    package: &opensuite_opc::Package,
+    main: &opensuite_opc::Part,
+    reference: &opensuite_docx::HeaderFooterReference,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let content = match reference.kind() {
+        opensuite_docx::HeaderFooterKind::Header => {
+            opensuite_docx::load_header(package, main, reference)
+        }
+        opensuite_docx::HeaderFooterKind::Footer => {
+            opensuite_docx::load_footer(package, main, reference)
+        }
+    }
+    .map_err(|error| (error.code(), error.to_string()))?;
+    let paragraphs = content
+        .blocks()
+        .filter_map(|block| match block {
+            opensuite_docx::BodyBlock::Paragraph(paragraph) => Some(paragraph.text()),
+            opensuite_docx::BodyBlock::Table(_) => None,
+        })
+        .map(|text| {
+            text.map(|text| serde_json::json!({ "text": text }))
+                .map_err(|error| (error.code(), error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(
+        serde_json::json!({ "type": header_footer_type_name(reference.reference_type()), "part_name": content.part().name.as_str(), "paragraphs": paragraphs }),
+    )
+}
+
+fn header_footer_type_name(value: &opensuite_docx::HeaderFooterType) -> String {
+    match value {
+        opensuite_docx::HeaderFooterType::Default => "default".to_owned(),
+        opensuite_docx::HeaderFooterType::First => "first".to_owned(),
+        opensuite_docx::HeaderFooterType::Even => "even".to_owned(),
+        opensuite_docx::HeaderFooterType::Unknown(value) => value.clone(),
     }
 }
 

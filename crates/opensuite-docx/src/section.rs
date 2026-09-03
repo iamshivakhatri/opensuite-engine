@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{NodeId, SourceDocument, SourceNodeKind};
+use crate::{HeaderFooterKind, HeaderFooterReference, NodeId, SourceDocument, SourceNodeKind};
 
 const NS: [&str; 2] = [
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -25,6 +25,12 @@ impl<'a> Section<'a> {
             source: self.source,
             source_id: self.properties_id,
         }
+    }
+    pub fn header_references(&self) -> impl Iterator<Item = HeaderFooterReference> + '_ {
+        crate::header_footer::references(self.source, self.properties_id, HeaderFooterKind::Header)
+    }
+    pub fn footer_references(&self) -> impl Iterator<Item = HeaderFooterReference> + '_ {
+        crate::header_footer::references(self.source, self.properties_id, HeaderFooterKind::Footer)
     }
 }
 

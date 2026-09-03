@@ -1,11 +1,16 @@
 //! Source-aware DOCX infrastructure built on OPC package discovery.
 
+mod header_footer;
 mod numbering;
 mod section;
 mod semantic;
 mod source;
 mod styles;
 
+pub use header_footer::{
+    HeaderFooter, HeaderFooterError, HeaderFooterKind, HeaderFooterReference, HeaderFooterType,
+    load_footer, load_header,
+};
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
     NumberingInstance, NumberingLevel, load_numbering,

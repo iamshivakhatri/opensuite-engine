@@ -2,4 +2,6 @@
 *.docx
 !tests/fixtures/numbering.docx
 !tests/fixtures/sections.docx
+!tests/fixtures/headers-footers.docx
+!tests/fixtures/headers-footers-errors.docx
 *.txt

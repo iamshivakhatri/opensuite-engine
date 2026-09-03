@@ -45,21 +45,7 @@ impl<'a> DocxDocument<'a> {
     }
 
     pub fn blocks(&self) -> impl Iterator<Item = BodyBlock<'a>> + '_ {
-        self.source.children(self.body_id).filter_map(|source_id| {
-            if is_word_element(self.source, source_id, "p") {
-                Some(BodyBlock::Paragraph(Paragraph {
-                    source: self.source,
-                    source_id,
-                }))
-            } else if is_word_element(self.source, source_id, "tbl") {
-                Some(BodyBlock::Table(Table {
-                    source: self.source,
-                    source_id,
-                }))
-            } else {
-                None
-            }
-        })
+        container_blocks(self.source, self.body_id)
     }
 
     pub fn paragraphs(&self) -> impl Iterator<Item = Paragraph<'a>> + '_ {
@@ -72,6 +58,21 @@ impl<'a> DocxDocument<'a> {
     pub fn sections(&self) -> impl Iterator<Item = crate::Section<'a>> + '_ {
         crate::section::sections(self.source, self.body_id)
     }
+}
+
+pub(crate) fn container_blocks(
+    source: &SourceDocument,
+    container_id: NodeId,
+) -> impl Iterator<Item = BodyBlock<'_>> {
+    source.children(container_id).filter_map(move |source_id| {
+        if is_word_element(source, source_id, "p") {
+            Some(BodyBlock::Paragraph(Paragraph { source, source_id }))
+        } else if is_word_element(source, source_id, "tbl") {
+            Some(BodyBlock::Table(Table { source, source_id }))
+        } else {
+            None
+        }
+    })
 }
 
 /// A direct body child, kept in source order.
