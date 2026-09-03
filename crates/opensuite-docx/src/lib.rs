@@ -1,6 +1,7 @@
 //! Source-aware DOCX infrastructure built on OPC package discovery.
 
 mod numbering;
+mod section;
 mod semantic;
 mod source;
 mod styles;
@@ -8,6 +9,10 @@ mod styles;
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
     NumberingInstance, NumberingLevel, load_numbering,
+};
+pub use section::{
+    Columns, PageMargins, PageOrientation, PageSize, Section, SectionError, SectionProperties,
+    SectionType,
 };
 pub use semantic::{
     BodyBlock, Cell, DocxDocument, Paragraph, Row, Run, SemanticError, Table, Text,

@@ -68,6 +68,10 @@ impl<'a> DocxDocument<'a> {
             BodyBlock::Table(_) => None,
         })
     }
+
+    pub fn sections(&self) -> impl Iterator<Item = crate::Section<'a>> + '_ {
+        crate::section::sections(self.source, self.body_id)
+    }
 }
 
 /// A direct body child, kept in source order.

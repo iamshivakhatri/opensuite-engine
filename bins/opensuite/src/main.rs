@@ -7,9 +7,10 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-styles" => inspect_styles(path),
         (Some(command), Some(path), None) if command == "inspect-paragraphs" => inspect_paragraphs(path),
         (Some(command), Some(path), None) if command == "inspect-numbering" => inspect_numbering(path),
+        (Some(command), Some(path), None) if command == "inspect-sections" => inspect_sections(path),
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering> <path-to-office-file>"
+            "usage: opensuite <inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections> <path-to-office-file>"
                 .to_owned(),
         )),
     };
@@ -24,6 +25,55 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn inspect_sections(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (_, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let sections = document
+        .sections()
+        .map(|section| {
+            let properties = section.properties();
+            Ok(serde_json::json!({
+                "type": properties.section_type().map(section_type_name),
+                "page_size": properties.page_size().map_err(|error| (error.code(), error.to_string()))?.map(page_size_json),
+                "margins": properties.page_margins().map_err(|error| (error.code(), error.to_string()))?.map(page_margins_json),
+                "columns": properties.columns().map_err(|error| (error.code(), error.to_string()))?.map(columns_json),
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::json!({ "ok": true, "section_count": sections.len(), "sections": sections }))
+}
+
+fn section_type_name(value: opensuite_docx::SectionType) -> String {
+    match value {
+        opensuite_docx::SectionType::NextPage => "nextPage".to_owned(),
+        opensuite_docx::SectionType::Continuous => "continuous".to_owned(),
+        opensuite_docx::SectionType::EvenPage => "evenPage".to_owned(),
+        opensuite_docx::SectionType::OddPage => "oddPage".to_owned(),
+        opensuite_docx::SectionType::Unknown(value) => value,
+    }
+}
+
+fn page_size_json(value: opensuite_docx::PageSize) -> serde_json::Value {
+    serde_json::json!({ "width_twips": value.width_twips, "height_twips": value.height_twips, "orientation": value.orientation.map(orientation_name) })
+}
+fn orientation_name(value: opensuite_docx::PageOrientation) -> String {
+    match value {
+        opensuite_docx::PageOrientation::Portrait => "portrait".to_owned(),
+        opensuite_docx::PageOrientation::Landscape => "landscape".to_owned(),
+        opensuite_docx::PageOrientation::Unknown(value) => value,
+    }
+}
+fn page_margins_json(value: opensuite_docx::PageMargins) -> serde_json::Value {
+    serde_json::json!({ "top_twips": value.top_twips, "bottom_twips": value.bottom_twips, "left_twips": value.left_twips, "right_twips": value.right_twips, "header_twips": value.header_twips, "footer_twips": value.footer_twips, "gutter_twips": value.gutter_twips })
+}
+fn columns_json(value: opensuite_docx::Columns) -> serde_json::Value {
+    serde_json::json!({ "count": value.count, "spacing_twips": value.spacing_twips, "equal_width": value.equal_width })
 }
 
 fn inspect_numbering(

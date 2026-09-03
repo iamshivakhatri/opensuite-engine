@@ -1,4 +1,5 @@
 /target/
 *.docx
 !tests/fixtures/numbering.docx
+!tests/fixtures/sections.docx
 *.txt
