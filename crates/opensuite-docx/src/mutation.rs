@@ -5,9 +5,14 @@ use quick_xml::escape::escape;
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{OperationResult, ReplaceText};
 
-use crate::{NodeId, RevisionView, SemanticError, SourceDocument};
+use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
 
-/// Applies one preservation-safe, single-`w:t` text replacement to a new DOCX artifact.
+const NS: [&str; 2] = [
+    "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "http://purl.oclc.org/ooxml/wordprocessingml/main",
+];
+
+/// Applies one preservation-safe replacement across compatible `w:t` source regions.
 pub fn replace_text(
     package: &Package,
     main: &Part,
@@ -35,7 +40,7 @@ pub fn replace_text(
             "resolved text does not match expected current text",
         );
     }
-    let patched = match patch_text(source, target.id, &operation.replacement) {
+    let patched = match apply_patches(source, target.patches) {
         Ok(patched) => patched,
         Err(result) => return result,
     };
@@ -65,8 +70,13 @@ pub fn replace_text(
 }
 
 struct ResolvedText {
-    id: NodeId,
     value: String,
+    patches: Vec<Patch>,
+}
+
+struct Patch {
+    span: SourceSpan,
+    replacement: Vec<u8>,
 }
 
 fn resolve_target(
@@ -93,55 +103,146 @@ fn resolve_target(
     } else {
         matches.into_iter().next().expect("one match")
     };
-    if matched.segments.len() != 1 {
-        return Err(OperationResult::failed(
-            "UNSUPPORTED_OPERATION",
-            "replace_text v0 requires text contained in one w:t node",
-        ));
-    }
-    let (start, end) = (matched.start, matched.end);
-    let segment = matched.segments.into_iter().next().expect("one segment");
-    if segment.inside_tracked_change || segment.start != start || segment.end != end {
-        return Err(OperationResult::failed(
-            "UNSUPPORTED_OPERATION",
-            "replace_text v0 does not edit tracked-change or partial text ranges",
-        ));
-    }
-    if text_child(source, segment.id).is_none_or(|child| is_cdata(source, child)) {
-        return Err(OperationResult::failed(
-            "UNSUPPORTED_OPERATION",
-            "replace_text v0 does not edit CDATA text",
-        ));
-    }
+    let patches = patches_for_match(source, &matched, &operation.replacement)?;
     Ok(ResolvedText {
-        id: segment.id,
-        value: segment.source_text,
+        value: matched.text,
+        patches,
     })
 }
 
-fn patch_text(
+fn patches_for_match(
     source: &SourceDocument,
-    text_id: NodeId,
+    matched: &crate::text_search::ResolvedTextMatch,
     replacement: &str,
-) -> Result<Vec<u8>, OperationResult> {
-    let child = text_child(source, text_id).ok_or_else(|| {
-        OperationResult::failed(
-            "UNSUPPORTED_OPERATION",
-            "text target has no replaceable source region",
-        )
-    })?;
-    if source.children(text_id).nth(1).is_some() {
-        return Err(OperationResult::failed(
-            "UNSUPPORTED_OPERATION",
-            "replace_text v0 requires one text source region",
+) -> Result<Vec<Patch>, OperationResult> {
+    let mut runs = Vec::new();
+    for segment in &matched.segments {
+        if segment.inside_tracked_change {
+            return Err(unsupported(
+                "replace_text does not edit tracked revision text",
+            ));
+        }
+        let run = ordinary_run(source, segment.id)
+            .ok_or_else(|| unsupported("replace_text does not cross inline wrapper boundaries"))?;
+        let child = text_child(source, segment.id)
+            .filter(|child| !is_cdata(source, *child))
+            .ok_or_else(|| unsupported("replace_text requires replaceable text source regions"))?;
+        if source.children(segment.id).nth(1).is_some() {
+            return Err(unsupported(
+                "replace_text requires one source region per text node",
+            ));
+        }
+        runs.push((segment, run, child));
+    }
+    let formatting = run_properties(source, runs[0].1);
+    if runs
+        .iter()
+        .any(|(_, run, _)| run_properties(source, *run) != formatting)
+    {
+        return Err(unsupported(
+            "replace_text spans incompatible run formatting regions",
         ));
     }
-    let span = source.node(child).expect("source child exists").span();
-    let mut patched = Vec::with_capacity(source.original_bytes().len() + replacement.len());
-    patched.extend_from_slice(&source.original_bytes()[..span.start]);
-    patched.extend_from_slice(escape(replacement).as_bytes());
-    patched.extend_from_slice(&source.original_bytes()[span.end..]);
-    Ok(patched)
+
+    let mut remaining = replacement.chars();
+    let mut patches = Vec::with_capacity(runs.len() * 2);
+    for (index, (segment, _, child)) in runs.into_iter().enumerate() {
+        let start = matched.start.max(segment.start) - segment.start;
+        let end = matched.end.min(segment.end) - segment.start;
+        let prefix = &segment.source_text[..start];
+        let suffix = &segment.source_text[end..];
+        let matched_chars = segment.source_text[start..end].chars().count();
+        let distributed: String = if index + 1 == matched.segments.len() {
+            remaining.by_ref().collect()
+        } else {
+            remaining.by_ref().take(matched_chars).collect()
+        };
+        let text = format!("{prefix}{distributed}{suffix}");
+        let span = source.node(child).expect("source child exists").span();
+        patches.push(Patch {
+            span,
+            replacement: escape(&text).into_owned().into_bytes(),
+        });
+        if requires_space_preservation(&text) && !has_xml_space(source, segment.id) {
+            patches.push(Patch {
+                span: start_tag_end(source, segment.id)?,
+                replacement: b" xml:space=\"preserve\"".to_vec(),
+            });
+        }
+    }
+    Ok(patches)
+}
+
+fn apply_patches(
+    source: &SourceDocument,
+    mut patches: Vec<Patch>,
+) -> Result<Vec<u8>, OperationResult> {
+    patches.sort_by_key(|patch| (patch.span.start, patch.span.end));
+    if patches
+        .windows(2)
+        .any(|pair| pair[0].span.end > pair[1].span.start)
+    {
+        return Err(unsupported(
+            "replace_text generated overlapping source patches",
+        ));
+    }
+    let mut result = source.original_bytes().to_vec();
+    for patch in patches.into_iter().rev() {
+        result.splice(patch.span.start..patch.span.end, patch.replacement);
+    }
+    Ok(result)
+}
+
+fn ordinary_run(source: &SourceDocument, text: NodeId) -> Option<NodeId> {
+    let run = source.node(text)?.parent()?;
+    (word(source, run, "r")
+        && source
+            .node(run)?
+            .parent()
+            .is_some_and(|parent| word(source, parent, "p")))
+    .then_some(run)
+}
+
+fn run_properties(source: &SourceDocument, run: NodeId) -> Vec<u8> {
+    source
+        .children(run)
+        .find(|child| word(source, *child, "rPr"))
+        .map_or_else(Vec::new, |properties| {
+            let span = source.node(properties).expect("source node exists").span();
+            source.original_bytes()[span.start..span.end].to_vec()
+        })
+}
+
+fn requires_space_preservation(text: &str) -> bool {
+    text.starts_with(char::is_whitespace) || text.ends_with(char::is_whitespace)
+}
+
+fn has_xml_space(source: &SourceDocument, text: NodeId) -> bool {
+    let SourceNodeKind::Element { start_tag, .. } =
+        source.node(text).expect("source node exists").kind()
+    else {
+        return false;
+    };
+    source.original_bytes()[start_tag.start..start_tag.end]
+        .windows(b"xml:space".len())
+        .any(|window| window == b"xml:space")
+}
+
+fn start_tag_end(source: &SourceDocument, text: NodeId) -> Result<SourceSpan, OperationResult> {
+    let SourceNodeKind::Element { start_tag, .. } =
+        source.node(text).expect("source node exists").kind()
+    else {
+        return Err(unsupported("replace_text text node has no start tag"));
+    };
+    let end = start_tag
+        .end
+        .checked_sub(1)
+        .ok_or_else(|| unsupported("replace_text text tag is invalid"))?;
+    Ok(SourceSpan { start: end, end })
+}
+
+fn unsupported(message: impl Into<String>) -> OperationResult {
+    OperationResult::failed("UNSUPPORTED_OPERATION", message)
 }
 
 fn verify_output(output: &Path, replacement: &str) -> Result<(), OperationResult> {
@@ -195,6 +296,10 @@ fn is_cdata(source: &SourceDocument, id: NodeId) -> bool {
     source.original_bytes()[..span.start].ends_with(b"<![CDATA[")
 }
 
+fn word(source: &SourceDocument, id: NodeId, local_name: &str) -> bool {
+    matches!(source.node(id).map(|node| node.kind()), Some(SourceNodeKind::Element { name, .. }) if name.local_name() == local_name && name.namespace_uri().is_some_and(|uri| NS.contains(&uri)))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -234,7 +339,7 @@ mod tests {
         zip.start_file("_rels/.rels", options).unwrap();
         zip.write_all(format!("<Relationships><Relationship Id=\"rId1\" Type=\"{OFFICE}\" Target=\"word/document.xml\"/></Relationships>").as_bytes()).unwrap();
         zip.start_file("word/document.xml", options).unwrap();
-        zip.write_all(format!("<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:r><w:t>OLD UNIQUE TEXT</w:t></w:r></w:p><w:p><w:r><w:t>Duplicate</w:t></w:r><w:r><w:t>Duplicate</w:t></w:r></w:p><w:p><w:r><w:t>Cross </w:t></w:r><w:r><w:t>run</w:t></w:r></w:p><w:p><w:r><w:t xml:space=\"preserve\"> spaced </w:t></w:r></w:p><w:p><w:del><w:r><w:delText>OLD DELETED</w:delText></w:r></w:del><w:ins><w:r><w:t>NEW INSERTED</w:t></w:r></w:ins></w:p></w:body></w:document>").as_bytes()).unwrap();
+        zip.write_all(format!("<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:r><w:t>OLD UNIQUE TEXT</w:t></w:r></w:p><w:p><w:r><w:t>Duplicate</w:t></w:r><w:r><w:t>Duplicate</w:t></w:r></w:p><w:p><w:r><w:t>Cross </w:t></w:r><w:r><w:t>run</w:t></w:r></w:p><w:p><w:r><w:t>Styled </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>text</w:t></w:r></w:p><w:p><w:r><w:t>Linked </w:t></w:r><w:hyperlink><w:r><w:t>text</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:t>FY2026 Revenue </w:t></w:r><w:r><w:t>was $10M according</w:t></w:r></w:p><w:p><w:r><w:t xml:space=\"preserve\"> spaced </w:t></w:r></w:p><w:p><w:del><w:r><w:delText>OLD DELETED</w:delText></w:r></w:del><w:ins><w:r><w:t>NEW INSERTED</w:t></w:r></w:ins></w:p></w:body></w:document>").as_bytes()).unwrap();
         zip.start_file("word/media/image.bin", options).unwrap();
         zip.write_all(&[1, 2, 3]).unwrap();
         zip.finish().unwrap();
@@ -332,13 +437,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_ambiguous_stale_cross_run_and_non_current_targets() {
+    fn rejects_ambiguous_stale_unsafe_and_non_current_targets() {
         let input = fixture();
         let output = path("failed");
         for (target, expected, code) in [
             ("Duplicate", "Duplicate", "TARGET_AMBIGUOUS"),
             ("OLD UNIQUE TEXT", "stale", "PRECONDITION_FAILED"),
-            ("Cross run", "Cross run", "UNSUPPORTED_OPERATION"),
+            ("Styled text", "Styled text", "UNSUPPORTED_OPERATION"),
+            ("Linked text", "Linked text", "UNSUPPORTED_OPERATION"),
             ("OLD DELETED", "OLD DELETED", "TARGET_NOT_FOUND"),
             ("NEW INSERTED", "NEW INSERTED", "UNSUPPORTED_OPERATION"),
             ("missing", "missing", "TARGET_NOT_FOUND"),
@@ -349,6 +455,72 @@ mod tests {
             assert!(!output.exists());
         }
         fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn replaces_cross_run_text_with_distribution_partial_ranges_and_xml_space() {
+        let input = fixture();
+        let output = path("cross-run");
+        let result = execute(
+            &input,
+            &output,
+            &operation("Cross run", "Cross run", "Longer replacement"),
+        );
+
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+        let xml = String::from_utf8(entry(&output, "word/document.xml")).unwrap();
+        assert!(xml.contains(
+            "<w:t>Longer</w:t></w:r><w:r><w:t xml:space=\"preserve\"> replacement</w:t>"
+        ));
+        let package = Package::open(&output).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert!(
+            crate::find_text(
+                &source,
+                &opensuite_protocol::FindText {
+                    text: "Longer replacement".to_owned()
+                }
+            )
+            .unwrap()
+            .matches
+            .len()
+                == 1
+        );
+
+        let partial_output = path("partial");
+        let partial = execute(
+            &input,
+            &partial_output,
+            &operation(
+                "Revenue was $10M",
+                "Revenue was $10M",
+                "Profit was $12M & more",
+            ),
+        );
+        assert_eq!(partial.status, opensuite_protocol::OperationStatus::Applied);
+        let partial_xml = String::from_utf8(entry(&partial_output, "word/document.xml")).unwrap();
+        assert!(partial_xml.contains("FY2026 Profit w"));
+        assert!(partial_xml.contains("as $12M &amp; more according"));
+
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+        fs::remove_file(partial_output).unwrap();
+    }
+
+    #[test]
+    fn permits_shorter_cross_run_replacement_without_partial_output() {
+        let input = fixture();
+        let output = path("shorter");
+        let result = execute(&input, &output, &operation("Cross run", "Cross run", "X"));
+
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+        assert!(
+            String::from_utf8(entry(&output, "word/document.xml"))
+                .unwrap()
+                .contains("<w:t>X</w:t></w:r><w:r><w:t></w:t>")
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
     }
 
     #[test]

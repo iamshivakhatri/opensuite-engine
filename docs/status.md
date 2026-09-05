@@ -41,12 +41,14 @@ and XML source bytes.
   unsupported and source-preserved.
 - Runtime/protocol boundary foundation: versioned DOCX read-side capability
   discovery, compact diagnostics, and `opensuite capabilities`.
-- Preservation-safe `ReplaceText` v0 for one exact current-view `w:t` node,
-  with a semantic expected-text precondition, XML escaping, output reopen check,
-  structured result, and `opensuite replace-text <input.docx> <output.docx> <target> <replacement>`.
+- Preservation-safe `ReplaceText` for exact Current-view text in one source
+  node or across compatible ordinary runs in one paragraph, with semantic
+  preconditions, XML escaping, output reopen checks, and structured results.
+  Incompatible run formatting, inline wrappers, and tracked revision content
+  remain unsupported.
 - Current-view exact semantic text search across runs within one paragraph or
   table-cell paragraph, with bounded context, deterministic occurrences, and
-  `opensuite find-text <input.docx> <text>`. `ReplaceText` v0 uses the same
+  `opensuite find-text <input.docx> <text>`. `ReplaceText` uses the same
   resolver; cross-run matches are found but remain unsupported for mutation.
 - Mutation output verification reads every ZIP payload, checks XML syntax and
   internal relationship targets, then reopens and checks the semantic result.
@@ -70,13 +72,13 @@ and XML source bytes.
 - PPTX
 - XLSX
 
-`ReplaceText` v0 writes a new artifact atomically after reopening it, while
+`ReplaceText` writes a new artifact atomically after reopening it, while
 leaving the input artifact untouched. It copies unchanged part payloads as-is
 and patches only the main document XML text source region. The engine checks
 the semantic expected text; opaque application revision metadata is accepted
 but not enforced because application history remains outside the engine.
 
-Cross-run edits, tracked-change edits, batches, broader validation,
+Tracked-change edits, incompatible/wrapper cross-run edits, batches, broader validation,
 serialization APIs, and rendering remain unimplemented.
 
 Small hand-assembled fixtures remain useful for parser tests, but are not
