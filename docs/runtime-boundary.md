@@ -14,6 +14,8 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   new artifact. An opaque caller-supplied base revision may accompany the
   typed request, but stale application-revision enforcement remains the
   adapter's responsibility because the engine owns no history.
+- `find_text` performs exact DOCX Current-view search and returns bounded,
+  ordered semantic matches without source identities.
 
 Source identities such as `NodeId`, XML paths, source spans, OPC relationships,
 ZIP offsets, and byte positions remain engine implementation details. They are

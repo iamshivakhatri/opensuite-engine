@@ -5,12 +5,7 @@ use quick_xml::escape::escape;
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{OperationResult, ReplaceText};
 
-use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind};
-
-const NS: [&str; 2] = [
-    "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
-    "http://purl.oclc.org/ooxml/wordprocessingml/main",
-];
+use crate::{NodeId, RevisionView, SemanticError, SourceDocument};
 
 /// Applies one preservation-safe, single-`w:t` text replacement to a new DOCX artifact.
 pub fn replace_text(
@@ -78,54 +73,50 @@ fn resolve_target(
     source: &SourceDocument,
     operation: &ReplaceText,
 ) -> Result<ResolvedText, OperationResult> {
-    let mut matches = Vec::new();
-    let mut unsupported_match = false;
-    for id in source.node_ids().filter(|id| word(source, *id, "t")) {
-        let value = match crate::semantic::text_value(source, id) {
-            Ok(value) => value,
-            Err(error) => return Err(OperationResult::failed(error.code(), error.to_string())),
-        };
-        if value != operation.target.text || !in_current_view(source, id) {
-            continue;
-        }
-        if inside_tracked_change(source, id)
-            || text_child(source, id).is_none_or(|child| is_cdata(source, child))
-        {
-            unsupported_match = true;
-        } else {
-            matches.push(ResolvedText { id, value });
-        }
-    }
-    if matches.is_empty() && unsupported_match {
-        return Err(OperationResult::failed(
-            "UNSUPPORTED_OPERATION",
-            "replace_text v0 does not edit tracked-change or CDATA text",
-        ));
-    }
+    let matches = crate::text_search::resolve_text(source, &operation.target.text)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
     if matches.is_empty() {
-        if current_view_contains(source, &operation.target.text) {
-            return Err(OperationResult::failed(
-                "UNSUPPORTED_OPERATION",
-                "replace_text v0 requires text contained in one w:t node",
-            ));
-        }
         return Err(OperationResult::failed(
             "TARGET_NOT_FOUND",
             "text target was not found",
         ));
     }
-    if let Some(occurrence) = operation.target.occurrence {
-        return matches.into_iter().nth(occurrence).ok_or_else(|| {
+    let matched = if let Some(occurrence) = operation.target.occurrence {
+        matches.into_iter().nth(occurrence).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "text target occurrence was not found")
-        });
-    }
-    if matches.len() != 1 {
+        })?
+    } else if matches.len() != 1 {
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
-            "text target matches more than one current text node",
+            "text target matches more than one current semantic range",
+        ));
+    } else {
+        matches.into_iter().next().expect("one match")
+    };
+    if matched.segments.len() != 1 {
+        return Err(OperationResult::failed(
+            "UNSUPPORTED_OPERATION",
+            "replace_text v0 requires text contained in one w:t node",
         ));
     }
-    Ok(matches.pop().expect("one match"))
+    let (start, end) = (matched.start, matched.end);
+    let segment = matched.segments.into_iter().next().expect("one segment");
+    if segment.inside_tracked_change || segment.start != start || segment.end != end {
+        return Err(OperationResult::failed(
+            "UNSUPPORTED_OPERATION",
+            "replace_text v0 does not edit tracked-change or partial text ranges",
+        ));
+    }
+    if text_child(source, segment.id).is_none_or(|child| is_cdata(source, child)) {
+        return Err(OperationResult::failed(
+            "UNSUPPORTED_OPERATION",
+            "replace_text v0 does not edit CDATA text",
+        ));
+    }
+    Ok(ResolvedText {
+        id: segment.id,
+        value: segment.source_text,
+    })
 }
 
 fn patch_text(
@@ -155,6 +146,7 @@ fn patch_text(
 
 fn verify_output(output: &Path, replacement: &str) -> Result<(), OperationResult> {
     let package = Package::open(output).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
     let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
     let document = crate::DocxDocument::new(&source).map_err(document_invalid)?;
     if !document
@@ -201,39 +193,6 @@ fn text_child(source: &SourceDocument, id: NodeId) -> Option<NodeId> {
 fn is_cdata(source: &SourceDocument, id: NodeId) -> bool {
     let span = source.node(id).expect("source node exists").span();
     source.original_bytes()[..span.start].ends_with(b"<![CDATA[")
-}
-
-fn in_current_view(source: &SourceDocument, id: NodeId) -> bool {
-    !ancestors(source, id)
-        .any(|ancestor| word(source, ancestor, "del") || word(source, ancestor, "moveFrom"))
-}
-
-fn inside_tracked_change(source: &SourceDocument, id: NodeId) -> bool {
-    ancestors(source, id)
-        .any(|ancestor| word(source, ancestor, "ins") || word(source, ancestor, "moveTo"))
-}
-
-fn current_view_contains(source: &SourceDocument, target: &str) -> bool {
-    crate::DocxDocument::new(source).is_ok_and(|document| {
-        document.blocks().any(|block| match block {
-            crate::BodyBlock::Paragraph(paragraph) => paragraph
-                .text_for_view(RevisionView::Current)
-                .is_ok_and(|text| text.contains(target)),
-            crate::BodyBlock::Table(table) => {
-                table_current_text(table).is_ok_and(|text| text.contains(target))
-            }
-        })
-    })
-}
-
-fn ancestors(source: &SourceDocument, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-    std::iter::successors(source.node(id).and_then(|node| node.parent()), move |id| {
-        source.node(*id).and_then(|node| node.parent())
-    })
-}
-
-fn word(source: &SourceDocument, id: NodeId, local_name: &str) -> bool {
-    matches!(source.node(id).map(|node| node.kind()), Some(SourceNodeKind::Element { name, .. }) if name.local_name() == local_name && name.namespace_uri().is_some_and(|uri| NS.contains(&uri)))
 }
 
 #[cfg(test)]
@@ -390,5 +349,24 @@ mod tests {
             assert!(!output.exists());
         }
         fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn uses_shared_occurrence_order_for_replacement() {
+        let input = fixture();
+        let output = path("occurrence");
+        let mut request = operation("Duplicate", "Duplicate", "Changed");
+        request.target.occurrence = Some(1);
+
+        let result = execute(&input, &output, &request);
+
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+        assert!(
+            std::str::from_utf8(&entry(&output, "word/document.xml"))
+                .unwrap()
+                .contains("<w:t>Duplicate</w:t></w:r><w:r><w:t>Changed</w:t>")
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
     }
 }

@@ -146,6 +146,7 @@ pub enum PackageError {
     Io(io::Error),
     InvalidZip(zip::result::ZipError),
     UnsafeEntry(String),
+    DuplicateEntry(String),
     InvalidPartName(String),
     MissingContentTypes,
     MalformedContentTypes,
@@ -159,6 +160,7 @@ pub enum PackageError {
     MissingContentType(PartName),
     OutputMatchesInput,
     Serialization(io::Error),
+    MalformedXmlPart(PartName),
 }
 
 impl PackageError {
@@ -167,6 +169,7 @@ impl PackageError {
             Self::Io(_) => "IO_ERROR",
             Self::InvalidZip(_) => "INVALID_ZIP",
             Self::UnsafeEntry(_) => "UNSAFE_ENTRY",
+            Self::DuplicateEntry(_) => "DUPLICATE_ENTRY",
             Self::InvalidPartName(_) => "INVALID_PART_NAME",
             Self::MissingContentTypes => "MISSING_CONTENT_TYPES",
             Self::MalformedContentTypes => "MALFORMED_CONTENT_TYPES",
@@ -180,6 +183,7 @@ impl PackageError {
             Self::MissingContentType(_) => "MISSING_CONTENT_TYPE",
             Self::OutputMatchesInput => "OUTPUT_MATCHES_INPUT",
             Self::Serialization(_) => "SERIALIZATION_FAILED",
+            Self::MalformedXmlPart(_) => "MALFORMED_XML_PART",
         }
     }
 }
@@ -190,6 +194,7 @@ impl fmt::Display for PackageError {
             Self::Io(error) => write!(formatter, "could not read package: {error}"),
             Self::InvalidZip(error) => write!(formatter, "invalid ZIP package: {error}"),
             Self::UnsafeEntry(entry) => write!(formatter, "unsafe package entry: {entry}"),
+            Self::DuplicateEntry(entry) => write!(formatter, "duplicate package entry: {entry}"),
             Self::InvalidPartName(name) => write!(formatter, "invalid part name: {name}"),
             Self::MissingContentTypes => write!(formatter, "missing [Content_Types].xml"),
             Self::MalformedContentTypes => write!(formatter, "malformed [Content_Types].xml"),
@@ -220,6 +225,7 @@ impl fmt::Display for PackageError {
             Self::Serialization(error) => {
                 write!(formatter, "could not write output package: {error}")
             }
+            Self::MalformedXmlPart(part) => write!(formatter, "malformed XML part: {part}"),
         }
     }
 }
@@ -246,7 +252,10 @@ impl Package {
         for index in 0..entry_count {
             let entry = archive.by_index(index).map_err(PackageError::InvalidZip)?;
             if !entry.is_dir() {
-                entries.insert(PartName::from_entry(entry.name())?);
+                let part = PartName::from_entry(entry.name())?;
+                if !entries.insert(part) {
+                    return Err(PackageError::DuplicateEntry(entry.name().to_owned()));
+                }
             }
         }
 
@@ -269,6 +278,47 @@ impl Package {
 
     pub fn source_path(&self) -> &Path {
         &self.path
+    }
+
+    /// Verifies ZIP payloads, XML syntax, and internal OPC relationship targets.
+    pub fn verify(&self) -> Result<(), PackageError> {
+        let file = File::open(&self.path).map_err(PackageError::Io)?;
+        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(PackageError::InvalidZip)?;
+            if entry.is_dir() {
+                continue;
+            }
+            let part = PartName::from_entry(entry.name())?;
+            let mut content = Vec::new();
+            entry.read_to_end(&mut content).map_err(PackageError::Io)?;
+            if is_xml_part(part.as_str()) && !well_formed_xml(&content) {
+                return Err(PackageError::MalformedXmlPart(part));
+            }
+        }
+        self.verify_relationships(&self.relationships)?;
+        for relationship_part in self.parts.iter().filter_map(relationship_source_part) {
+            let entry = relationship_entry_name(&relationship_part)?;
+            let file = File::open(&self.path).map_err(PackageError::Io)?;
+            let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+            let relationships = parse_relationships(
+                read_named_entry(&mut archive, &entry)?,
+                Some(&relationship_part),
+            )?;
+            self.verify_relationships(&relationships)?;
+        }
+        Ok(())
+    }
+
+    fn verify_relationships(&self, relationships: &[Relationship]) -> Result<(), PackageError> {
+        for relationship in relationships {
+            if let RelationshipTarget::Internal { part_name, .. } = &relationship.target {
+                if !self.parts.contains(part_name) {
+                    return Err(PackageError::MissingTargetPart(part_name.clone()));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Copies this package to a new ZIP, changing only one uncompressed part payload.
@@ -605,6 +655,37 @@ fn relationship_entry_name(part: &PartName) -> Result<String, PackageError> {
     })
 }
 
+fn relationship_source_part(relationship_part: &PartName) -> Option<PartName> {
+    let path = relationship_part.as_str().trim_start_matches('/');
+    let (directory, file_name) = path.rsplit_once("/_rels/")?;
+    let source_name = file_name.strip_suffix(".rels")?;
+    PartName::parse(format!("/{directory}/{source_name}")).ok()
+}
+
+fn is_xml_part(name: &str) -> bool {
+    name.ends_with(".xml") || name.ends_with(".rels")
+}
+
+fn well_formed_xml(content: &[u8]) -> bool {
+    let mut reader = Reader::from_reader(content);
+    let mut buffer = Vec::new();
+    let mut elements = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(element)) => elements.push(element.name().as_ref().to_vec()),
+            Ok(Event::End(element)) => {
+                if elements.pop().as_deref() != Some(element.name().as_ref()) {
+                    return false;
+                }
+            }
+            Ok(Event::Eof) => return elements.is_empty(),
+            Ok(_) => buffer.clear(),
+            Err(_) => return false,
+        }
+        buffer.clear();
+    }
+}
+
 fn local_name(name: &[u8]) -> &[u8] {
     name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
 }
@@ -647,6 +728,7 @@ fn is_metadata_part(part: &PartName) -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         fs,
         io::Write,
         sync::atomic::{AtomicUsize, Ordering},
@@ -683,6 +765,21 @@ mod tests {
         }
         zip.finish().unwrap();
         path
+    }
+
+    fn payloads(path: &Path) -> BTreeMap<String, Vec<u8>> {
+        let file = File::open(path).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        (0..archive.len())
+            .filter_map(|index| {
+                let mut entry = archive.by_index(index).unwrap();
+                (!entry.is_dir()).then(|| {
+                    let mut content = Vec::new();
+                    entry.read_to_end(&mut content).unwrap();
+                    (entry.name().to_owned(), content)
+                })
+            })
+            .collect()
     }
 
     fn content_types(override_part: &str) -> String {
@@ -732,6 +829,52 @@ mod tests {
                 .as_str(),
             "application/default+xml"
         );
+    }
+
+    #[test]
+    fn no_op_rewrite_keeps_every_entry_payload_and_verifies_output() {
+        let input = package_file(
+            &content_types("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[
+                ("custom/main.xml", "<document><text>same</text></document>"),
+                ("media.bin", "bytes"),
+            ],
+        );
+        let output = std::env::temp_dir().join(format!(
+            "opensuite-opc-copy-{}-{}.docx",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let package = Package::open(&input).unwrap();
+        let main = package.main_office_document().unwrap();
+        package
+            .write_replaced_part(&main, &package.read_part(&main).unwrap(), &output)
+            .unwrap();
+
+        assert_eq!(payloads(&input), payloads(&output));
+        Package::open(&output).unwrap().verify().unwrap();
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn verification_rejects_malformed_xml_outside_the_opened_main_part() {
+        let input = package_file(
+            &content_types("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[
+                ("custom/main.xml", "<document/>"),
+                ("extra.xml", "<broken>"),
+            ],
+        );
+        let package = Package::open(&input).unwrap();
+
+        assert!(matches!(
+            package.verify(),
+            Err(PackageError::MalformedXmlPart(_))
+        ));
+        fs::remove_file(input).unwrap();
     }
 
     #[test]

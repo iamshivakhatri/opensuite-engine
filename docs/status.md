@@ -44,6 +44,12 @@ and XML source bytes.
 - Preservation-safe `ReplaceText` v0 for one exact current-view `w:t` node,
   with a semantic expected-text precondition, XML escaping, output reopen check,
   structured result, and `opensuite replace-text <input.docx> <output.docx> <target> <replacement>`.
+- Current-view exact semantic text search across runs within one paragraph or
+  table-cell paragraph, with bounded context, deterministic occurrences, and
+  `opensuite find-text <input.docx> <text>`. `ReplaceText` v0 uses the same
+  resolver; cross-run matches are found but remain unsupported for mutation.
+- Mutation output verification reads every ZIP payload, checks XML syntax and
+  internal relationship targets, then reopens and checks the semantic result.
 
 ## Current Repository Target
 
@@ -72,6 +78,10 @@ but not enforced because application history remains outside the engine.
 
 Cross-run edits, tracked-change edits, batches, broader validation,
 serialization APIs, and rendering remain unimplemented.
+
+Small hand-assembled fixtures remain useful for parser tests, but are not
+Office-interoperability evidence. Mutation interoperability checks use a
+known Office-openable input and still require manual Word/Google Docs review.
 
 Tracked formatting/property revisions such as `w:rPrChange`, `w:pPrChange`,
 and table/section property changes remain unsupported and source-preserved.

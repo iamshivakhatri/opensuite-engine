@@ -52,6 +52,10 @@ output
 
 OpenSuite should preserve the input as faithfully as realistically possible.
 
+Small hand-assembled DOCX files are suitable for focused parser tests. Office
+interoperability evidence must use a file produced by an Office-compatible
+producer and include external application review.
+
 ## Dependencies
 
 Dependencies require justification.

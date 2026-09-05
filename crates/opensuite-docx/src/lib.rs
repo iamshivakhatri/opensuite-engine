@@ -12,6 +12,7 @@ mod section;
 mod semantic;
 mod source;
 mod styles;
+mod text_search;
 mod tracked_change;
 
 pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
@@ -44,6 +45,7 @@ pub use styles::{
     ParagraphAlignment, ParagraphFormatting, RunFormatting, Style, StyleError, StyleId, StyleSheet,
     StyleType, load_styles,
 };
+pub use text_search::find_text;
 pub use tracked_change::{RevisionView, TrackedChange, TrackedChangeKind, TrackedChangeMetadata};
 
 use opensuite_opc::{Package, Part};

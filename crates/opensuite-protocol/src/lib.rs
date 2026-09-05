@@ -101,6 +101,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "comments",
     "revision_views",
     "replace_text",
+    "find_text",
 ];
 
 /// A DOCX text target. `occurrence` is zero-based when repeated exact text needs disambiguation.
@@ -117,6 +118,61 @@ pub struct ReplaceText {
     pub expected_current_text: String,
     pub replacement: String,
     pub base_revision: Option<String>,
+}
+
+/// An exact DOCX Current-view text search request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FindText {
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FindTextMatch {
+    pub occurrence: usize,
+    pub text: String,
+    pub before: String,
+    pub after: String,
+    pub container: TextContainer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextContainer {
+    Paragraph,
+    TableCell,
+}
+
+impl TextContainer {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Paragraph => "paragraph",
+            Self::TableCell => "table_cell",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FindTextResult {
+    pub query: String,
+    pub matches: Vec<FindTextMatch>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl FindTextResult {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "ok": self.diagnostics.is_empty(),
+            "query": self.query,
+            "match_count": self.matches.len(),
+            "matches": self.matches.iter().map(|item| serde_json::json!({
+                "occurrence": item.occurrence,
+                "text": item.text,
+                "before": item.before,
+                "after": item.after,
+                "container": item.container.as_str(),
+            })).collect::<Vec<_>>(),
+            "diagnostics": self.diagnostics.iter().map(Diagnostic::to_json).collect::<Vec<_>>(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -246,7 +302,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","find_text"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

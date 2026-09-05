@@ -35,12 +35,13 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-content-controls" => inspect_content_controls(path),
         (Some(command), Some(path), None) if command == "inspect-tracked-changes" => inspect_tracked_changes(path),
         (Some(command), Some(path), None) if command == "inspect-comments" => inspect_comments(path),
+        (Some(command), Some(path), Some(text)) if command == "find-text" => find_text(path, text),
         (Some(command), Some(path), Some(view)) if command == "inspect-revision-view" => {
             inspect_revision_view(path, view)
         }
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite inspect-revision-view <path-to-office-file> <current|original>"
+            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text>"
                 .to_owned(),
         )),
         }
@@ -61,6 +62,25 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn find_text(
+    path: std::ffi::OsString,
+    text: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let text = text.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "text query must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (_, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    opensuite_docx::find_text(&source, &opensuite_protocol::FindText { text })
+        .map(|result| result.to_json())
+        .map_err(|error| (error.code(), error.to_string()))
 }
 
 fn replace_text(
