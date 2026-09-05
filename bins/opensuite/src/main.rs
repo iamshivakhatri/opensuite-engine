@@ -1,6 +1,25 @@
 fn main() {
     let mut arguments = std::env::args_os().skip(1);
-    let result = match (arguments.next(), arguments.next(), arguments.next()) {
+    let command = arguments.next();
+    let result = if command.as_deref() == Some(std::ffi::OsStr::new("replace-text")) {
+        match (
+            arguments.next(),
+            arguments.next(),
+            arguments.next(),
+            arguments.next(),
+            arguments.next(),
+        ) {
+            (Some(input), Some(output), Some(target), Some(replacement), None) => {
+                replace_text(input, output, target, replacement)
+            }
+            _ => Err((
+                "INVALID_ARGUMENTS",
+                "usage: opensuite replace-text <input.docx> <output.docx> <target> <replacement>"
+                    .to_owned(),
+            )),
+        }
+    } else {
+        match (command, arguments.next(), arguments.next()) {
         (Some(command), None, None) if command == "capabilities" => capabilities(),
         (Some(command), Some(path), None) if command == "inspect" => inspect(path),
         (Some(command), Some(path), None) if command == "inspect-source" => inspect_source(path),
@@ -15,18 +34,25 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-fields" => inspect_fields(path),
         (Some(command), Some(path), None) if command == "inspect-content-controls" => inspect_content_controls(path),
         (Some(command), Some(path), None) if command == "inspect-tracked-changes" => inspect_tracked_changes(path),
+        (Some(command), Some(path), None) if command == "inspect-comments" => inspect_comments(path),
         (Some(command), Some(path), Some(view)) if command == "inspect-revision-view" => {
             inspect_revision_view(path, view)
         }
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes> [path-to-office-file] | opensuite inspect-revision-view <path-to-office-file> <current|original>"
+            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite inspect-revision-view <path-to-office-file> <current|original>"
                 .to_owned(),
         )),
+        }
     };
 
     match result {
-        Ok(value) => println!("{value}"),
+        Ok(value) => {
+            println!("{value}");
+            if value.get("ok") == Some(&serde_json::Value::Bool(false)) {
+                std::process::exit(1);
+            }
+        }
         Err((code, message)) => {
             println!(
                 "{}",
@@ -35,6 +61,74 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn replace_text(
+    input: std::ffi::OsString,
+    output: std::ffi::OsString,
+    target: std::ffi::OsString,
+    replacement: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let target = target.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "text target must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let replacement = replacement.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "replacement text must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let operation = opensuite_protocol::ReplaceText {
+        target: opensuite_protocol::TextTarget {
+            text: target.clone(),
+            occurrence: None,
+        },
+        expected_current_text: target,
+        replacement,
+        base_revision: None,
+    };
+    Ok(opensuite_docx::replace_text(&package, &main, &source, &operation, output).to_json())
+}
+
+fn inspect_comments(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let comments = document
+        .comments(&package, &main)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let values = comments
+        .comments()
+        .map(|comment| {
+            let metadata = comment.metadata();
+            Ok(serde_json::json!({
+                "id": comment.id(),
+                "author": metadata.author,
+                "initials": metadata.initials,
+                "date": metadata.date,
+                "text": comment.text().map_err(|error| (error.code(), error.to_string()))?,
+                "has_range": comment.has_range(),
+                "has_reference": comment.has_reference(),
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let errors = comments
+        .errors()
+        .map(|error| serde_json::json!({ "code": error.code() }))
+        .collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({ "ok": true, "comment_count": values.len(), "comments": values, "errors": errors }),
+    )
 }
 
 fn inspect_tracked_changes(
@@ -138,8 +232,7 @@ fn inspect_block_for_view(
 }
 
 fn capabilities() -> Result<serde_json::Value, (&'static str, String)> {
-    let capabilities =
-        opensuite_protocol::RuntimeCapabilities::docx_read_only(env!("CARGO_PKG_VERSION"));
+    let capabilities = opensuite_protocol::RuntimeCapabilities::docx(env!("CARGO_PKG_VERSION"));
     let mut manifest = capabilities.to_json();
     let Some(output) = manifest.as_object_mut() else {
         return Err((

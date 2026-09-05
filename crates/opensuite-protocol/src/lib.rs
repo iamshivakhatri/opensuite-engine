@@ -13,19 +13,24 @@ pub struct RuntimeCapabilities {
 }
 
 impl RuntimeCapabilities {
-    /// Declares the read-only DOCX capabilities implemented by this engine version.
-    pub fn docx_read_only(engine_version: impl Into<String>) -> Self {
+    /// Declares the DOCX capabilities implemented by this engine version.
+    pub fn docx(engine_version: impl Into<String>) -> Self {
         Self {
             protocol_version: PROTOCOL_VERSION,
             engine_version: engine_version.into(),
             formats: vec![FormatCapabilities {
                 format: DocumentFormat::Docx,
-                capabilities: DOCX_READ_ONLY_CAPABILITIES
+                capabilities: DOCX_CAPABILITIES
                     .iter()
                     .map(|id| CapabilityId::new(*id))
                     .collect(),
             }],
         }
+    }
+
+    /// Compatibility name retained while DOCX capabilities grow beyond inspection.
+    pub fn docx_read_only(engine_version: impl Into<String>) -> Self {
+        Self::docx(engine_version)
     }
 
     pub fn to_json(&self) -> serde_json::Value {
@@ -79,7 +84,7 @@ impl CapabilityId {
     }
 }
 
-const DOCX_READ_ONLY_CAPABILITIES: &[&str] = &[
+const DOCX_CAPABILITIES: &[&str] = &[
     "inspect",
     "text",
     "tables",
@@ -93,7 +98,90 @@ const DOCX_READ_ONLY_CAPABILITIES: &[&str] = &[
     "fields",
     "content_controls",
     "tracked_changes",
+    "comments",
+    "revision_views",
+    "replace_text",
 ];
+
+/// A DOCX text target. `occurrence` is zero-based when repeated exact text needs disambiguation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextTarget {
+    pub text: String,
+    pub occurrence: Option<usize>,
+}
+
+/// The first typed DOCX mutation. `base_revision` is opaque caller metadata only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplaceText {
+    pub target: TextTarget,
+    pub expected_current_text: String,
+    pub replacement: String,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperationChange {
+    pub kind: String,
+    pub before: String,
+    pub after: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperationResult {
+    pub status: OperationStatus,
+    pub diagnostics: Vec<Diagnostic>,
+    pub changes: Vec<OperationChange>,
+}
+
+impl OperationResult {
+    pub fn applied(before: String, after: String) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "text_replaced".to_owned(),
+                before,
+                after,
+            }],
+        }
+    }
+
+    pub fn failed(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: OperationStatus::Failed,
+            diagnostics: vec![Diagnostic::new(code, DiagnosticSeverity::Error, message)],
+            changes: Vec::new(),
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "ok": self.status == OperationStatus::Applied,
+            "status": self.status.as_str(),
+            "changes": self.changes.iter().map(|change| serde_json::json!({
+                "kind": change.kind,
+                "before": change.before,
+                "after": change.after,
+            })).collect::<Vec<_>>(),
+            "diagnostics": self.diagnostics.iter().map(Diagnostic::to_json).collect::<Vec<_>>(),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OperationStatus {
+    Applied,
+    Failed,
+}
+
+impl OperationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Failed => "failed",
+        }
+    }
+}
 
 /// A machine-readable runtime diagnostic without source or persistence details.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,12 +241,12 @@ mod tests {
 
     #[test]
     fn reports_only_implemented_docx_capabilities_in_a_stable_order() {
-        let capabilities = RuntimeCapabilities::docx_read_only("0.1.0");
+        let capabilities = RuntimeCapabilities::docx("0.1.0");
         let json = capabilities.to_json().to_string();
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-DOCX read-side semantics
+Preservation-first DOCX mutation
 
 ## Current Format
 
@@ -12,8 +12,8 @@ PPTX and XLSX have not started.
 
 ## Current Objective
 
-Extend source-backed DOCX inspection while preserving original package and XML
-content unchanged.
+Prove one source-backed DOCX mutation while preserving untouched package parts
+and XML source bytes.
 
 ## Implemented
 
@@ -35,8 +35,15 @@ content unchanged.
   move-to revisions with metadata and Current/Original paragraph and cell text
   views. `opensuite inspect-tracked-changes <file.docx>` and
   `opensuite inspect-revision-view <file.docx> <current|original>` expose compact JSON.
+- Read-only standard DOCX comments, including comments-part relationship discovery,
+  metadata, body text, document range/reference pairing, and compact
+  `opensuite inspect-comments <file.docx>` output. Modern/threaded comments remain
+  unsupported and source-preserved.
 - Runtime/protocol boundary foundation: versioned DOCX read-side capability
   discovery, compact diagnostics, and `opensuite capabilities`.
+- Preservation-safe `ReplaceText` v0 for one exact current-view `w:t` node,
+  with a semantic expected-text precondition, XML escaping, output reopen check,
+  structured result, and `opensuite replace-text <input.docx> <output.docx> <target> <replacement>`.
 
 ## Current Repository Target
 
@@ -47,8 +54,8 @@ content unchanged.
 
 ## Explicitly Not Implemented Yet
 
-- document mutation
-- transactions
+- cross-run or tracked-change text mutation
+- mutation batches or transactions
 - rendering
 - server
 - agent runtime
@@ -57,14 +64,19 @@ content unchanged.
 - PPTX
 - XLSX
 
-Future mutation, revision/precondition, conflict, validation, serialization,
-and rendering requirements are recorded in `docs/runtime-boundary.md`; they
-are not implemented capabilities.
+`ReplaceText` v0 writes a new artifact atomically after reopening it, while
+leaving the input artifact untouched. It copies unchanged part payloads as-is
+and patches only the main document XML text source region. The engine checks
+the semantic expected text; opaque application revision metadata is accepted
+but not enforced because application history remains outside the engine.
+
+Cross-run edits, tracked-change edits, batches, broader validation,
+serialization APIs, and rendering remain unimplemented.
 
 Tracked formatting/property revisions such as `w:rPrChange`, `w:pPrChange`,
 and table/section property changes remain unsupported and source-preserved.
 
 ## Next Milestone
 
-Build the next explicitly selected DOCX capability without adding mutation or
-serialization.
+Extend typed DOCX mutation only when a new operation has a similarly narrow,
+preservation-safe source mapping.

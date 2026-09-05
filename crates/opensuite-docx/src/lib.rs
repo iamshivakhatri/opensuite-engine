@@ -1,8 +1,10 @@
 //! Source-aware DOCX infrastructure built on OPC package discovery.
 
+mod comment;
 mod content_control;
 mod field;
 mod header_footer;
+mod mutation;
 mod numbering;
 mod picture;
 mod references;
@@ -17,6 +19,7 @@ pub use header_footer::{
     HeaderFooter, HeaderFooterError, HeaderFooterKind, HeaderFooterReference, HeaderFooterType,
     load_footer, load_header,
 };
+pub use mutation::replace_text;
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
     NumberingInstance, NumberingLevel, load_numbering,
@@ -57,6 +60,7 @@ pub fn open_main_source(package: &Package) -> Result<(Part, SourceDocument), Sou
     let source = SourceDocument::parse(bytes)?;
     Ok((part, source))
 }
+pub use comment::{Comment, CommentError, CommentIssue, CommentMetadata, CommentSet};
 pub use content_control::{
     ContentControl, ContentControlKind, ContentControlListItem, ContentControlProperties,
     DataBinding, DateMetadata,

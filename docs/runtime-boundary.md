@@ -8,8 +8,12 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
 - The protocol crate exposes a versioned capability manifest and compact,
   machine-readable diagnostics.
 - The CLI exposes the current manifest through `opensuite capabilities`.
-- DOCX is the only declared format. Its capabilities describe implemented,
-  read-only inspection only.
+- DOCX is the only declared format. Its capabilities describe implemented
+  inspection, revision-aware views, and the narrow `replace_text` mutation.
+- `replace_text` checks semantic expected text inside the engine and writes a
+  new artifact. An opaque caller-supplied base revision may accompany the
+  typed request, but stale application-revision enforcement remains the
+  adapter's responsibility because the engine owns no history.
 
 Source identities such as `NodeId`, XML paths, source spans, OPC relationships,
 ZIP offsets, and byte positions remain engine implementation details. They are

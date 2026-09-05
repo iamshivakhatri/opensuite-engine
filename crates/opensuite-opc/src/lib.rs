@@ -4,12 +4,12 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     fs::File,
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
 use quick_xml::{Reader, events::Event};
-use zip::ZipArchive;
+use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 pub const LAYER: &str = "opc";
 
@@ -157,6 +157,8 @@ pub enum PackageError {
     InvalidRelationshipTarget(String),
     MissingTargetPart(PartName),
     MissingContentType(PartName),
+    OutputMatchesInput,
+    Serialization(io::Error),
 }
 
 impl PackageError {
@@ -176,6 +178,8 @@ impl PackageError {
             Self::InvalidRelationshipTarget(_) => "INVALID_RELATIONSHIP_TARGET",
             Self::MissingTargetPart(_) => "MISSING_TARGET_PART",
             Self::MissingContentType(_) => "MISSING_CONTENT_TYPE",
+            Self::OutputMatchesInput => "OUTPUT_MATCHES_INPUT",
+            Self::Serialization(_) => "SERIALIZATION_FAILED",
         }
     }
 }
@@ -209,6 +213,12 @@ impl fmt::Display for PackageError {
             }
             Self::MissingContentType(part) => {
                 write!(formatter, "content type cannot be resolved: {part}")
+            }
+            Self::OutputMatchesInput => {
+                write!(formatter, "output path must differ from input path")
+            }
+            Self::Serialization(error) => {
+                write!(formatter, "could not write output package: {error}")
             }
         }
     }
@@ -255,6 +265,80 @@ impl Package {
 
     pub fn entry_count(&self) -> usize {
         self.entry_count
+    }
+
+    pub fn source_path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Copies this package to a new ZIP, changing only one uncompressed part payload.
+    pub fn write_replaced_part(
+        &self,
+        part: &Part,
+        replacement: &[u8],
+        output: impl AsRef<Path>,
+    ) -> Result<(), PackageError> {
+        let output = output.as_ref();
+        if output == self.path {
+            return Err(PackageError::OutputMatchesInput);
+        }
+        if !self.parts.contains(&part.name) {
+            return Err(PackageError::MissingTargetPart(part.name.clone()));
+        }
+
+        let parent = output.parent().unwrap_or_else(|| Path::new("."));
+        let temporary = parent.join(format!(
+            ".opensuite-{}-{}.tmp",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let result = self.write_replaced_part_to(&temporary, part, replacement);
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+            return result;
+        }
+        std::fs::rename(&temporary, output).map_err(PackageError::Serialization)
+    }
+
+    fn write_replaced_part_to(
+        &self,
+        output: &Path,
+        part: &Part,
+        replacement: &[u8],
+    ) -> Result<(), PackageError> {
+        let input = File::open(&self.path).map_err(PackageError::Io)?;
+        let mut archive = ZipArchive::new(input).map_err(PackageError::InvalidZip)?;
+        let file = File::create_new(output).map_err(PackageError::Serialization)?;
+        let mut writer = ZipWriter::new(file);
+        let replacement_name = part.name.as_str().trim_start_matches('/');
+
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(PackageError::InvalidZip)?;
+            let name = entry.name().to_owned();
+            if entry.is_dir() {
+                writer
+                    .add_directory(name, SimpleFileOptions::default())
+                    .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+                continue;
+            }
+            writer
+                .start_file(name.clone(), SimpleFileOptions::default())
+                .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+            if name == replacement_name {
+                writer
+                    .write_all(replacement)
+                    .map_err(PackageError::Serialization)?;
+            } else {
+                io::copy(&mut entry, &mut writer).map_err(PackageError::Serialization)?;
+            }
+        }
+        writer
+            .finish()
+            .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+        Ok(())
     }
 
     pub fn part_count(&self) -> usize {

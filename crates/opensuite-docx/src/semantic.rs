@@ -2,6 +2,8 @@ use std::fmt;
 
 use quick_xml::escape::unescape;
 
+use opensuite_opc::{Package, Part};
+
 use crate::{
     Bookmark, Hyperlink, ListReference, NodeId, ParagraphFormatting, Picture, ReferenceError,
     RunFormatting, SourceDocument, SourceNodeKind, StyleError, StyleId, StyleSheet,
@@ -88,6 +90,15 @@ impl<'a> DocxDocument<'a> {
 
     pub fn tracked_changes(&self) -> impl Iterator<Item = crate::TrackedChange<'a>> + '_ {
         crate::tracked_change::tracked_changes(self.source)
+    }
+
+    /// Loads standard comments through relationships belonging to the main document part.
+    pub fn comments(
+        &self,
+        package: &Package,
+        main: &Part,
+    ) -> Result<crate::CommentSet, crate::CommentError> {
+        crate::comment::load(package, main, self.source)
     }
 }
 
