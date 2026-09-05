@@ -6,8 +6,8 @@ use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
     ContentControlTarget, DeleteParagraph, InsertParagraphAfter, OperationResult,
     ParagraphFormattingPatch, PropertyPatch, ReplaceText, SetContentControlText,
-    SetParagraphFormatting, SetTableCellText, SetTextFormatting, TableCellTarget,
-    TextFormattingPatch, TextTarget,
+    SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTextFormatting,
+    TableCellTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -489,6 +489,222 @@ pub fn set_paragraph_formatting(
         return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
     }
     OperationResult::paragraph_formatting_set(text)
+}
+
+/// Sets or clears only the direct paragraph style reference.
+pub fn set_paragraph_style(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetParagraphStyle,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output == package.source_path()
+        || output.exists()
+            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
+    {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let (text, paragraph) = match resolve_paragraph_anchor(source, &operation.target) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let styles = match crate::load_styles(package, main) {
+        Ok(styles) => styles,
+        Err(error) => return document_invalid(error),
+    };
+    let resolved_style = match resolve_paragraph_style(styles.as_ref(), &operation.style) {
+        Ok(style) => style,
+        Err(result) => return result,
+    };
+    let before = direct_paragraph_style_name(source, paragraph, styles.as_ref());
+    let direct_formatting = match source
+        .children(paragraph)
+        .find(|id| word(source, *id, "pPr"))
+        .map(|ppr| crate::styles::paragraph_formatting(source, ppr))
+        .transpose()
+    {
+        Ok(value) => value.unwrap_or_default(),
+        Err(error) => return document_invalid(error),
+    };
+    let patches = match paragraph_style_patches(
+        source,
+        paragraph,
+        resolved_style.as_ref().map(|style| style.0.as_str()),
+    ) {
+        Ok(patches) => patches,
+        Err(result) => return result,
+    };
+    let patched = match apply_patches(source, patches) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let temporary = temporary_path(output);
+    if let Err(error) = package.write_replaced_part(main, &patched, &temporary) {
+        return OperationResult::failed(error.code(), error.to_string());
+    }
+    if let Err(result) = verify_paragraph_style_output(
+        &temporary,
+        &operation.target,
+        &text,
+        resolved_style.as_ref(),
+        &direct_formatting,
+    ) {
+        let _ = std::fs::remove_file(&temporary);
+        return result;
+    }
+    if let Err(error) = std::fs::rename(&temporary, output) {
+        let _ = std::fs::remove_file(&temporary);
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    let after = resolved_style.map_or_else(|| "direct style cleared".to_owned(), |style| style.1);
+    OperationResult::paragraph_style_set(text, before, after)
+}
+
+fn resolve_paragraph_style(
+    styles: Option<&crate::StyleSheet>,
+    style: &PropertyPatch<String>,
+) -> Result<Option<(String, String)>, OperationResult> {
+    let PropertyPatch::Set(name) = style else {
+        return Ok(None);
+    };
+    if name.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "paragraph style name must not be empty",
+        ));
+    }
+    let Some(styles) = styles else {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "document has no stylesheet",
+        ));
+    };
+    let matches = styles
+        .styles()
+        .filter(|style| style.name() == Some(name.as_str()))
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "paragraph style name was not found",
+        ));
+    }
+    if matches.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "paragraph style name matches more than one style",
+        ));
+    }
+    (matches[0].style_type() == crate::StyleType::Paragraph)
+        .then_some(Some((matches[0].id().as_str().to_owned(), name.clone())))
+        .ok_or_else(|| unsupported("requested style is not a paragraph style"))
+}
+
+fn direct_paragraph_style_name(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    styles: Option<&crate::StyleSheet>,
+) -> String {
+    let id = source
+        .children(paragraph)
+        .find(|id| word(source, *id, "pPr"))
+        .and_then(|ppr| source.children(ppr).find(|id| word(source, *id, "pStyle")))
+        .and_then(|id| source.node(id))
+        .and_then(|node| node.attribute("val"));
+    id.and_then(|id| {
+        styles
+            .and_then(|styles| styles.styles().find(|style| style.id().as_str() == id))
+            .and_then(crate::Style::name)
+    })
+    .map(str::to_owned)
+    .unwrap_or_else(|| "direct style cleared".to_owned())
+}
+
+fn paragraph_style_patches(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    style_id: Option<&str>,
+) -> Result<Vec<Patch>, OperationResult> {
+    let prefix = word_prefix(source, paragraph)?;
+    let name = |local: &str| qualify(prefix, local);
+    let ppr = source
+        .children(paragraph)
+        .find(|id| word(source, *id, "pPr"));
+    match (ppr, style_id) {
+        (Some(ppr), Some(style)) => {
+            let replacement = format!(
+                "<{} {}val=\"{}\"/>",
+                name("pStyle"),
+                attr_prefix(prefix),
+                escape(style)
+            );
+            if let Some(existing) = source.children(ppr).find(|id| word(source, *id, "pStyle")) {
+                Ok(vec![Patch {
+                    span: source.node(existing).expect("node").span(),
+                    replacement: replacement.into_bytes(),
+                }])
+            } else {
+                Ok(vec![ppr_insertion_at_start(
+                    source,
+                    ppr,
+                    replacement.into_bytes(),
+                )?])
+            }
+        }
+        (Some(ppr), None) => Ok(source
+            .children(ppr)
+            .find(|id| word(source, *id, "pStyle"))
+            .map(|id| Patch {
+                span: source.node(id).expect("node").span(),
+                replacement: Vec::new(),
+            })
+            .into_iter()
+            .collect()),
+        (None, Some(style)) => {
+            let at = source
+                .children(paragraph)
+                .find_map(|id| {
+                    source
+                        .node(id)
+                        .filter(|node| matches!(node.kind(), SourceNodeKind::Element { .. }))
+                        .map(|node| node.span().start)
+                })
+                .ok_or_else(|| unsupported("paragraph has no insertion boundary"))?;
+            Ok(vec![Patch {
+                span: SourceSpan { start: at, end: at },
+                replacement: format!(
+                    "<{}><{} {}val=\"{}\"/></{}>",
+                    name("pPr"),
+                    name("pStyle"),
+                    attr_prefix(prefix),
+                    escape(style),
+                    name("pPr")
+                )
+                .into_bytes(),
+            }])
+        }
+        (None, None) => Ok(Vec::new()),
+    }
+}
+
+fn ppr_insertion_at_start(
+    source: &SourceDocument,
+    ppr: NodeId,
+    replacement: Vec<u8>,
+) -> Result<Patch, OperationResult> {
+    if let Some(first) = source.children(ppr).next() {
+        let at = source.node(first).expect("node").span().start;
+        return Ok(Patch {
+            span: SourceSpan { start: at, end: at },
+            replacement,
+        });
+    }
+    ppr_insertion(source, ppr, replacement)
 }
 
 /// Sets direct formatting on one complete, ordinary visible text run.
@@ -2180,6 +2396,77 @@ fn verify_formatting_output(
         })
 }
 
+fn verify_paragraph_style_output(
+    output: &Path,
+    target: &TextTarget,
+    text: &str,
+    style: Option<&(String, String)>,
+    expected_formatting: &crate::styles::ParagraphFormatting,
+) -> Result<(), OperationResult> {
+    let package = Package::open(output).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let (resolved, paragraph) = resolve_paragraph_anchor(&source, target)?;
+    if resolved != text {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output target paragraph text changed",
+        ));
+    }
+    let ppr = source
+        .children(paragraph)
+        .find(|id| word(&source, *id, "pPr"));
+    let direct = ppr
+        .map(|id| crate::styles::paragraph_formatting(&source, id))
+        .transpose()
+        .map_err(document_invalid)?
+        .unwrap_or_default();
+    if &direct != expected_formatting {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output direct paragraph formatting changed",
+        ));
+    }
+    let direct_id = ppr
+        .and_then(|ppr| source.children(ppr).find(|id| word(&source, *id, "pStyle")))
+        .and_then(|id| source.node(id))
+        .and_then(|node| node.attribute("val"));
+    match style {
+        Some((id, name)) => {
+            if direct_id != Some(id.as_str()) {
+                return Err(OperationResult::failed(
+                    "DOCUMENT_INVALID",
+                    "output direct paragraph style does not match request",
+                ));
+            }
+            let styles = crate::load_styles(&package, &main)
+                .map_err(document_invalid)?
+                .ok_or_else(|| {
+                    OperationResult::failed("DOCUMENT_INVALID", "output stylesheet is unavailable")
+                })?;
+            if styles
+                .styles()
+                .find(|style| style.id().as_str() == id)
+                .and_then(crate::Style::name)
+                != Some(name.as_str())
+            {
+                return Err(OperationResult::failed(
+                    "DOCUMENT_INVALID",
+                    "output paragraph style name does not match request",
+                ));
+            }
+        }
+        None if direct_id.is_some() => {
+            return Err(OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "output direct paragraph style was not cleared",
+            ));
+        }
+        None => {}
+    }
+    Ok(())
+}
+
 fn verify_text_formatting_output(
     output: &Path,
     target: &TextTarget,
@@ -2361,8 +2648,8 @@ mod tests {
     use opensuite_protocol::{
         ContentControlTarget, DeleteParagraph, InsertParagraphAfter, ParagraphAlignment,
         ParagraphFormattingPatch, PropertyPatch, ReplaceText, SetContentControlText,
-        SetParagraphFormatting, SetTableCellText, SetTextFormatting, TableCellTarget,
-        TextFormattingPatch, TextTarget,
+        SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTextFormatting,
+        TableCellTarget, TextFormattingPatch, TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -2415,6 +2702,31 @@ mod tests {
         zip.write_all(format!("<Relationships><Relationship Id=\"rId1\" Type=\"{OFFICE}\" Target=\"word/document.xml\"/></Relationships>").as_bytes()).unwrap();
         zip.start_file("word/document.xml", options).unwrap();
         zip.write_all(document.as_bytes()).unwrap();
+        zip.start_file("word/media/image.bin", options).unwrap();
+        zip.write_all(&[1, 2, 3]).unwrap();
+        zip.finish().unwrap();
+        path
+    }
+
+    fn styled_fixture(document: &str) -> std::path::PathBuf {
+        let path = path("style-input");
+        let file = fs::File::create(&path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        zip.write_all(
+            b"<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/></Types>",
+        )
+        .unwrap();
+        zip.start_file("_rels/.rels", options).unwrap();
+        zip.write_all(format!("<Relationships><Relationship Id=\"rId1\" Type=\"{OFFICE}\" Target=\"word/document.xml\"/></Relationships>").as_bytes()).unwrap();
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(document.as_bytes()).unwrap();
+        zip.start_file("word/_rels/document.xml.rels", options)
+            .unwrap();
+        zip.write_all(b"<Relationships><Relationship Id=\"rIdStyles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>").unwrap();
+        zip.start_file("word/styles.xml", options).unwrap();
+        zip.write_all(format!("<w:styles xmlns:w=\"{WORD}\"><w:style w:type=\"paragraph\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style><w:style w:type=\"paragraph\" w:styleId=\"HeadingOne\"><w:name w:val=\"Heading 1\"/></w:style><w:style w:type=\"character\" w:styleId=\"Emphasis\"><w:name w:val=\"Emphasis\"/></w:style></w:styles>").as_bytes()).unwrap();
         zip.start_file("word/media/image.bin", options).unwrap();
         zip.write_all(&[1, 2, 3]).unwrap();
         zip.finish().unwrap();
@@ -3383,5 +3695,82 @@ mod tests {
             assert_eq!(result.diagnostics[0].code, "UNSUPPORTED_OPERATION");
             fs::remove_file(input).unwrap();
         }
+    }
+
+    #[test]
+    fn sets_and_clears_existing_paragraph_styles_by_name_without_touching_styles_part() {
+        let input = styled_fixture(&format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:pPr w:unknown=\"keep\"><w:pStyle w:val=\"Normal\"/><w:jc w:val=\"center\"/><w:unknown/></w:pPr><w:r><w:t>Style me</w:t></w:r></w:p><w:p><w:r><w:t>Other</w:t></w:r></w:p></w:body></w:document>"
+        ));
+        let output = path("style-output");
+        let package = Package::open(&input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let operation = SetParagraphStyle {
+            target: TextTarget {
+                text: "Style me".to_owned(),
+                occurrence: None,
+            },
+            style: PropertyPatch::Set("Heading 1".to_owned()),
+            base_revision: None,
+        };
+        assert_eq!(
+            set_paragraph_style(&package, &main, &source, &operation, &output).status,
+            opensuite_protocol::OperationStatus::Applied
+        );
+        let xml = String::from_utf8(entry(&output, "word/document.xml")).unwrap();
+        assert!(xml.contains("<w:pStyle w:val=\"HeadingOne\"/>"));
+        assert!(xml.contains("<w:jc w:val=\"center\"/>"));
+        assert!(xml.contains("<w:unknown/>"));
+        assert_eq!(
+            entry(&input, "word/styles.xml"),
+            entry(&output, "word/styles.xml")
+        );
+        assert_eq!(
+            entry(&input, "word/media/image.bin"),
+            entry(&output, "word/media/image.bin")
+        );
+        let updated = Package::open(&output).unwrap();
+        let (main, source) = crate::open_main_source(&updated).unwrap();
+        let clear = SetParagraphStyle {
+            target: TextTarget {
+                text: "Style me".to_owned(),
+                occurrence: None,
+            },
+            style: PropertyPatch::Clear,
+            base_revision: None,
+        };
+        let cleared = path("style-cleared");
+        assert_eq!(
+            set_paragraph_style(&updated, &main, &source, &clear, &cleared).status,
+            opensuite_protocol::OperationStatus::Applied
+        );
+        assert!(
+            !String::from_utf8(entry(&cleared, "word/document.xml"))
+                .unwrap()
+                .contains("pStyle")
+        );
+        for (style, code) in [
+            ("Emphasis", "UNSUPPORTED_OPERATION"),
+            ("Missing", "TARGET_NOT_FOUND"),
+        ] {
+            let result = set_paragraph_style(
+                &package,
+                &main,
+                &source,
+                &SetParagraphStyle {
+                    target: TextTarget {
+                        text: "Style me".to_owned(),
+                        occurrence: None,
+                    },
+                    style: PropertyPatch::Set(style.to_owned()),
+                    base_revision: None,
+                },
+                path("style-rejected"),
+            );
+            assert_eq!(result.diagnostics[0].code, code);
+        }
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+        fs::remove_file(cleared).unwrap();
     }
 }

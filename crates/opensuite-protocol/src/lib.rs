@@ -107,6 +107,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_content_control_text",
     "set_paragraph_formatting",
     "set_text_formatting",
+    "set_paragraph_style",
     "find_text",
     "inspect_context",
 ];
@@ -241,6 +242,14 @@ pub struct TextFormattingPatch {
 pub struct SetTextFormatting {
     pub target: TextTarget,
     pub formatting: TextFormattingPatch,
+    pub base_revision: Option<String>,
+}
+
+/// Sets or clears the direct paragraph-style reference using an existing style's display name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetParagraphStyle {
+    pub target: TextTarget,
+    pub style: PropertyPatch<String>,
     pub base_revision: Option<String>,
 }
 
@@ -455,6 +464,18 @@ impl OperationResult {
         Self::formatting_set("text_formatting_set", text)
     }
 
+    pub fn paragraph_style_set(text: String, before: String, after: String) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "paragraph_style_set".to_owned(),
+                before: format!("{text} style: {before}"),
+                after,
+            }],
+        }
+    }
+
     fn formatting_set(kind: &str, text: String) -> Self {
         Self {
             status: OperationStatus::Applied,
@@ -559,7 +580,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

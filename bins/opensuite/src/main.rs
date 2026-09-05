@@ -30,6 +30,8 @@ fn main() {
         set_paragraph_formatting(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-text-formatting")) {
         set_text_formatting(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-paragraph-style")) {
+        set_paragraph_style(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
         inspect_context(arguments)
     } else {
@@ -499,6 +501,103 @@ fn set_text_formatting(
                 occurrence,
             },
             formatting,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn set_paragraph_style(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(target)) =
+        (arguments.next(), arguments.next(), arguments.next())
+    else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "set-paragraph-style requires input, output, and target text".to_owned(),
+        ));
+    };
+    let target = target.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "target text must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let values = arguments
+        .map(|value| {
+            value.into_string().map_err(|_| {
+                (
+                    "INVALID_ARGUMENTS",
+                    "style arguments must be valid UTF-8".to_owned(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut style = None;
+    let mut occurrence = None;
+    let mut index = 0;
+    while index < values.len() {
+        match values[index].as_str() {
+            "--style" => {
+                index += 1;
+                style = Some(opensuite_protocol::PropertyPatch::Set(
+                    values.get(index).cloned().ok_or_else(|| {
+                        ("INVALID_ARGUMENTS", "--style requires a value".to_owned())
+                    })?,
+                ));
+            }
+            "--clear-style" => style = Some(opensuite_protocol::PropertyPatch::Clear),
+            "--occurrence" => {
+                index += 1;
+                occurrence = Some(
+                    values
+                        .get(index)
+                        .ok_or_else(|| {
+                            (
+                                "INVALID_ARGUMENTS",
+                                "--occurrence requires a value".to_owned(),
+                            )
+                        })?
+                        .parse()
+                        .map_err(|_| {
+                            (
+                                "INVALID_ARGUMENTS",
+                                "occurrence must be a non-negative integer".to_owned(),
+                            )
+                        })?,
+                );
+            }
+            value => {
+                return Err((
+                    "INVALID_ARGUMENTS",
+                    format!("unknown paragraph-style option {value}"),
+                ));
+            }
+        }
+        index += 1;
+    }
+    let Some(style) = style else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "specify --style or --clear-style".to_owned(),
+        ));
+    };
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_paragraph_style(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetParagraphStyle {
+            target: opensuite_protocol::TextTarget {
+                text: target,
+                occurrence,
+            },
+            style,
             base_revision: None,
         },
         output,
@@ -1345,6 +1444,7 @@ fn inspect_styles(path: std::ffi::OsString) -> Result<serde_json::Value, (&'stat
         .into_iter()
         .map(|style| serde_json::json!({
             "id": style.id().as_str(),
+            "name": style.name(),
             "type": match style.style_type() { opensuite_docx::StyleType::Paragraph => "paragraph", opensuite_docx::StyleType::Character => "character" },
             "based_on": style.based_on().map(opensuite_docx::StyleId::as_str),
         }))

@@ -144,6 +144,7 @@ pub type EffectiveParagraphFormatting = ParagraphFormatting;
 pub struct Style {
     source_id: NodeId,
     id: StyleId,
+    name: Option<String>,
     style_type: StyleType,
     based_on: Option<StyleId>,
     formatting: RunFormatting,
@@ -157,6 +158,9 @@ impl Style {
     }
     pub fn id(&self) -> &StyleId {
         &self.id
+    }
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
     pub fn style_type(&self) -> StyleType {
         self.style_type
@@ -224,6 +228,11 @@ impl StyleSheet {
                 .and_then(|node| node.attribute("val"))
                 .filter(|value| !value.is_empty())
                 .map(|value| StyleId::new(value.to_owned()));
+            let name = child(&source, source_id, "name")
+                .and_then(|id| source.node(id))
+                .and_then(|node| node.attribute("val"))
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned);
             let formatting = child(&source, source_id, "rPr")
                 .map(|id| run_formatting(&source, id))
                 .transpose()?
@@ -248,6 +257,7 @@ impl StyleSheet {
                 Style {
                     source_id,
                     id,
+                    name,
                     style_type,
                     based_on,
                     formatting,
