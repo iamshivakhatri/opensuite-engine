@@ -101,7 +101,9 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "comments",
     "revision_views",
     "replace_text",
+    "insert_paragraph_after",
     "find_text",
+    "inspect_context",
 ];
 
 /// A DOCX text target. `occurrence` is zero-based when repeated exact text needs disambiguation.
@@ -117,6 +119,15 @@ pub struct ReplaceText {
     pub target: TextTarget,
     pub expected_current_text: String,
     pub replacement: String,
+    pub base_revision: Option<String>,
+}
+
+/// Inserts a plain paragraph after the paragraph containing `anchor`.
+/// `base_revision` is opaque caller metadata only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertParagraphAfter {
+    pub anchor: TextTarget,
+    pub text: String,
     pub base_revision: Option<String>,
 }
 
@@ -155,6 +166,71 @@ pub struct FindTextResult {
     pub query: String,
     pub matches: Vec<FindTextMatch>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// A request for the semantic container around one exact Current-view text target.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InspectTextContext {
+    pub target: TextTarget,
+    pub before: usize,
+    pub after: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextContextContainer {
+    pub relative_position: isize,
+    pub text: String,
+    pub container: TextContainer,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InspectTextContextResult {
+    pub target: TextTarget,
+    pub container: Option<TextContextContainer>,
+    pub nearby: Vec<TextContextContainer>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl InspectTextContextResult {
+    pub fn found(
+        target: TextTarget,
+        container: TextContextContainer,
+        nearby: Vec<TextContextContainer>,
+    ) -> Self {
+        Self {
+            target,
+            container: Some(container),
+            nearby,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn failed(target: TextTarget, code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            target,
+            container: None,
+            nearby: Vec::new(),
+            diagnostics: vec![Diagnostic::new(code, DiagnosticSeverity::Error, message)],
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "ok": self.diagnostics.is_empty(),
+            "target": { "text": self.target.text, "occurrence": self.target.occurrence },
+            "container": self.container.as_ref().map(context_container_json),
+            "nearby": self.nearby.iter().map(context_container_json).collect::<Vec<_>>(),
+            "diagnostics": self.diagnostics.iter().map(Diagnostic::to_json).collect::<Vec<_>>(),
+        })
+    }
+}
+
+fn context_container_json(container: &TextContextContainer) -> serde_json::Value {
+    serde_json::json!({
+        "relative_position": container.relative_position,
+        "text": container.text,
+        "container": container.container.as_str(),
+    })
 }
 
 impl FindTextResult {
@@ -207,6 +283,18 @@ impl OperationResult {
             status: OperationStatus::Failed,
             diagnostics: vec![Diagnostic::new(code, DiagnosticSeverity::Error, message)],
             changes: Vec::new(),
+        }
+    }
+
+    pub fn paragraph_inserted(anchor: String, text: String) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "paragraph_inserted".to_owned(),
+                before: anchor,
+                after: text,
+            }],
         }
     }
 
@@ -302,7 +390,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","find_text"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

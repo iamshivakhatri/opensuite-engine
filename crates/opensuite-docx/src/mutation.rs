@@ -3,7 +3,7 @@ use std::path::Path;
 use quick_xml::escape::escape;
 
 use opensuite_opc::{Package, Part};
-use opensuite_protocol::{OperationResult, ReplaceText};
+use opensuite_protocol::{InsertParagraphAfter, OperationResult, ReplaceText, TextTarget};
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
 
@@ -69,6 +69,74 @@ pub fn replace_text(
     )
 }
 
+/// Inserts one plain paragraph after a safe, direct main-body paragraph anchor.
+pub fn insert_paragraph_after(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertParagraphAfter,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output == package.source_path()
+        || output.exists()
+            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
+    {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let (anchor, paragraph) = match resolve_paragraph_anchor(source, &operation.anchor) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let fragment = match paragraph_fragment(source, paragraph, &operation.text) {
+        Ok(fragment) => fragment,
+        Err(result) => return result,
+    };
+    let insertion = source
+        .node(paragraph)
+        .expect("anchor paragraph exists")
+        .span()
+        .end;
+    let patched = match apply_patches(
+        source,
+        vec![Patch {
+            span: SourceSpan {
+                start: insertion,
+                end: insertion,
+            },
+            replacement: fragment,
+        }],
+    ) {
+        Ok(patched) => patched,
+        Err(result) => return result,
+    };
+    let temporary = output.with_file_name(format!(
+        ".opensuite-{}-{}.docx",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    if let Err(error) = package.write_replaced_part(main, &patched, &temporary) {
+        return OperationResult::failed(error.code(), error.to_string());
+    }
+    if let Err(result) =
+        verify_inserted_output(&temporary, &operation.anchor, &anchor, &operation.text)
+    {
+        let _ = std::fs::remove_file(&temporary);
+        return result;
+    }
+    if let Err(error) = std::fs::rename(&temporary, output) {
+        let _ = std::fs::remove_file(&temporary);
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    OperationResult::paragraph_inserted(anchor, operation.text.clone())
+}
+
 struct ResolvedText {
     value: String,
     patches: Vec<Patch>,
@@ -77,6 +145,146 @@ struct ResolvedText {
 struct Patch {
     span: SourceSpan,
     replacement: Vec<u8>,
+}
+
+fn resolve_paragraph_anchor(
+    source: &SourceDocument,
+    target: &TextTarget,
+) -> Result<(String, NodeId), OperationResult> {
+    let matches = crate::text_search::resolve_text(source, &target.text)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    if matches.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "text target was not found",
+        ));
+    }
+    let matched = if let Some(occurrence) = target.occurrence {
+        matches.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "text target occurrence was not found")
+        })?
+    } else if matches.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "text target matches more than one current semantic range",
+        ));
+    } else {
+        matches.into_iter().next().expect("one match")
+    };
+    let paragraph = matched
+        .segments
+        .first()
+        .and_then(|segment| paragraph_ancestor(source, segment.id))
+        .ok_or_else(|| unsupported("insert_paragraph_after requires a paragraph anchor"))?;
+    if matched
+        .segments
+        .iter()
+        .any(|segment| paragraph_ancestor(source, segment.id) != Some(paragraph))
+        || !safe_body_paragraph(source, paragraph)
+    {
+        return Err(unsupported(
+            "insert_paragraph_after supports only ordinary direct body paragraphs",
+        ));
+    }
+    Ok((matched.text, paragraph))
+}
+
+fn paragraph_ancestor(source: &SourceDocument, mut id: NodeId) -> Option<NodeId> {
+    loop {
+        if word(source, id, "p") {
+            return Some(id);
+        }
+        id = source.node(id)?.parent()?;
+    }
+}
+
+fn safe_body_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
+    let Some(body) = source.node(paragraph).and_then(|node| node.parent()) else {
+        return false;
+    };
+    word(source, body, "body")
+        && source
+            .node(body)
+            .and_then(|node| node.parent())
+            .is_some_and(|document| word(source, document, "document"))
+        && !source.children(paragraph).any(|id| {
+            word(source, id, "pPr")
+                && source
+                    .children(id)
+                    .any(|child| word(source, child, "sectPr"))
+        })
+        && !has_revision_wrapper(source, paragraph)
+}
+
+fn has_revision_wrapper(source: &SourceDocument, id: NodeId) -> bool {
+    word(source, id, "ins")
+        || word(source, id, "del")
+        || word(source, id, "moveFrom")
+        || word(source, id, "moveTo")
+        || source
+            .children(id)
+            .any(|child| has_revision_wrapper(source, child))
+}
+
+fn paragraph_fragment(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    text: &str,
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_prefix(source, paragraph)?;
+    let name = |local: &str| {
+        if prefix.is_empty() {
+            local.to_owned()
+        } else {
+            format!("{prefix}:{local}")
+        }
+    };
+    if text.is_empty() {
+        return Ok(format!("<{}></{}>", name("p"), name("p")).into_bytes());
+    }
+    let space = if requires_space_preservation(text) {
+        " xml:space=\"preserve\""
+    } else {
+        ""
+    };
+    Ok(format!(
+        "<{}><{}><{}{}>{}</{}></{}></{}>",
+        name("p"),
+        name("r"),
+        name("t"),
+        space,
+        escape(text),
+        name("t"),
+        name("r"),
+        name("p")
+    )
+    .into_bytes())
+}
+
+fn word_prefix(source: &SourceDocument, id: NodeId) -> Result<&str, OperationResult> {
+    let SourceNodeKind::Element { start_tag, .. } =
+        source.node(id).expect("source node exists").kind()
+    else {
+        return Err(unsupported("anchor paragraph has no source tag"));
+    };
+    let tag = std::str::from_utf8(&source.original_bytes()[start_tag.start..start_tag.end])
+        .map_err(|_| unsupported("anchor paragraph tag is not UTF-8"))?;
+    let name = tag
+        .strip_prefix('<')
+        .and_then(|value| {
+            value
+                .split(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+                .next()
+        })
+        .ok_or_else(|| unsupported("anchor paragraph tag is invalid"))?;
+    let prefix = name
+        .strip_suffix("p")
+        .and_then(|value| value.strip_suffix(':'))
+        .unwrap_or("");
+    if name != "p" && !name.ends_with(":p") {
+        return Err(unsupported("anchor paragraph tag is invalid"));
+    }
+    Ok(prefix)
 }
 
 fn resolve_target(
@@ -273,6 +481,52 @@ fn verify_output(output: &Path, replacement: &str) -> Result<(), OperationResult
     Ok(())
 }
 
+fn verify_inserted_output(
+    output: &Path,
+    target: &TextTarget,
+    anchor_text: &str,
+    inserted_text: &str,
+) -> Result<(), OperationResult> {
+    let package = Package::open(output).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let (resolved_anchor, anchor) = resolve_paragraph_anchor(&source, target)?;
+    if resolved_anchor != anchor_text {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output anchor text changed",
+        ));
+    }
+    let document = crate::DocxDocument::new(&source).map_err(document_invalid)?;
+    let mut blocks = document.blocks();
+    while let Some(block) = blocks.next() {
+        if matches!(block, crate::BodyBlock::Paragraph(ref paragraph) if paragraph.source_id() == anchor)
+        {
+            let Some(crate::BodyBlock::Paragraph(inserted)) = blocks.next() else {
+                return Err(OperationResult::failed(
+                    "DOCUMENT_INVALID",
+                    "inserted paragraph is not immediately after anchor",
+                ));
+            };
+            return (inserted
+                .text_for_view(RevisionView::Current)
+                .map_err(document_invalid)?
+                == inserted_text)
+                .then_some(())
+                .ok_or_else(|| {
+                    OperationResult::failed(
+                        "DOCUMENT_INVALID",
+                        "inserted paragraph text does not match request",
+                    )
+                });
+        }
+    }
+    Err(OperationResult::failed(
+        "DOCUMENT_INVALID",
+        "output anchor paragraph was not found",
+    ))
+}
+
 fn table_current_text(table: crate::Table<'_>) -> Result<String, SemanticError> {
     let mut text = String::new();
     for row in table.rows() {
@@ -308,7 +562,7 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
-    use opensuite_protocol::{ReplaceText, TextTarget};
+    use opensuite_protocol::{InsertParagraphAfter, ReplaceText, TextTarget};
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
     use super::*;
@@ -362,6 +616,27 @@ mod tests {
         let package = Package::open(input).unwrap();
         let (main, source) = crate::open_main_source(&package).unwrap();
         replace_text(&package, &main, &source, operation, output)
+    }
+
+    fn insert_operation(anchor: &str, text: &str) -> InsertParagraphAfter {
+        InsertParagraphAfter {
+            anchor: TextTarget {
+                text: anchor.to_owned(),
+                occurrence: None,
+            },
+            text: text.to_owned(),
+            base_revision: Some("caller-version-7".to_owned()),
+        }
+    }
+
+    fn insert_execute(
+        input: &Path,
+        output: &Path,
+        operation: &InsertParagraphAfter,
+    ) -> OperationResult {
+        let package = Package::open(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        insert_paragraph_after(&package, &main, &source, operation, output)
     }
 
     fn entry(path: &Path, name: &str) -> Vec<u8> {
@@ -540,5 +815,128 @@ mod tests {
         );
         fs::remove_file(input).unwrap();
         fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn inserts_plain_paragraph_after_a_safe_anchor_and_preserves_other_parts() {
+        let input = fixture();
+        let output = path("inserted");
+        let result = insert_execute(
+            &input,
+            &output,
+            &insert_operation("OLD UNIQUE TEXT", "New & < > paragraph"),
+        );
+
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+        assert_eq!(result.changes[0].kind, "paragraph_inserted");
+        assert!(!result.to_json().to_string().contains("NodeId"));
+        assert_eq!(
+            entry(&input, "word/media/image.bin"),
+            entry(&output, "word/media/image.bin")
+        );
+        let xml = String::from_utf8(entry(&output, "word/document.xml")).unwrap();
+        assert!(xml.contains("<w:t>OLD UNIQUE TEXT</w:t></w:r></w:p><w:p><w:r><w:t>New &amp; &lt; &gt; paragraph</w:t></w:r></w:p>"));
+        let package = Package::open(&output).unwrap();
+        package.verify().unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            crate::DocxDocument::new(&source)
+                .unwrap()
+                .paragraphs()
+                .nth(1)
+                .unwrap()
+                .text()
+                .unwrap(),
+            "New & < > paragraph"
+        );
+
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn inserts_whitespace_unicode_and_empty_paragraphs() {
+        for (text, expected) in [
+            (" hello ", " xml:space=\"preserve\"> hello "),
+            ("你好", ">你好<"),
+            ("", "<w:p></w:p>"),
+        ] {
+            let input = fixture();
+            let output = path("insert-text");
+            let result =
+                insert_execute(&input, &output, &insert_operation("OLD UNIQUE TEXT", text));
+            assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+            assert!(
+                String::from_utf8(entry(&output, "word/document.xml"))
+                    .unwrap()
+                    .contains(expected)
+            );
+            fs::remove_file(input).unwrap();
+            fs::remove_file(output).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_ambiguous_and_unsafe_structural_anchors() {
+        let input = fixture();
+        let output = path("insert-failed");
+        assert_eq!(
+            insert_execute(&input, &output, &insert_operation("Duplicate", "new")).diagnostics[0]
+                .code,
+            "TARGET_AMBIGUOUS"
+        );
+        let mut occurrence = insert_operation("Duplicate", "new");
+        occurrence.anchor.occurrence = Some(1);
+        assert_eq!(
+            insert_execute(&input, &output, &occurrence).status,
+            opensuite_protocol::OperationStatus::Applied
+        );
+        fs::remove_file(&output).unwrap();
+        fs::remove_file(input).unwrap();
+
+        for xml in [
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>needle</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:pPr><w:sectPr/></w:pPr><w:r><w:t>needle</w:t></w:r></w:p></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:ins><w:r><w:t>needle</w:t></w:r></w:ins></w:p></w:body></w:document>"
+            ),
+        ] {
+            let source = SourceDocument::parse(xml.into_bytes()).unwrap();
+            assert_eq!(
+                resolve_paragraph_anchor(
+                    &source,
+                    &TextTarget {
+                        text: "needle".to_owned(),
+                        occurrence: None
+                    }
+                )
+                .unwrap_err()
+                .diagnostics[0]
+                    .code,
+                "UNSUPPORTED_OPERATION"
+            );
+        }
+    }
+
+    #[test]
+    fn uses_the_anchor_prefix_for_strict_wordprocessingml() {
+        let strict = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+        let source = SourceDocument::parse(format!("<word:document xmlns:word=\"{strict}\"><word:body><word:p><word:r><word:t>needle</word:t></word:r></word:p><word:sectPr/></word:body></word:document>").into_bytes()).unwrap();
+        let (_, paragraph) = resolve_paragraph_anchor(
+            &source,
+            &TextTarget {
+                text: "needle".to_owned(),
+                occurrence: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            paragraph_fragment(&source, paragraph, "new").unwrap(),
+            b"<word:p><word:r><word:t>new</word:t></word:r></word:p>"
+        );
     }
 }

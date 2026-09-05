@@ -12,6 +12,7 @@ mod section;
 mod semantic;
 mod source;
 mod styles;
+mod text_context;
 mod text_search;
 mod tracked_change;
 
@@ -20,7 +21,7 @@ pub use header_footer::{
     HeaderFooter, HeaderFooterError, HeaderFooterKind, HeaderFooterReference, HeaderFooterType,
     load_footer, load_header,
 };
-pub use mutation::replace_text;
+pub use mutation::{insert_paragraph_after, replace_text};
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
     NumberingInstance, NumberingLevel, load_numbering,
@@ -45,6 +46,7 @@ pub use styles::{
     ParagraphAlignment, ParagraphFormatting, RunFormatting, Style, StyleError, StyleId, StyleSheet,
     StyleType, load_styles,
 };
+pub use text_context::inspect_text_context;
 pub use text_search::find_text;
 pub use tracked_change::{RevisionView, TrackedChange, TrackedChangeKind, TrackedChangeMetadata};
 

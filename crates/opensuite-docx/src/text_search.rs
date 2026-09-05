@@ -51,6 +51,12 @@ pub(crate) struct ResolvedTextMatch {
     pub before: String,
     pub after: String,
     pub container: TextContainer,
+    pub container_index: usize,
+}
+
+pub(crate) struct ResolvedTextContainer {
+    pub text: String,
+    pub container: TextContainer,
 }
 
 #[derive(Clone)]
@@ -66,40 +72,49 @@ pub(crate) fn resolve_text(
     source: &SourceDocument,
     query: &str,
 ) -> Result<Vec<ResolvedTextMatch>, SemanticError> {
+    Ok(resolve_text_with_containers(source, query)?.1)
+}
+
+pub(crate) fn resolve_text_with_containers(
+    source: &SourceDocument,
+    query: &str,
+) -> Result<(Vec<ResolvedTextContainer>, Vec<ResolvedTextMatch>), SemanticError> {
     if query.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let document = DocxDocument::new(source)?;
-    let mut matches = Vec::new();
+    let mut containers = Vec::new();
+    let mut nodes = Vec::new();
     for block in document.blocks() {
         match block {
             BodyBlock::Paragraph(paragraph) => {
-                find_in_container(
-                    source,
-                    paragraph.source_id(),
-                    TextContainer::Paragraph,
-                    query,
-                    &mut matches,
-                )?;
+                nodes.push((paragraph.source_id(), TextContainer::Paragraph))
             }
             BodyBlock::Table(table) => {
                 for row in table.rows() {
                     for cell in row.cells() {
                         for paragraph in cell.paragraphs() {
-                            find_in_container(
-                                source,
-                                paragraph.source_id(),
-                                TextContainer::TableCell,
-                                query,
-                                &mut matches,
-                            )?;
+                            nodes.push((paragraph.source_id(), TextContainer::TableCell));
                         }
                     }
                 }
             }
         }
     }
-    Ok(matches)
+    let mut matches = Vec::new();
+    for (container, kind) in nodes {
+        let container_index = containers.len();
+        find_in_container(
+            source,
+            container,
+            kind,
+            query,
+            container_index,
+            &mut containers,
+            &mut matches,
+        )?;
+    }
+    Ok((containers, matches))
 }
 
 fn find_in_container(
@@ -107,6 +122,8 @@ fn find_in_container(
     container: NodeId,
     kind: TextContainer,
     query: &str,
+    container_index: usize,
+    containers: &mut Vec<ResolvedTextContainer>,
     matches: &mut Vec<ResolvedTextMatch>,
 ) -> Result<(), SemanticError> {
     let mut segments = Vec::new();
@@ -115,6 +132,10 @@ fn find_in_container(
         .iter()
         .map(|segment| segment.source_text.as_str())
         .collect::<String>();
+    containers.push(ResolvedTextContainer {
+        text: text.clone(),
+        container: kind,
+    });
     for (start, value) in text.match_indices(query) {
         let end = start + value.len();
         matches.push(ResolvedTextMatch {
@@ -129,6 +150,7 @@ fn find_in_container(
             before: prefix(&text[..start]),
             after: suffix(&text[end..]),
             container: kind,
+            container_index,
         });
     }
     Ok(())

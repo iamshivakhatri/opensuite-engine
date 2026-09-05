@@ -18,6 +18,10 @@ fn main() {
                     .to_owned(),
             )),
         }
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-paragraph-after")) {
+        insert_paragraph_after(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
+        inspect_context(arguments)
     } else {
         match (command, arguments.next(), arguments.next()) {
         (Some(command), None, None) if command == "capabilities" => capabilities(),
@@ -41,7 +45,7 @@ fn main() {
         }
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text>"
+            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text> | opensuite inspect-context <input.docx> <text> [occurrence] [before] [after] | opensuite insert-paragraph-after <input.docx> <output.docx> <anchor-text> <new-paragraph-text> [occurrence]"
                 .to_owned(),
         )),
         }
@@ -64,6 +68,66 @@ fn main() {
     }
 }
 
+fn insert_paragraph_after(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(anchor), Some(text), occurrence, None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite insert-paragraph-after <input.docx> <output.docx> <anchor-text> <new-paragraph-text> [occurrence]".to_owned()));
+    };
+    let anchor = anchor.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "anchor text must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let text = text.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "new paragraph text must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let occurrence = occurrence
+        .map(|value| {
+            value
+                .into_string()
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .ok_or_else(|| {
+                    (
+                        "INVALID_ARGUMENTS",
+                        "occurrence must be a non-negative integer".to_owned(),
+                    )
+                })
+        })
+        .transpose()?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::insert_paragraph_after(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::InsertParagraphAfter {
+            anchor: opensuite_protocol::TextTarget {
+                text: anchor,
+                occurrence,
+            },
+            text,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
 fn find_text(
     path: std::ffi::OsString,
     text: std::ffi::OsString,
@@ -81,6 +145,68 @@ fn find_text(
     opensuite_docx::find_text(&source, &opensuite_protocol::FindText { text })
         .map(|result| result.to_json())
         .map_err(|error| (error.code(), error.to_string()))
+}
+
+fn inspect_context(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(path), Some(text), occurrence, before, after, None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "usage: opensuite inspect-context <input.docx> <text> [occurrence] [before] [after]"
+                .to_owned(),
+        ));
+    };
+    let text = text.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "text target must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let parse_count = |value: std::ffi::OsString, name: &str| {
+        value
+            .into_string()
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .ok_or_else(|| {
+                (
+                    "INVALID_ARGUMENTS",
+                    format!("{name} must be a non-negative integer"),
+                )
+            })
+    };
+    let occurrence = occurrence
+        .map(|value| parse_count(value, "occurrence"))
+        .transpose()?;
+    let before = before
+        .map(|value| parse_count(value, "before"))
+        .transpose()?
+        .unwrap_or(1);
+    let after = after
+        .map(|value| parse_count(value, "after"))
+        .transpose()?
+        .unwrap_or(1);
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (_, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    opensuite_docx::inspect_text_context(
+        &source,
+        &opensuite_protocol::InspectTextContext {
+            target: opensuite_protocol::TextTarget { text, occurrence },
+            before,
+            after,
+        },
+    )
+    .map(|result| result.to_json())
+    .map_err(|error| (error.code(), error.to_string()))
 }
 
 fn replace_text(

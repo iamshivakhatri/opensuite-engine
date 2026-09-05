@@ -14,8 +14,12 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   new artifact. An opaque caller-supplied base revision may accompany the
   typed request, but stale application-revision enforcement remains the
   adapter's responsibility because the engine owns no history.
+- `insert_paragraph_after` resolves the same Current-view `TextTarget`, then accepts
+  only an ordinary direct main-document body paragraph and writes a new artifact.
 - `find_text` performs exact DOCX Current-view search and returns bounded,
   ordered semantic matches without source identities.
+- `inspect_context` resolves the same `TextTarget` and returns its full
+  paragraph or table-cell paragraph plus bounded nearby semantic containers.
 
 Source identities such as `NodeId`, XML paths, source spans, OPC relationships,
 ZIP offsets, and byte positions remain engine implementation details. They are

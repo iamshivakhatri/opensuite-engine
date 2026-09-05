@@ -48,10 +48,16 @@ and XML source bytes.
   remain unsupported.
 - Current-view exact semantic text search across runs within one paragraph or
   table-cell paragraph, with bounded context, deterministic occurrences, and
-  `opensuite find-text <input.docx> <text>`. `ReplaceText` uses the same
-  resolver; cross-run matches are found but remain unsupported for mutation.
+  `opensuite find-text <input.docx> <text>`. `ReplaceText` uses the same resolver.
+- Read-only targeted text-context inspection for a `TextTarget`, returning its
+  full semantic container and up to ten nearby containers in source order.
+  `opensuite inspect-context <input.docx> <text> [occurrence] [before] [after]`
+  reuses Current-view target resolution and is declared as `inspect_context`.
 - Mutation output verification reads every ZIP payload, checks XML syntax and
   internal relationship targets, then reopens and checks the semantic result.
+- Preservation-safe `InsertParagraphAfter` for a semantic text anchor in an ordinary,
+  direct main-document body paragraph. It inserts a plain unformatted paragraph,
+  verifies the output package, reopens it, and proves the paragraph follows its anchor.
 
 ## Current Repository Target
 
@@ -62,7 +68,10 @@ and XML source bytes.
 
 ## Explicitly Not Implemented Yet
 
-- cross-run or tracked-change text mutation
+- tracked-change and incompatible/wrapper cross-run text mutation
+- paragraph insertion in tables, headers/footers, content controls, tracked wrappers,
+  or after section-boundary paragraphs; insert-before, copied formatting, explicit styles,
+  and numbered-list semantics
 - mutation batches or transactions
 - rendering
 - server
