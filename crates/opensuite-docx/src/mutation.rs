@@ -725,11 +725,11 @@ pub fn set_text_formatting(
             "output path must differ from input path",
         );
     }
-    let (text, run) = match resolve_formatting_run(source, &operation.target) {
+    let (text, runs) = match resolve_formatting_runs(source, &operation.target) {
         Ok(value) => value,
         Err(result) => return result,
     };
-    let patches = match text_formatting_patches(source, run, &operation.formatting) {
+    let patches = match range_text_formatting_patches(source, &runs, &operation.formatting) {
         Ok(value) => value,
         Err(result) => return result,
     };
@@ -754,10 +754,12 @@ pub fn set_text_formatting(
     OperationResult::text_formatting_set(text)
 }
 
-fn resolve_formatting_run(
+type FormattingRangeRun = (NodeId, usize, usize, String);
+
+fn resolve_formatting_runs(
     source: &SourceDocument,
     target: &TextTarget,
-) -> Result<(String, NodeId), OperationResult> {
+) -> Result<(String, Vec<FormattingRangeRun>), OperationResult> {
     let matches = crate::text_search::resolve_text(source, &target.text)
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
     let matched = if matches.is_empty() {
@@ -777,33 +779,40 @@ fn resolve_formatting_run(
     } else {
         matches.into_iter().next().expect("one match")
     };
-    if matched.segments.len() != 1
-        || matched.start != matched.segments[0].start
-        || matched.end != matched.segments[0].end
-    {
-        return Err(unsupported(
-            "set_text_formatting requires the complete visible text of one run",
-        ));
+    let mut runs = Vec::new();
+    let mut paragraph = None;
+    for segment in &matched.segments {
+        if segment.inside_tracked_change
+            || source.children(segment.id).nth(1).is_some()
+            || is_cdata(source, segment.id)
+        {
+            return Err(unsupported(
+                "set_text_formatting requires ordinary visible text source regions",
+            ));
+        }
+        let run = ordinary_run(source, segment.id)
+            .ok_or_else(|| unsupported("set_text_formatting does not edit inline wrappers"))?;
+        let parent = source
+            .node(run)
+            .and_then(|node| node.parent())
+            .ok_or_else(|| unsupported("run has no paragraph"))?;
+        if paragraph
+            .replace(parent)
+            .is_some_and(|value| value != parent)
+            || source
+                .children(run)
+                .any(|child| !word(source, child, "rPr") && !word(source, child, "t"))
+        {
+            return Err(unsupported(
+                "set_text_formatting requires simple direct runs in one paragraph",
+            ));
+        }
+        let start = matched.start.max(segment.start) - segment.start;
+        let end = matched.end.min(segment.end) - segment.start;
+        runs.push((run, start, end, segment.source_text.clone()));
     }
-    let segment = &matched.segments[0];
-    if segment.inside_tracked_change
-        || source.children(segment.id).nth(1).is_some()
-        || is_cdata(source, segment.id)
-    {
-        return Err(unsupported(
-            "set_text_formatting requires an ordinary visible text source",
-        ));
-    }
-    let run = ordinary_run(source, segment.id)
-        .ok_or_else(|| unsupported("set_text_formatting does not edit inline wrappers"))?;
-    let paragraph = source
-        .node(run)
-        .and_then(|node| node.parent())
-        .ok_or_else(|| unsupported("run has no paragraph"))?;
+    let paragraph = paragraph.ok_or_else(|| unsupported("text range has no paragraph"))?;
     if !safe_body_paragraph(source, paragraph)
-        || source
-            .children(run)
-            .any(|child| !word(source, child, "rPr") && !word(source, child, "t"))
         || source.children(paragraph).any(|child| {
             word(source, child, "bookmarkStart")
                 || word(source, child, "bookmarkEnd")
@@ -816,7 +825,119 @@ fn resolve_formatting_run(
             "set_text_formatting supports only an ordinary direct body run without ranges or wrappers",
         ));
     }
-    Ok((matched.text, run))
+    Ok((matched.text, runs))
+}
+
+fn range_text_formatting_patches(
+    source: &SourceDocument,
+    runs: &[FormattingRangeRun],
+    patch: &TextFormattingPatch,
+) -> Result<Vec<Patch>, OperationResult> {
+    let mut patches = Vec::new();
+    for (run, start, end, text) in runs {
+        if *start == 0 && *end == text.len() {
+            patches.extend(text_formatting_patches(source, *run, patch)?);
+        } else {
+            patches.push(Patch {
+                span: source.node(*run).expect("run").span(),
+                replacement: split_formatted_run(source, *run, text, *start, *end, patch)?,
+            });
+        }
+    }
+    Ok(patches)
+}
+
+fn split_formatted_run(
+    source: &SourceDocument,
+    run: NodeId,
+    text: &str,
+    start: usize,
+    end: usize,
+    patch: &TextFormattingPatch,
+) -> Result<Vec<u8>, OperationResult> {
+    let paragraph = source
+        .node(run)
+        .and_then(|node| node.parent())
+        .expect("run parent");
+    let prefix = word_prefix(source, paragraph)?;
+    let name = |local: &str| qualify(prefix, local);
+    let start_tag = match source.node(run).expect("run").kind() {
+        SourceNodeKind::Element { start_tag, .. } => *start_tag,
+        _ => return Err(unsupported("run has no source tag")),
+    };
+    let open = std::str::from_utf8(&source.original_bytes()[start_tag.start..start_tag.end])
+        .map_err(|_| unsupported("run tag is not UTF-8"))?;
+    let rpr = source
+        .children(run)
+        .find(|id| word(source, *id, "rPr"))
+        .map(|id| {
+            let span = source.node(id).expect("rpr").span();
+            String::from_utf8_lossy(&source.original_bytes()[span.start..span.end]).into_owned()
+        })
+        .unwrap_or_default();
+    let fragment = |value: &str, formatted: bool| -> Result<String, OperationResult> {
+        let space = if requires_space_preservation(value) {
+            " xml:space=\"preserve\""
+        } else {
+            ""
+        };
+        let raw = format!(
+            "{open}{rpr}<{}{}>{}</{}></{}>",
+            name("t"),
+            space,
+            escape(value),
+            name("t"),
+            name("r")
+        );
+        if !formatted {
+            return Ok(raw);
+        }
+        let xml = format!(
+            "<{} xmlns:{}=\"{}\"><{}><{}>{}</{}></{}></{}>",
+            name("document"),
+            prefix,
+            NS[0],
+            name("body"),
+            name("p"),
+            raw,
+            name("p"),
+            name("body"),
+            name("document")
+        );
+        let doc = SourceDocument::parse(xml.into_bytes()).map_err(document_invalid)?;
+        let p = doc
+            .children(doc.root())
+            .find(|id| word(&doc, *id, "body"))
+            .and_then(|body| doc.children(body).find(|id| word(&doc, *id, "p")))
+            .and_then(|paragraph| doc.children(paragraph).find(|id| word(&doc, *id, "r")))
+            .ok_or_else(|| unsupported("formatted fragment is invalid"))?;
+        let data = apply_patches(&doc, text_formatting_patches(&doc, p, patch)?)?;
+        let updated = SourceDocument::parse(data).map_err(document_invalid)?;
+        let run = updated
+            .children(updated.root())
+            .find(|id| word(&updated, *id, "body"))
+            .and_then(|body| updated.children(body).find(|id| word(&updated, *id, "p")))
+            .and_then(|paragraph| {
+                updated
+                    .children(paragraph)
+                    .find(|id| word(&updated, *id, "r"))
+            })
+            .ok_or_else(|| unsupported("formatted fragment is invalid"))?;
+        let span = updated.node(run).expect("run").span();
+        Ok(
+            String::from_utf8(updated.original_bytes()[span.start..span.end].to_vec())
+                .expect("utf8"),
+        )
+    };
+    let mut result = Vec::new();
+    if start > 0 {
+        result.extend(fragment(&text[..start], false)?.bytes());
+    }
+    result.extend(fragment(&text[start..end], true)?.bytes());
+    if end < text.len() {
+        result.extend(fragment(&text[end..], false)?.bytes());
+    }
+    Ok(result)
 }
 
 fn text_formatting_patches(
@@ -2476,7 +2597,7 @@ fn verify_text_formatting_output(
     let package = Package::open(output).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
     let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
-    let (resolved, run) = resolve_formatting_run(&source, target)?;
+    let (resolved, runs) = resolve_formatting_runs(&source, target)?;
     if resolved != text {
         return Err(OperationResult::failed(
             "DOCUMENT_INVALID",
@@ -2484,7 +2605,7 @@ fn verify_text_formatting_output(
         ));
     }
     let direct = source
-        .children(run)
+        .children(runs[0].0)
         .find(|id| word(&source, *id, "rPr"))
         .map(|rpr| crate::styles::run_formatting(&source, rpr))
         .transpose()
@@ -3640,26 +3761,6 @@ mod tests {
         assert!(!xml.contains("w:sz"));
         assert!(xml.contains("w:eastAsia=\"Keep\""));
         fs::remove_file(output).unwrap();
-        for target in ["Wh", "Whole run"] {
-            let result = set_text_formatting(
-                &package,
-                &main,
-                &source,
-                &SetTextFormatting {
-                    target: TextTarget {
-                        text: target.to_owned(),
-                        occurrence: None,
-                    },
-                    formatting: TextFormattingPatch {
-                        bold: Some(PropertyPatch::Set(true)),
-                        ..Default::default()
-                    },
-                    base_revision: None,
-                },
-                path("text-formatting-unsupported"),
-            );
-            assert_eq!(result.diagnostics[0].code, "UNSUPPORTED_OPERATION");
-        }
         fs::remove_file(input).unwrap();
     }
 
