@@ -20,6 +20,12 @@ fn main() {
         }
     } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-paragraph-after")) {
         insert_paragraph_after(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("delete-paragraph")) {
+        delete_paragraph(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-table-cell-text")) {
+        set_table_cell_text(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-content-control-text")) {
+        set_content_control_text(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
         inspect_context(arguments)
     } else {
@@ -45,7 +51,7 @@ fn main() {
         }
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text> | opensuite inspect-context <input.docx> <text> [occurrence] [before] [after] | opensuite insert-paragraph-after <input.docx> <output.docx> <anchor-text> <new-paragraph-text> [occurrence]"
+            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text> | opensuite inspect-context <input.docx> <text> [occurrence] [before] [after] | opensuite insert-paragraph-after <input.docx> <output.docx> <anchor-text> <new-paragraph-text> [occurrence] | opensuite delete-paragraph <input.docx> <output.docx> <target-text> [occurrence] | opensuite set-table-cell-text <input.docx> <output.docx> <row-label> <column-header> <expected-current-text> <replacement> [occurrence] | opensuite set-content-control-text <input.docx> <output.docx> <tag> <expected-current-text> <replacement> [occurrence]"
                 .to_owned(),
         )),
         }
@@ -66,6 +72,188 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn set_table_cell_text(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (
+        Some(input),
+        Some(output),
+        Some(row_label),
+        Some(column_header),
+        Some(expected),
+        Some(replacement),
+        occurrence,
+        None,
+    ) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    )
+    else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite set-table-cell-text <input.docx> <output.docx> <row-label> <column-header> <expected-current-text> <replacement> [occurrence]".to_owned()));
+    };
+    let text = |value: std::ffi::OsString, name| {
+        value
+            .into_string()
+            .map_err(|_| ("INVALID_ARGUMENTS", format!("{name} must be valid UTF-8")))
+    };
+    let row_label = text(row_label, "row label")?;
+    let column_header = text(column_header, "column header")?;
+    let expected_current_text = text(expected, "expected current text")?;
+    let replacement = text(replacement, "replacement")?;
+    let occurrence = occurrence
+        .map(|value| {
+            value
+                .into_string()
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .ok_or_else(|| {
+                    (
+                        "INVALID_ARGUMENTS",
+                        "occurrence must be a non-negative integer".to_owned(),
+                    )
+                })
+        })
+        .transpose()?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_table_cell_text(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetTableCellText {
+            target: opensuite_protocol::TableCellTarget {
+                row_label,
+                column_header,
+                occurrence,
+            },
+            expected_current_text,
+            replacement,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn set_content_control_text(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(tag), Some(expected), Some(replacement), occurrence, None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite set-content-control-text <input.docx> <output.docx> <tag> <expected-current-text> <replacement> [occurrence]".to_owned()));
+    };
+    let text = |value: std::ffi::OsString, name| {
+        value
+            .into_string()
+            .map_err(|_| ("INVALID_ARGUMENTS", format!("{name} must be valid UTF-8")))
+    };
+    let tag = text(tag, "tag")?;
+    let expected_current_text = text(expected, "expected current text")?;
+    let replacement = text(replacement, "replacement")?;
+    let occurrence = occurrence
+        .map(|value| {
+            value
+                .into_string()
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .ok_or_else(|| {
+                    (
+                        "INVALID_ARGUMENTS",
+                        "occurrence must be a non-negative integer".to_owned(),
+                    )
+                })
+        })
+        .transpose()?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_content_control_text(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetContentControlText {
+            target: opensuite_protocol::ContentControlTarget {
+                tag: Some(tag),
+                alias: None,
+                occurrence,
+            },
+            expected_current_text,
+            replacement,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn delete_paragraph(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(target), occurrence, None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite delete-paragraph <input.docx> <output.docx> <target-text> [occurrence]".to_owned()));
+    };
+    let target = target.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "target text must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let occurrence = occurrence
+        .map(|value| {
+            value
+                .into_string()
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .ok_or_else(|| {
+                    (
+                        "INVALID_ARGUMENTS",
+                        "occurrence must be a non-negative integer".to_owned(),
+                    )
+                })
+        })
+        .transpose()?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::delete_paragraph(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::DeleteParagraph {
+            target: opensuite_protocol::TextTarget {
+                text: target,
+                occurrence,
+            },
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
 }
 
 fn insert_paragraph_after(

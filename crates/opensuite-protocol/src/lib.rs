@@ -102,6 +102,9 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "revision_views",
     "replace_text",
     "insert_paragraph_after",
+    "delete_paragraph",
+    "set_table_cell_text",
+    "set_content_control_text",
     "find_text",
     "inspect_context",
 ];
@@ -128,6 +131,48 @@ pub struct ReplaceText {
 pub struct InsertParagraphAfter {
     pub anchor: TextTarget,
     pub text: String,
+    pub base_revision: Option<String>,
+}
+
+/// Deletes the ordinary body paragraph containing `target`.
+/// `base_revision` is opaque caller metadata only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeleteParagraph {
+    pub target: TextTarget,
+    pub base_revision: Option<String>,
+}
+
+/// A semantic table-cell target using the first-row header and first-cell row label.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableCellTarget {
+    pub row_label: String,
+    pub column_header: String,
+    pub occurrence: Option<usize>,
+}
+
+/// Replaces visible text in one simple table cell. `base_revision` is opaque caller metadata only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetTableCellText {
+    pub target: TableCellTarget,
+    pub expected_current_text: String,
+    pub replacement: String,
+    pub base_revision: Option<String>,
+}
+
+/// A semantic content-control target. At least one of `tag` or `alias` is required.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentControlTarget {
+    pub tag: Option<String>,
+    pub alias: Option<String>,
+    pub occurrence: Option<usize>,
+}
+
+/// Replaces visible text in one simple content control.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetContentControlText {
+    pub target: ContentControlTarget,
+    pub expected_current_text: String,
+    pub replacement: String,
     pub base_revision: Option<String>,
 }
 
@@ -298,6 +343,42 @@ impl OperationResult {
         }
     }
 
+    pub fn paragraph_deleted(before: String) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "paragraph_deleted".to_owned(),
+                before,
+                after: String::new(),
+            }],
+        }
+    }
+
+    pub fn table_cell_text_set(before: String, after: String) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "table_cell_text_set".to_owned(),
+                before,
+                after,
+            }],
+        }
+    }
+
+    pub fn content_control_text_set(before: String, after: String) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "content_control_text_set".to_owned(),
+                before,
+                after,
+            }],
+        }
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "ok": self.status == OperationStatus::Applied,
@@ -390,7 +471,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

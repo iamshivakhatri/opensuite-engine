@@ -16,6 +16,15 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   adapter's responsibility because the engine owns no history.
 - `insert_paragraph_after` resolves the same Current-view `TextTarget`, then accepts
   only an ordinary direct main-document body paragraph and writes a new artifact.
+- `delete_paragraph` resolves the same target and removes only a safe ordinary direct
+  body paragraph. It rejects range markers, fields, controls, revisions, and wrappers;
+  existing OPC relationships are preserved even if they become unused.
+- `set_table_cell_text` targets a Current-view cell by exact first-column row label
+  and first-row column header in a simple top-level table. It writes a new artifact
+  after preserving all other source and OPC part payloads.
+- `set_content_control_text` targets an exact content-control tag, alias, or their
+  intersection. It accepts only simple unlocked and unbound text controls and writes
+  a new artifact after semantic postcondition checks.
 - `find_text` performs exact DOCX Current-view search and returns bounded,
   ordered semantic matches without source identities.
 - `inspect_context` resolves the same `TextTarget` and returns its full

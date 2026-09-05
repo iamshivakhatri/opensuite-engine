@@ -58,6 +58,15 @@ and XML source bytes.
 - Preservation-safe `InsertParagraphAfter` for a semantic text anchor in an ordinary,
   direct main-document body paragraph. It inserts a plain unformatted paragraph,
   verifies the output package, reopens it, and proves the paragraph follows its anchor.
+- Preservation-safe `DeleteParagraph` for an ordinary direct body paragraph selected
+  through semantic text. It removes only that source span, checks ranges and wrappers,
+  preserves existing relationships, and verifies the reopened body structure.
+- Preservation-safe `SetTableCellText` for a simple top-level table cell selected by
+  exact row-label and column-header text. It supports one ordinary paragraph with
+  direct runs, including empty paragraphs, and verifies the reopened table cells.
+- Preservation-safe `SetContentControlText` for a simple text content control selected
+  by exact tag and/or alias. It supports one ordinary paragraph with direct runs,
+  including empty paragraphs, and verifies the reopened control text and metadata.
 
 ## Current Repository Target
 
@@ -72,6 +81,12 @@ and XML source bytes.
 - paragraph insertion in tables, headers/footers, content controls, tracked wrappers,
   or after section-boundary paragraphs; insert-before, copied formatting, explicit styles,
   and numbered-list semantics
+- empty paragraph targeting; table/header/footer/wrapper/section-boundary paragraph deletion;
+  automatic bookmark/comment repair and relationship garbage collection
+- merged or nested tables, table cells with multiple paragraphs or inline wrappers,
+  and generic table editing
+- data-bound, locked, placeholder-state, repeating, group, picture, checkbox, dropdown,
+  combo-box, nested, or multi-paragraph content-control mutation
 - mutation batches or transactions
 - rendering
 - server

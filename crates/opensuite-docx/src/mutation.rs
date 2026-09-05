@@ -3,7 +3,10 @@ use std::path::Path;
 use quick_xml::escape::escape;
 
 use opensuite_opc::{Package, Part};
-use opensuite_protocol::{InsertParagraphAfter, OperationResult, ReplaceText, TextTarget};
+use opensuite_protocol::{
+    ContentControlTarget, DeleteParagraph, InsertParagraphAfter, OperationResult, ReplaceText,
+    SetContentControlText, SetTableCellText, TableCellTarget, TextTarget,
+};
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
 
@@ -137,6 +140,708 @@ pub fn insert_paragraph_after(
     OperationResult::paragraph_inserted(anchor, operation.text.clone())
 }
 
+/// Deletes one safe, direct main-body paragraph selected by Current-view text.
+pub fn delete_paragraph(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeleteParagraph,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output == package.source_path()
+        || output.exists()
+            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
+    {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let (_target, paragraph) = match resolve_paragraph_anchor(source, &operation.target) {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    if !safe_to_delete(source, paragraph) {
+        return unsupported(
+            "delete_paragraph rejects paragraphs with ranges, fields, controls, revisions, or unsupported wrappers",
+        );
+    }
+    let body = match body_texts(source) {
+        Ok(body) => body,
+        Err(result) => return result,
+    };
+    let paragraph_text = match crate::DocxDocument::new(source)
+        .map_err(document_invalid)
+        .and_then(|document| {
+            document
+                .paragraphs()
+                .find(|item| item.source_id() == paragraph)
+                .ok_or_else(|| {
+                    OperationResult::failed(
+                        "DOCUMENT_INVALID",
+                        "anchor paragraph is not in the body",
+                    )
+                })
+                .and_then(|item| {
+                    item.text_for_view(RevisionView::Current)
+                        .map_err(document_invalid)
+                })
+        }) {
+        Ok(text) => text,
+        Err(result) => return result,
+    };
+    let body_index = match body.iter().position(|item| item.0 == paragraph) {
+        Some(index) => index,
+        None => {
+            return OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "anchor paragraph is not a body block",
+            );
+        }
+    };
+    let expected_body = body.into_iter().map(|(_, text)| text).collect::<Vec<_>>();
+    let mut expected_after = expected_body.clone();
+    expected_after.remove(body_index);
+    let span = source
+        .node(paragraph)
+        .expect("anchor paragraph exists")
+        .span();
+    let patched = match apply_patches(
+        source,
+        vec![Patch {
+            span,
+            replacement: Vec::new(),
+        }],
+    ) {
+        Ok(patched) => patched,
+        Err(result) => return result,
+    };
+    let temporary = temporary_path(output);
+    if let Err(error) = package.write_replaced_part(main, &patched, &temporary) {
+        return OperationResult::failed(error.code(), error.to_string());
+    }
+    if let Err(result) = verify_deleted_output(&temporary, &expected_after) {
+        let _ = std::fs::remove_file(&temporary);
+        return result;
+    }
+    if let Err(error) = std::fs::rename(&temporary, output) {
+        let _ = std::fs::remove_file(&temporary);
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    OperationResult::paragraph_deleted(paragraph_text)
+}
+
+/// Sets visible text in one simple, semantically addressed main-body table cell.
+pub fn set_table_cell_text(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetTableCellText,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output == package.source_path()
+        || output.exists()
+            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
+    {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let target = match resolve_table_cell(source, &operation.target) {
+        Ok(target) => target,
+        Err(result) => return result,
+    };
+    if target.text != operation.expected_current_text {
+        return OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "resolved cell text does not match expected current text",
+        );
+    }
+    let patches = if target.text.is_empty() {
+        if operation.replacement.is_empty() {
+            Vec::new()
+        } else {
+            match empty_cell_patch(source, target.paragraph, &operation.replacement) {
+                Ok(patch) => vec![patch],
+                Err(result) => return result,
+            }
+        }
+    } else {
+        let matches = match crate::text_search::resolve_text(source, &target.text) {
+            Ok(matches) => matches,
+            Err(error) => return OperationResult::failed(error.code(), error.to_string()),
+        };
+        let Some(matched) = matches.into_iter().find(|matched| {
+            matched.start == 0
+                && matched.end == target.text.len()
+                && matched
+                    .segments
+                    .iter()
+                    .all(|segment| is_descendant(source, segment.id, target.cell))
+        }) else {
+            return OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "resolved cell has no compatible text source range",
+            );
+        };
+        match patches_for_match(source, &matched, &operation.replacement) {
+            Ok(patches) => patches,
+            Err(result) => return result,
+        }
+    };
+    let patched = match apply_patches(source, patches) {
+        Ok(patched) => patched,
+        Err(result) => return result,
+    };
+    let before = match all_table_cell_texts(source) {
+        Ok(before) => before,
+        Err(result) => return result,
+    };
+    let Some(index) = before.iter().position(|item| item.0 == target.cell) else {
+        return OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "resolved target cell is not in a supported table",
+        );
+    };
+    let expected = before
+        .into_iter()
+        .enumerate()
+        .map(|(item_index, (_, text))| {
+            if item_index == index {
+                operation.replacement.clone()
+            } else {
+                text
+            }
+        })
+        .collect::<Vec<_>>();
+    let temporary = temporary_path(output);
+    if let Err(error) = package.write_replaced_part(main, &patched, &temporary) {
+        return OperationResult::failed(error.code(), error.to_string());
+    }
+    if let Err(result) = verify_table_cell_output(
+        &temporary,
+        &operation.target,
+        &operation.replacement,
+        &expected,
+    ) {
+        let _ = std::fs::remove_file(&temporary);
+        return result;
+    }
+    if let Err(error) = std::fs::rename(&temporary, output) {
+        let _ = std::fs::remove_file(&temporary);
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    OperationResult::table_cell_text_set(target.text, operation.replacement.clone())
+}
+
+/// Sets visible text in one simple semantic Word content control.
+pub fn set_content_control_text(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetContentControlText,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output == package.source_path()
+        || output.exists()
+            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
+    {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let target = match resolve_content_control(source, &operation.target) {
+        Ok(target) => target,
+        Err(result) => return result,
+    };
+    if target.text != operation.expected_current_text {
+        return OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "resolved content control text does not match expected current text",
+        );
+    }
+    let patches = if target.text.is_empty() {
+        if operation.replacement.is_empty() {
+            Vec::new()
+        } else {
+            match empty_cell_patch(source, target.paragraph, &operation.replacement) {
+                Ok(patch) => vec![patch],
+                Err(result) => return result,
+            }
+        }
+    } else {
+        let matches = match crate::text_search::resolve_text(source, &target.text) {
+            Ok(matches) => matches,
+            Err(error) => return OperationResult::failed(error.code(), error.to_string()),
+        };
+        let Some(matched) = matches.into_iter().find(|matched| {
+            matched.start == 0
+                && matched.end == target.text.len()
+                && matched
+                    .segments
+                    .iter()
+                    .all(|segment| is_descendant(source, segment.id, target.control))
+        }) else {
+            return OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "resolved content control has no compatible text source range",
+            );
+        };
+        match patches_for_match(source, &matched, &operation.replacement) {
+            Ok(patches) => patches,
+            Err(result) => return result,
+        }
+    };
+    let patched = match apply_patches(source, patches) {
+        Ok(patched) => patched,
+        Err(result) => return result,
+    };
+    let before = match all_content_control_texts(source) {
+        Ok(values) => values,
+        Err(result) => return result,
+    };
+    let Some(index) = before.iter().position(|item| item.0 == target.control) else {
+        return OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "resolved content control is unavailable",
+        );
+    };
+    let expected = before
+        .into_iter()
+        .enumerate()
+        .map(|(item_index, (_, text))| {
+            if item_index == index {
+                operation.replacement.clone()
+            } else {
+                text
+            }
+        })
+        .collect::<Vec<_>>();
+    let temporary = temporary_path(output);
+    if let Err(error) = package.write_replaced_part(main, &patched, &temporary) {
+        return OperationResult::failed(error.code(), error.to_string());
+    }
+    if let Err(result) = verify_content_control_output(
+        &temporary,
+        &operation.target,
+        &operation.replacement,
+        &expected,
+    ) {
+        let _ = std::fs::remove_file(&temporary);
+        return result;
+    }
+    if let Err(error) = std::fs::rename(&temporary, output) {
+        let _ = std::fs::remove_file(&temporary);
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    OperationResult::content_control_text_set(target.text, operation.replacement.clone())
+}
+
+struct ResolvedContentControl {
+    control: NodeId,
+    paragraph: NodeId,
+    text: String,
+}
+
+fn resolve_content_control(
+    source: &SourceDocument,
+    target: &ContentControlTarget,
+) -> Result<ResolvedContentControl, OperationResult> {
+    if target.tag.is_none() && target.alias.is_none() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "content control target requires tag or alias",
+        ));
+    }
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    let mut controls = document
+        .content_controls()
+        .filter(|control| {
+            let properties = control.properties();
+            target
+                .tag
+                .as_ref()
+                .is_none_or(|tag| properties.tag.as_ref() == Some(tag))
+                && target
+                    .alias
+                    .as_ref()
+                    .is_none_or(|alias| properties.alias.as_ref() == Some(alias))
+        })
+        .collect::<Vec<_>>();
+    if controls.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "content control target was not found",
+        ));
+    }
+    let control = if let Some(occurrence) = target.occurrence {
+        if occurrence >= controls.len() {
+            return Err(OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "content control target occurrence was not found",
+            ));
+        }
+        controls.remove(occurrence)
+    } else if controls.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "content control target matches more than one control",
+        ));
+    } else {
+        controls.pop().expect("one control")
+    };
+    let properties = control.properties();
+    if !matches!(
+        properties.kind,
+        crate::ContentControlKind::Text | crate::ContentControlKind::RichText
+    ) || properties.data_binding.is_some()
+        || properties.lock.is_some()
+        || control.properties_id().is_some_and(|id| {
+            source
+                .children(id)
+                .any(|child| word(source, child, "showingPlcHdr"))
+        })
+    {
+        return Err(unsupported(
+            "set_content_control_text supports only unlocked, unbound text controls without placeholder state",
+        ));
+    }
+    let Some(content) = control.content_id() else {
+        return Err(unsupported("content control has no editable content"));
+    };
+    let paragraphs = source
+        .children(content)
+        .filter(|id| word(source, *id, "p"))
+        .collect::<Vec<_>>();
+    if paragraphs.len() != 1
+        || source.children(content).any(|id| {
+            matches!(
+                source.node(id).map(|node| node.kind()),
+                Some(SourceNodeKind::Element { .. })
+            ) && !word(source, id, "p")
+        })
+        || !safe_table_paragraph(source, paragraphs[0])
+    {
+        return Err(unsupported(
+            "set_content_control_text requires one ordinary direct paragraph",
+        ));
+    }
+    let text = crate::tracked_change::text_for_view(source, paragraphs[0], RevisionView::Current)
+        .map_err(document_invalid)?;
+    Ok(ResolvedContentControl {
+        control: control.source_id(),
+        paragraph: paragraphs[0],
+        text,
+    })
+}
+
+fn all_content_control_texts(
+    source: &SourceDocument,
+) -> Result<Vec<(NodeId, String)>, OperationResult> {
+    crate::DocxDocument::new(source)
+        .map_err(document_invalid)?
+        .content_controls()
+        .map(|control| {
+            control
+                .visible_text()
+                .map(|text| (control.source_id(), text))
+                .map_err(document_invalid)
+        })
+        .collect()
+}
+
+struct ResolvedTableCell {
+    cell: NodeId,
+    paragraph: NodeId,
+    text: String,
+}
+
+fn resolve_table_cell(
+    source: &SourceDocument,
+    target: &TableCellTarget,
+) -> Result<ResolvedTableCell, OperationResult> {
+    let mut candidates = Vec::new();
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    for block in document.blocks() {
+        let crate::BodyBlock::Table(table) = block else {
+            continue;
+        };
+        if !is_direct_body_table(source, table.source_id()) {
+            continue;
+        }
+        let rows = table.rows().collect::<Vec<_>>();
+        let Some(header) = rows.first() else {
+            continue;
+        };
+        let header_cells = header.cells().collect::<Vec<_>>();
+        for (column, header_cell) in header_cells.iter().enumerate().skip(1) {
+            if header_cell
+                .text_for_view(RevisionView::Current)
+                .map_err(document_invalid)?
+                != target.column_header
+            {
+                continue;
+            }
+            for row in rows.iter().skip(1) {
+                let cells = row.cells().collect::<Vec<_>>();
+                if cells.first().is_some_and(|cell| {
+                    cell.text_for_view(RevisionView::Current).ok().as_deref()
+                        == Some(&target.row_label)
+                }) && cells.len() > column
+                {
+                    candidates.push((table.source_id(), cells[column].source_id()));
+                }
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table row label and column header intersection was not found",
+        ));
+    }
+    let (table_id, cell) = if let Some(occurrence) = target.occurrence {
+        candidates.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "table cell target occurrence was not found",
+            )
+        })?
+    } else if candidates.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "table cell target matches more than one current semantic cell",
+        ));
+    } else {
+        candidates.pop().expect("one candidate")
+    };
+    if !simple_table(source, table_id) {
+        return Err(unsupported(
+            "set_table_cell_text supports only simple rectangular tables",
+        ));
+    }
+    let paragraphs = direct_cell_paragraphs(source, cell);
+    if paragraphs.len() != 1 || !safe_table_paragraph(source, paragraphs[0]) {
+        return Err(unsupported(
+            "set_table_cell_text requires one ordinary paragraph with direct runs",
+        ));
+    }
+    let text = cell_current_text(source, cell)?;
+    Ok(ResolvedTableCell {
+        cell,
+        paragraph: paragraphs[0],
+        text,
+    })
+}
+
+fn is_direct_body_table(source: &SourceDocument, table: NodeId) -> bool {
+    source
+        .node(table)
+        .and_then(|node| node.parent())
+        .is_some_and(|body| word(source, body, "body"))
+}
+
+fn simple_table(source: &SourceDocument, table: NodeId) -> bool {
+    if source
+        .node_ids()
+        .any(|id| id != table && word(source, id, "tbl") && is_descendant(source, id, table))
+        || source.node_ids().any(|id| {
+            is_descendant(source, id, table)
+                && (word(source, id, "gridSpan") || word(source, id, "vMerge"))
+        })
+    {
+        return false;
+    }
+    let rows = source
+        .children(table)
+        .filter(|id| word(source, *id, "tr"))
+        .collect::<Vec<_>>();
+    let Some(first) = rows.first() else {
+        return false;
+    };
+    let width = source
+        .children(*first)
+        .filter(|id| word(source, *id, "tc"))
+        .count();
+    width > 1
+        && rows.len() > 1
+        && rows.iter().all(|row| {
+            source
+                .children(*row)
+                .filter(|id| word(source, *id, "tc"))
+                .count()
+                == width
+        })
+}
+
+fn direct_cell_paragraphs(source: &SourceDocument, cell: NodeId) -> Vec<NodeId> {
+    source
+        .children(cell)
+        .filter(|id| word(source, *id, "p"))
+        .collect()
+}
+
+fn cell_current_text(source: &SourceDocument, cell: NodeId) -> Result<String, OperationResult> {
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    for block in document.blocks() {
+        let crate::BodyBlock::Table(table) = block else {
+            continue;
+        };
+        for row in table.rows() {
+            for item in row.cells() {
+                if item.source_id() == cell {
+                    return item
+                        .text_for_view(RevisionView::Current)
+                        .map_err(document_invalid);
+                }
+            }
+        }
+    }
+    Err(OperationResult::failed(
+        "DOCUMENT_INVALID",
+        "resolved table cell is unavailable",
+    ))
+}
+
+fn all_table_cell_texts(source: &SourceDocument) -> Result<Vec<(NodeId, String)>, OperationResult> {
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    let mut values = Vec::new();
+    for block in document.blocks() {
+        let crate::BodyBlock::Table(table) = block else {
+            continue;
+        };
+        if !is_direct_body_table(source, table.source_id()) {
+            continue;
+        }
+        for row in table.rows() {
+            for cell in row.cells() {
+                values.push((
+                    cell.source_id(),
+                    cell.text_for_view(RevisionView::Current)
+                        .map_err(document_invalid)?,
+                ));
+            }
+        }
+    }
+    Ok(values)
+}
+
+fn safe_table_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
+    source.children(paragraph).all(|id| {
+        if matches!(
+            source.node(id).map(|node| node.kind()),
+            Some(SourceNodeKind::Text)
+        ) {
+            true
+        } else if word(source, id, "pPr") {
+            !source
+                .children(id)
+                .any(|child| word(source, child, "sectPr") || word(source, child, "pPrChange"))
+        } else if word(source, id, "r") {
+            source
+                .children(id)
+                .all(|child| safe_run_child(source, child))
+        } else {
+            false
+        }
+    })
+}
+
+fn is_descendant(source: &SourceDocument, mut id: NodeId, ancestor: NodeId) -> bool {
+    while let Some(parent) = source.node(id).and_then(|node| node.parent()) {
+        if parent == ancestor {
+            return true;
+        }
+        id = parent;
+    }
+    false
+}
+
+fn empty_cell_patch(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    replacement: &str,
+) -> Result<Patch, OperationResult> {
+    let fragment = run_fragment(source, paragraph, replacement)?;
+    let SourceNodeKind::Element {
+        start_tag, end_tag, ..
+    } = source.node(paragraph).expect("paragraph exists").kind()
+    else {
+        return Err(unsupported("empty cell paragraph has no source tag"));
+    };
+    if let Some(end_tag) = end_tag {
+        return Ok(Patch {
+            span: SourceSpan {
+                start: end_tag.start,
+                end: end_tag.start,
+            },
+            replacement: fragment,
+        });
+    }
+    let tag = &source.original_bytes()[start_tag.start..start_tag.end];
+    let Some(offset) = tag.windows(2).rposition(|window| window == b"/>") else {
+        return Err(unsupported(
+            "empty cell paragraph cannot receive a source insertion",
+        ));
+    };
+    Ok(Patch {
+        span: SourceSpan {
+            start: start_tag.start + offset,
+            end: start_tag.end,
+        },
+        replacement: format!(
+            ">{}</{}>",
+            String::from_utf8(fragment).expect("generated XML is UTF-8"),
+            qualified_name(source, paragraph, "p")?
+        )
+        .into_bytes(),
+    })
+}
+
+fn run_fragment(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    text: &str,
+) -> Result<Vec<u8>, OperationResult> {
+    let run = qualified_name(source, paragraph, "r")?;
+    let value = qualified_name(source, paragraph, "t")?;
+    let space = if requires_space_preservation(text) {
+        " xml:space=\"preserve\""
+    } else {
+        ""
+    };
+    Ok(format!("<{run}><{value}{space}>{}</{value}></{run}>", escape(text)).into_bytes())
+}
+
+fn qualified_name(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    local: &str,
+) -> Result<String, OperationResult> {
+    let prefix = word_prefix(source, paragraph)?;
+    Ok(if prefix.is_empty() {
+        local.to_owned()
+    } else {
+        format!("{prefix}:{local}")
+    })
+}
+
+fn temporary_path(output: &Path) -> std::path::PathBuf {
+    output.with_file_name(format!(
+        ".opensuite-{}-{}.docx",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ))
+}
+
 struct ResolvedText {
     value: String,
     patches: Vec<Patch>,
@@ -216,6 +921,42 @@ fn safe_body_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
         && !has_revision_wrapper(source, paragraph)
 }
 
+fn safe_to_delete(source: &SourceDocument, paragraph: NodeId) -> bool {
+    source
+        .children(paragraph)
+        .all(|child| safe_paragraph_child(source, child))
+}
+
+fn safe_paragraph_child(source: &SourceDocument, id: NodeId) -> bool {
+    if word(source, id, "pPr") {
+        return !source
+            .children(id)
+            .any(|child| word(source, child, "pPrChange"));
+    }
+    if word(source, id, "r") {
+        return source
+            .children(id)
+            .all(|child| safe_run_child(source, child));
+    }
+    word(source, id, "hyperlink")
+        && source
+            .children(id)
+            .all(|child| word(source, child, "r") && safe_paragraph_child(source, child))
+}
+
+fn safe_run_child(source: &SourceDocument, id: NodeId) -> bool {
+    if word(source, id, "rPr") {
+        return true;
+    }
+    word(source, id, "t")
+        || word(source, id, "tab")
+        || word(source, id, "br")
+        || word(source, id, "cr")
+        || word(source, id, "noBreakHyphen")
+        || word(source, id, "softHyphen")
+        || word(source, id, "lastRenderedPageBreak")
+}
+
 fn has_revision_wrapper(source: &SourceDocument, id: NodeId) -> bool {
     word(source, id, "ins")
         || word(source, id, "del")
@@ -224,6 +965,25 @@ fn has_revision_wrapper(source: &SourceDocument, id: NodeId) -> bool {
         || source
             .children(id)
             .any(|child| has_revision_wrapper(source, child))
+}
+
+fn body_texts(source: &SourceDocument) -> Result<Vec<(NodeId, String)>, OperationResult> {
+    crate::DocxDocument::new(source)
+        .map_err(document_invalid)?
+        .blocks()
+        .map(|block| match block {
+            crate::BodyBlock::Paragraph(paragraph) => paragraph
+                .text_for_view(RevisionView::Current)
+                .map(|text| (paragraph.source_id(), text))
+                .map_err(document_invalid),
+            crate::BodyBlock::Table(table) => {
+                let source_id = table.source_id();
+                table_current_text(table)
+                    .map(|text| (source_id, text))
+                    .map_err(document_invalid)
+            }
+        })
+        .collect()
 }
 
 fn paragraph_fragment(
@@ -527,6 +1287,77 @@ fn verify_inserted_output(
     ))
 }
 
+fn verify_deleted_output(output: &Path, expected_body: &[String]) -> Result<(), OperationResult> {
+    let package = Package::open(output).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let actual = body_texts(&source)?
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>();
+    (actual == expected_body).then_some(()).ok_or_else(|| {
+        OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output body does not preserve expected neighboring structure",
+        )
+    })
+}
+
+fn verify_table_cell_output(
+    output: &Path,
+    target: &TableCellTarget,
+    replacement: &str,
+    expected_cells: &[String],
+) -> Result<(), OperationResult> {
+    let package = Package::open(output).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let resolved = resolve_table_cell(&source, target)?;
+    if resolved.text != replacement {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output target cell text does not match replacement",
+        ));
+    }
+    let actual = all_table_cell_texts(&source)?
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>();
+    (actual == expected_cells).then_some(()).ok_or_else(|| {
+        OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output table cells do not preserve expected semantic structure",
+        )
+    })
+}
+
+fn verify_content_control_output(
+    output: &Path,
+    target: &ContentControlTarget,
+    replacement: &str,
+    expected_controls: &[String],
+) -> Result<(), OperationResult> {
+    let package = Package::open(output).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    if resolve_content_control(&source, target)?.text != replacement {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output content control text does not match replacement",
+        ));
+    }
+    let actual = all_content_control_texts(&source)?
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>();
+    (actual == expected_controls).then_some(()).ok_or_else(|| {
+        OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output content controls do not preserve expected semantic structure",
+        )
+    })
+}
+
 fn table_current_text(table: crate::Table<'_>) -> Result<String, SemanticError> {
     let mut text = String::new();
     for row in table.rows() {
@@ -562,7 +1393,10 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
-    use opensuite_protocol::{InsertParagraphAfter, ReplaceText, TextTarget};
+    use opensuite_protocol::{
+        ContentControlTarget, DeleteParagraph, InsertParagraphAfter, ReplaceText,
+        SetContentControlText, SetTableCellText, TableCellTarget, TextTarget,
+    };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
     use super::*;
@@ -598,6 +1432,78 @@ mod tests {
         zip.write_all(&[1, 2, 3]).unwrap();
         zip.finish().unwrap();
         path
+    }
+
+    fn table_fixture(document: &str) -> std::path::PathBuf {
+        let path = path("table-input");
+        let file = fs::File::create(&path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        zip.write_all(
+            b"<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/></Types>",
+        )
+        .unwrap();
+        zip.start_file("_rels/.rels", options).unwrap();
+        zip.write_all(format!("<Relationships><Relationship Id=\"rId1\" Type=\"{OFFICE}\" Target=\"word/document.xml\"/></Relationships>").as_bytes()).unwrap();
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(document.as_bytes()).unwrap();
+        zip.start_file("word/media/image.bin", options).unwrap();
+        zip.write_all(&[1, 2, 3]).unwrap();
+        zip.finish().unwrap();
+        path
+    }
+
+    fn table_operation(
+        row_label: &str,
+        column_header: &str,
+        expected: &str,
+        replacement: &str,
+    ) -> SetTableCellText {
+        SetTableCellText {
+            target: TableCellTarget {
+                row_label: row_label.to_owned(),
+                column_header: column_header.to_owned(),
+                occurrence: None,
+            },
+            expected_current_text: expected.to_owned(),
+            replacement: replacement.to_owned(),
+            base_revision: Some("caller-version-7".to_owned()),
+        }
+    }
+
+    fn table_execute(input: &Path, output: &Path, operation: &SetTableCellText) -> OperationResult {
+        let package = Package::open(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        set_table_cell_text(&package, &main, &source, operation, output)
+    }
+
+    fn control_operation(
+        tag: Option<&str>,
+        alias: Option<&str>,
+        expected: &str,
+        replacement: &str,
+    ) -> SetContentControlText {
+        SetContentControlText {
+            target: ContentControlTarget {
+                tag: tag.map(str::to_owned),
+                alias: alias.map(str::to_owned),
+                occurrence: None,
+            },
+            expected_current_text: expected.to_owned(),
+            replacement: replacement.to_owned(),
+            base_revision: Some("caller-version-7".to_owned()),
+        }
+    }
+
+    fn control_execute(
+        input: &Path,
+        output: &Path,
+        operation: &SetContentControlText,
+    ) -> OperationResult {
+        let package = Package::open(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        set_content_control_text(&package, &main, &source, operation, output)
     }
 
     fn operation(target: &str, expected: &str, replacement: &str) -> ReplaceText {
@@ -637,6 +1543,22 @@ mod tests {
         let package = Package::open(input).unwrap();
         let (main, source) = crate::open_main_source(&package).unwrap();
         insert_paragraph_after(&package, &main, &source, operation, output)
+    }
+
+    fn delete_operation(target: &str) -> DeleteParagraph {
+        DeleteParagraph {
+            target: TextTarget {
+                text: target.to_owned(),
+                occurrence: None,
+            },
+            base_revision: Some("caller-version-7".to_owned()),
+        }
+    }
+
+    fn delete_execute(input: &Path, output: &Path, operation: &DeleteParagraph) -> OperationResult {
+        let package = Package::open(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        delete_paragraph(&package, &main, &source, operation, output)
     }
 
     fn entry(path: &Path, name: &str) -> Vec<u8> {
@@ -938,5 +1860,331 @@ mod tests {
             paragraph_fragment(&source, paragraph, "new").unwrap(),
             b"<word:p><word:r><word:t>new</word:t></word:r></word:p>"
         );
+    }
+
+    #[test]
+    fn deletes_one_body_paragraph_without_changing_neighbor_or_other_part_bytes() {
+        let input = fixture();
+        let output = path("deleted");
+        let package = Package::open(&input).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        let (_, paragraph) = resolve_paragraph_anchor(
+            &source,
+            &TextTarget {
+                text: "OLD UNIQUE TEXT".to_owned(),
+                occurrence: None,
+            },
+        )
+        .unwrap();
+        let span = source.node(paragraph).unwrap().span();
+        let mut expected = source.original_bytes()[..span.start].to_vec();
+        expected.extend_from_slice(&source.original_bytes()[span.end..]);
+
+        let result = delete_execute(&input, &output, &delete_operation("OLD UNIQUE TEXT"));
+
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+        assert_eq!(result.changes[0].kind, "paragraph_deleted");
+        assert_eq!(result.changes[0].before, "OLD UNIQUE TEXT");
+        assert!(!result.to_json().to_string().contains("SourceSpan"));
+        assert_eq!(entry(&output, "word/document.xml"), expected);
+        assert_eq!(
+            entry(&input, "word/media/image.bin"),
+            entry(&output, "word/media/image.bin")
+        );
+        let output_package = Package::open(&output).unwrap();
+        output_package.verify().unwrap();
+        let (_, output_source) = crate::open_main_source(&output_package).unwrap();
+        let body = body_texts(&output_source).unwrap();
+        assert_eq!(body[0].1, "DuplicateDuplicate");
+        assert!(
+            !body
+                .iter()
+                .any(|(_, text)| text.contains("OLD UNIQUE TEXT"))
+        );
+
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn deletion_uses_shared_occurrence_and_rejects_unsafe_ranges_or_wrappers() {
+        let input = fixture();
+        let output = path("delete-duplicate");
+        assert_eq!(
+            delete_execute(&input, &output, &delete_operation("Duplicate")).diagnostics[0].code,
+            "TARGET_AMBIGUOUS"
+        );
+        let mut operation = delete_operation("Duplicate");
+        operation.target.occurrence = Some(1);
+        assert_eq!(
+            delete_execute(&input, &output, &operation).status,
+            opensuite_protocol::OperationStatus::Applied
+        );
+        fs::remove_file(&output).unwrap();
+        fs::remove_file(input).unwrap();
+
+        for xml in [
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>needle</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:pPr><w:sectPr/></w:pPr><w:r><w:t>needle</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:sdt><w:sdtContent><w:p><w:r><w:t>needle</w:t></w:r></w:p></w:sdtContent></w:sdt></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:ins><w:r><w:t>needle</w:t></w:r></w:ins></w:p></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:bookmarkStart w:id=\"1\" w:name=\"mark\"/><w:r><w:t>needle</w:t></w:r><w:bookmarkEnd w:id=\"1\"/></w:p></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:commentRangeStart w:id=\"1\"/><w:r><w:t>needle</w:t></w:r><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:fldSimple w:instr=\"DATE\"><w:r><w:t>needle</w:t></w:r></w:fldSimple></w:p></w:body></w:document>"
+            ),
+        ] {
+            let source = SourceDocument::parse(xml.into_bytes()).unwrap();
+            let result = resolve_paragraph_anchor(
+                &source,
+                &TextTarget {
+                    text: "needle".to_owned(),
+                    occurrence: None,
+                },
+            );
+            if let Ok((_, paragraph)) = result {
+                assert!(!safe_to_delete(&source, paragraph));
+            } else {
+                assert_eq!(
+                    result.unwrap_err().diagnostics[0].code,
+                    "UNSUPPORTED_OPERATION"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sets_one_simple_table_cell_and_preserves_other_payloads() {
+        let xml = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Amount</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>100</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Expenses</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>50</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+        );
+        let input = table_fixture(&xml);
+        let output = path("table-output");
+        let result = table_execute(
+            &input,
+            &output,
+            &table_operation("Revenue", "Amount", "100", "125 & < >"),
+        );
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+        assert_eq!(result.changes[0].kind, "table_cell_text_set");
+        assert!(!result.to_json().to_string().contains("NodeId"));
+        assert_eq!(
+            entry(&input, "word/media/image.bin"),
+            entry(&output, "word/media/image.bin")
+        );
+        let xml = String::from_utf8(entry(&output, "word/document.xml")).unwrap();
+        assert!(xml.contains("<w:t>125 &amp; &lt; &gt;</w:t>"));
+        assert!(xml.contains("<w:t>Expenses</w:t>"));
+        Package::open(&output).unwrap().verify().unwrap();
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn fills_an_empty_simple_cell_and_rejects_ambiguous_or_complex_cells() {
+        let empty = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Amount</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>"
+        );
+        let input = table_fixture(&empty);
+        let output = path("table-empty");
+        let result = table_execute(
+            &input,
+            &output,
+            &table_operation("Revenue", "Amount", "", " kept "),
+        );
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+        assert!(
+            String::from_utf8(entry(&output, "word/document.xml"))
+                .unwrap()
+                .contains("<w:p><w:r><w:t xml:space=\"preserve\"> kept </w:t></w:r></w:p>")
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+
+        for xml in [
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Amount</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:fldSimple w:instr=\"DATE\"><w:r><w:t>100</w:t></w:r></w:fldSimple></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Amount</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>100</w:t></w:r></w:p><w:p><w:r><w:t>more</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+            ),
+            format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Amount</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr><w:p><w:r><w:t>100</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+            ),
+        ] {
+            let input = table_fixture(&xml);
+            let output = path("table-unsupported");
+            assert_eq!(
+                table_execute(
+                    &input,
+                    &output,
+                    &table_operation("Revenue", "Amount", "100", "125")
+                )
+                .diagnostics[0]
+                    .code,
+                "UNSUPPORTED_OPERATION"
+            );
+            fs::remove_file(input).unwrap();
+        }
+    }
+
+    #[test]
+    fn table_targets_require_occurrence_and_current_text_preconditions() {
+        let table = "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Amount</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>100</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        let input = table_fixture(&format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body>{table}{table}</w:body></w:document>"
+        ));
+        let output = path("table-ambiguous");
+        let operation = table_operation("Revenue", "Amount", "100", "125");
+        assert_eq!(
+            table_execute(&input, &output, &operation).diagnostics[0].code,
+            "TARGET_AMBIGUOUS"
+        );
+        let mut selected = operation.clone();
+        selected.target.occurrence = Some(1);
+        assert_eq!(
+            table_execute(&input, &output, &selected).status,
+            opensuite_protocol::OperationStatus::Applied
+        );
+        fs::remove_file(&output).unwrap();
+        let mut wrong = table_operation("Revenue", "Amount", "wrong", "125");
+        wrong.target.occurrence = Some(0);
+        assert_eq!(
+            table_execute(&input, &output, &wrong).diagnostics[0].code,
+            "PRECONDITION_FAILED"
+        );
+        assert!(!output.exists());
+        fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn sets_simple_content_control_text_by_tag_or_alias() {
+        let xml = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:sdt><w:sdtPr><w:tag w:val=\"customer_name\"/><w:alias w:val=\"Customer Name\"/><w:id w:val=\"7\"/><w:text/></w:sdtPr><w:sdtContent><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Acme</w:t></w:r></w:p></w:sdtContent></w:sdt></w:body></w:document>"
+        );
+        let input = table_fixture(&xml);
+        let output = path("control-output");
+        let result = control_execute(
+            &input,
+            &output,
+            &control_operation(
+                Some("customer_name"),
+                Some("Customer Name"),
+                "Acme",
+                "New & < >",
+            ),
+        );
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+        assert_eq!(result.changes[0].kind, "content_control_text_set");
+        assert_eq!(
+            entry(&input, "word/media/image.bin"),
+            entry(&output, "word/media/image.bin")
+        );
+        let output_xml = String::from_utf8(entry(&output, "word/document.xml")).unwrap();
+        assert!(output_xml.contains("<w:t>New &amp; &lt; &gt;</w:t>"));
+        assert!(output_xml.contains("w:tag w:val=\"customer_name\""));
+        Package::open(&output).unwrap().verify().unwrap();
+        fs::remove_file(output).unwrap();
+        let alias_output = path("control-alias");
+        assert_eq!(
+            control_execute(
+                &input,
+                &alias_output,
+                &control_operation(None, Some("Customer Name"), "Acme", "Alias value")
+            )
+            .status,
+            opensuite_protocol::OperationStatus::Applied
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(alias_output).unwrap();
+    }
+
+    #[test]
+    fn fills_empty_content_control_and_rejects_unsafe_controls() {
+        let empty = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:sdt><w:sdtPr><w:tag w:val=\"name\"/><w:text/></w:sdtPr><w:sdtContent><w:p/></w:sdtContent></w:sdt></w:body></w:document>"
+        );
+        let input = table_fixture(&empty);
+        let output = path("control-empty");
+        assert_eq!(
+            control_execute(
+                &input,
+                &output,
+                &control_operation(Some("name"), None, "", " kept ")
+            )
+            .status,
+            opensuite_protocol::OperationStatus::Applied
+        );
+        assert!(
+            String::from_utf8(entry(&output, "word/document.xml"))
+                .unwrap()
+                .contains("<w:p><w:r><w:t xml:space=\"preserve\"> kept </w:t></w:r></w:p>")
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+
+        for properties in [
+            "<w:dataBinding w:xpath=\"/name\"/><w:text/>",
+            "<w:lock w:val=\"contentLocked\"/><w:text/>",
+            "<w:showingPlcHdr/><w:text/>",
+            "<w:dropDownList/><w:text/>",
+        ] {
+            let xml = format!(
+                "<w:document xmlns:w=\"{WORD}\"><w:body><w:sdt><w:sdtPr><w:tag w:val=\"name\"/>{properties}</w:sdtPr><w:sdtContent><w:p><w:r><w:t>Acme</w:t></w:r></w:p></w:sdtContent></w:sdt></w:body></w:document>"
+            );
+            let input = table_fixture(&xml);
+            let output = path("control-unsupported");
+            assert_eq!(
+                control_execute(
+                    &input,
+                    &output,
+                    &control_operation(Some("name"), None, "Acme", "New")
+                )
+                .diagnostics[0]
+                    .code,
+                "UNSUPPORTED_OPERATION"
+            );
+            fs::remove_file(input).unwrap();
+        }
+    }
+
+    #[test]
+    fn content_control_targets_require_occurrence_and_expected_text() {
+        let control = "<w:sdt><w:sdtPr><w:tag w:val=\"name\"/><w:text/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Acme</w:t></w:r></w:p></w:sdtContent></w:sdt>";
+        let input = table_fixture(&format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body>{control}{control}</w:body></w:document>"
+        ));
+        let output = path("control-ambiguous");
+        let operation = control_operation(Some("name"), None, "Acme", "New");
+        assert_eq!(
+            control_execute(&input, &output, &operation).diagnostics[0].code,
+            "TARGET_AMBIGUOUS"
+        );
+        let mut selected = operation.clone();
+        selected.target.occurrence = Some(1);
+        assert_eq!(
+            control_execute(&input, &output, &selected).status,
+            opensuite_protocol::OperationStatus::Applied
+        );
+        fs::remove_file(&output).unwrap();
+        let mut wrong = control_operation(Some("name"), None, "wrong", "New");
+        wrong.target.occurrence = Some(0);
+        assert_eq!(
+            control_execute(&input, &output, &wrong).diagnostics[0].code,
+            "PRECONDITION_FAILED"
+        );
+        fs::remove_file(input).unwrap();
     }
 }

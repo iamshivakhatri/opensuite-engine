@@ -21,7 +21,10 @@ pub use header_footer::{
     HeaderFooter, HeaderFooterError, HeaderFooterKind, HeaderFooterReference, HeaderFooterType,
     load_footer, load_header,
 };
-pub use mutation::{insert_paragraph_after, replace_text};
+pub use mutation::{
+    delete_paragraph, insert_paragraph_after, replace_text, set_content_control_text,
+    set_table_cell_text,
+};
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
     NumberingInstance, NumberingLevel, load_numbering,
