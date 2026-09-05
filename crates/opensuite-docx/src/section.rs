@@ -39,7 +39,7 @@ pub struct SectionProperties<'a> {
     source_id: NodeId,
 }
 
-impl<'a> SectionProperties<'a> {
+impl SectionProperties<'_> {
     pub fn source_id(&self) -> NodeId {
         self.source_id
     }

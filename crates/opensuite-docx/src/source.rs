@@ -231,6 +231,10 @@ impl SourceDocument {
         self.nodes.len()
     }
 
+    pub fn node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        (0..self.nodes.len()).map(|index| NodeId(index as u32))
+    }
+
     pub fn element_count(&self) -> usize {
         self.element_count
     }

@@ -303,6 +303,19 @@ impl Package {
         read_entry(&mut archive, part.name.as_str().trim_start_matches('/'))
     }
 
+    /// Returns a part's uncompressed ZIP entry size without reading its contents.
+    pub fn part_size(&self, part: &Part) -> Result<u64, PackageError> {
+        if !self.parts.contains(&part.name) {
+            return Err(PackageError::MissingTargetPart(part.name.clone()));
+        }
+        let file = File::open(&self.path).map_err(PackageError::Io)?;
+        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        archive
+            .by_name(part.name.as_str().trim_start_matches('/'))
+            .map(|entry| entry.size())
+            .map_err(PackageError::InvalidZip)
+    }
+
     pub fn main_office_document(&self) -> Result<Part, PackageError> {
         let relationship = self
             .relationships

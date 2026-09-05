@@ -4,4 +4,6 @@
 !tests/fixtures/sections.docx
 !tests/fixtures/headers-footers.docx
 !tests/fixtures/headers-footers-errors.docx
+!tests/fixtures/references.docx
 *.txt
+tests

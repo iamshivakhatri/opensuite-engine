@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-Foundation — Week 1: OPC package discovery
+DOCX read-side semantics
 
 ## Current Format
 
@@ -12,8 +12,8 @@ PPTX and XLSX have not started.
 
 ## Current Objective
 
-Establish the shared OPC package discovery layer before implementing DOCX
-semantics.
+Extend source-backed DOCX inspection while preserving original package and XML
+content unchanged.
 
 ## Implemented
 
@@ -23,6 +23,16 @@ semantics.
 - Package-level `_rels/.rels` parsing and main office document discovery through
   Transitional or Strict `officeDocument` relationships.
 - `opensuite inspect <path-to-office-file>` JSON package metadata output.
+- Source-aware DOCX semantic views for document text, tables, styles,
+  numbering, sections, headers/footers, references, pictures, and fields.
+- Read-only `fldSimple` and nested complex-field inspection, including source
+  boundaries, instruction text, and cached result text when declared.
+- Read-only WordprocessingML content-control (`w:sdt`) inspection, including
+  source IDs, declared metadata, visible text, list/date metadata, and declared
+  data bindings without Custom XML resolution.
+- `opensuite inspect-content-controls <file.docx>` compact semantic output.
+- Runtime/protocol boundary foundation: versioned DOCX read-side capability
+  discovery, compact diagnostics, and `opensuite capabilities`.
 
 ## Current Repository Target
 
@@ -33,7 +43,6 @@ semantics.
 
 ## Explicitly Not Implemented Yet
 
-- DOCX parsing
 - document mutation
 - transactions
 - rendering
@@ -44,7 +53,11 @@ semantics.
 - PPTX
 - XLSX
 
+Future mutation, revision/precondition, conflict, validation, serialization,
+and rendering requirements are recorded in `docs/runtime-boundary.md`; they
+are not implemented capabilities.
+
 ## Next Milestone
 
-Build the next explicitly selected OPC capability without starting DOCX
-semantic parsing.
+Build the next explicitly selected DOCX capability without adding mutation or
+serialization.

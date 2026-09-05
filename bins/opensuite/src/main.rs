@@ -1,6 +1,7 @@
 fn main() {
     let mut arguments = std::env::args_os().skip(1);
     let result = match (arguments.next(), arguments.next(), arguments.next()) {
+        (Some(command), None, None) if command == "capabilities" => capabilities(),
         (Some(command), Some(path), None) if command == "inspect" => inspect(path),
         (Some(command), Some(path), None) if command == "inspect-source" => inspect_source(path),
         (Some(command), Some(path), None) if command == "inspect-docx" => inspect_docx(path),
@@ -9,9 +10,13 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-numbering" => inspect_numbering(path),
         (Some(command), Some(path), None) if command == "inspect-sections" => inspect_sections(path),
         (Some(command), Some(path), None) if command == "inspect-headers-footers" => inspect_headers_footers(path),
+        (Some(command), Some(path), None) if command == "inspect-references" => inspect_references(path),
+        (Some(command), Some(path), None) if command == "inspect-images" => inspect_images(path),
+        (Some(command), Some(path), None) if command == "inspect-fields" => inspect_fields(path),
+        (Some(command), Some(path), None) if command == "inspect-content-controls" => inspect_content_controls(path),
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers> <path-to-office-file>"
+            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls> [path-to-office-file]"
                 .to_owned(),
         )),
     };
@@ -26,6 +31,215 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn capabilities() -> Result<serde_json::Value, (&'static str, String)> {
+    let capabilities =
+        opensuite_protocol::RuntimeCapabilities::docx_read_only(env!("CARGO_PKG_VERSION"));
+    let mut manifest = capabilities.to_json();
+    let Some(output) = manifest.as_object_mut() else {
+        return Err((
+            "PROTOCOL_SERIALIZATION_ERROR",
+            "capability manifest is not an object".to_owned(),
+        ));
+    };
+    output.insert("ok".to_owned(), serde_json::json!(true));
+    Ok(manifest)
+}
+
+fn inspect_content_controls(
+    path: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (_, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let content_controls = document
+        .content_controls()
+        .map(|control| {
+            let properties = control.properties();
+            Ok(serde_json::json!({
+                "kind": content_control_kind_name(properties.kind),
+                "id": properties.id,
+                "alias": properties.alias,
+                "tag": properties.tag,
+                "text": control.visible_text().map_err(|error| (error.code(), error.to_string()))?,
+                "lock": properties.lock,
+                "placeholder": properties.placeholder,
+                "data_binding": properties.data_binding.map(|binding| serde_json::json!({ "store_item_id": binding.store_item_id, "xpath": binding.xpath, "prefix_mappings": binding.prefix_mappings })),
+                "items": properties.items.into_iter().map(|item| serde_json::json!({ "display_text": item.display_text, "value": item.value })).collect::<Vec<_>>(),
+                "date": properties.date.map(|date| serde_json::json!({ "format": date.format, "language_id": date.language_id, "calendar": date.calendar })),
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(
+        serde_json::json!({ "ok": true, "content_control_count": content_controls.len(), "content_controls": content_controls }),
+    )
+}
+
+fn content_control_kind_name(kind: opensuite_docx::ContentControlKind) -> &'static str {
+    match kind {
+        opensuite_docx::ContentControlKind::Text => "text",
+        opensuite_docx::ContentControlKind::RichText => "rich_text",
+        opensuite_docx::ContentControlKind::Date => "date",
+        opensuite_docx::ContentControlKind::DropDownList => "drop_down_list",
+        opensuite_docx::ContentControlKind::ComboBox => "combo_box",
+        opensuite_docx::ContentControlKind::CheckBox => "check_box",
+        opensuite_docx::ContentControlKind::Picture => "picture",
+        opensuite_docx::ContentControlKind::Group => "group",
+        opensuite_docx::ContentControlKind::RepeatingSection => "repeating_section",
+        opensuite_docx::ContentControlKind::RepeatingSectionItem => "repeating_section_item",
+        opensuite_docx::ContentControlKind::Unknown => "unknown",
+    }
+}
+
+fn inspect_fields(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (_, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let fields = document.fields();
+    let values = fields
+        .iter()
+        .map(|field| {
+            Ok(serde_json::json!({
+                "kind": match field.kind() { opensuite_docx::FieldKind::Simple => "simple", opensuite_docx::FieldKind::Complex => "complex" },
+                "instruction": field.instruction().map_err(|error| (error.code(), error.to_string()))?,
+                "result_text": field.result_text().map_err(|error| (error.code(), error.to_string()))?,
+                "has_separator": field.has_separator(),
+                "state": match field.state() { opensuite_docx::FieldState::Complete => "complete", opensuite_docx::FieldState::Unterminated => "unterminated" },
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let errors = fields
+        .errors()
+        .map(|error| serde_json::json!({ "code": error.code() }))
+        .collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({ "ok": true, "field_count": values.len(), "fields": values, "errors": errors }),
+    )
+}
+
+fn inspect_images(path: std::ffi::OsString) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let main = package
+        .main_office_document()
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let source = opensuite_docx::SourceDocument::parse(
+        package
+            .read_part(&main)
+            .map_err(|error| (error.code(), error.to_string()))?,
+    )
+    .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let images = document
+        .pictures()
+        .map(|picture| {
+            let extent = picture
+                .extent()
+                .map_err(|error| (error.code(), error.to_string()))?;
+            let metadata = picture.metadata();
+            let reference = picture
+                .image_reference(&package, &main)
+                .map_err(|error| (error.code(), error.to_string()))?;
+            let mut value = serde_json::Map::new();
+            value.insert(
+                "kind".to_owned(),
+                serde_json::json!(match picture.kind() {
+                    opensuite_docx::PictureKind::Inline => "inline",
+                    opensuite_docx::PictureKind::Anchored => "anchored",
+                }),
+            );
+            value.insert(
+                "width_emu".to_owned(),
+                serde_json::json!(extent.map(|extent| extent.width_emu)),
+            );
+            value.insert(
+                "height_emu".to_owned(),
+                serde_json::json!(extent.map(|extent| extent.height_emu)),
+            );
+            if let Some(metadata) = metadata {
+                value.insert("name".to_owned(), serde_json::json!(metadata.name));
+                value.insert(
+                    "description".to_owned(),
+                    serde_json::json!(metadata.description),
+                );
+                value.insert("title".to_owned(), serde_json::json!(metadata.title));
+            }
+            match reference {
+                opensuite_docx::ImageReference::Embedded(image) => {
+                    value.insert(
+                        "part_name".to_owned(),
+                        serde_json::json!(image.part.name.as_str()),
+                    );
+                    value.insert(
+                        "content_type".to_owned(),
+                        serde_json::json!(image.part.content_type.as_str()),
+                    );
+                    value.insert("size_bytes".to_owned(), serde_json::json!(image.size_bytes));
+                }
+                opensuite_docx::ImageReference::LinkedExternal(target) => {
+                    value.insert("linked_target".to_owned(), serde_json::json!(target));
+                }
+                opensuite_docx::ImageReference::LinkedInternal(part) => {
+                    value.insert(
+                        "linked_part_name".to_owned(),
+                        serde_json::json!(part.name.as_str()),
+                    );
+                }
+            }
+            Ok(serde_json::Value::Object(value))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(serde_json::json!({ "ok": true, "image_count": images.len(), "images": images }))
+}
+
+fn inspect_references(
+    path: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let main = package
+        .main_office_document()
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let source = opensuite_docx::SourceDocument::parse(
+        package
+            .read_part(&main)
+            .map_err(|error| (error.code(), error.to_string()))?,
+    )
+    .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let hyperlinks = document
+        .hyperlinks()
+        .map(|hyperlink| {
+            let target = hyperlink
+                .target(&package, &main)
+                .map_err(|error| (error.code(), error.to_string()))?;
+            let (kind, target) = match target {
+                Some(opensuite_docx::HyperlinkTarget::External(target)) => ("external", target),
+                Some(opensuite_docx::HyperlinkTarget::InternalAnchor(target)) => ("internal", target),
+                Some(opensuite_docx::HyperlinkTarget::InternalPart(part)) => {
+                    ("internal_part", part.name.as_str().to_owned())
+                }
+                None => ("none", String::new()),
+            };
+            Ok(serde_json::json!({ "text": hyperlink.text().map_err(|error| (error.code(), error.to_string()))?, "target": target, "kind": kind }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let bookmarks = document
+        .bookmarks()
+        .map_err(|error| (error.code(), error.to_string()))?
+        .into_iter()
+        .map(|bookmark| serde_json::json!({ "name": bookmark.name, "id": bookmark.id.0.to_string() }))
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({ "ok": true, "hyperlinks": hyperlinks, "bookmarks": bookmarks }))
 }
 
 fn inspect_headers_footers(

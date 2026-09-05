@@ -2,7 +2,7 @@ use std::fmt;
 
 use opensuite_opc::{Package, PackageError, Part, RelationshipTarget};
 
-use crate::{BodyBlock, NodeId, SourceDocument, SourceError, SourceNodeKind};
+use crate::{BodyBlock, NodeId, Picture, SourceDocument, SourceError, SourceNodeKind};
 
 const NS: [&str; 2] = [
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -98,6 +98,15 @@ impl HeaderFooter {
     }
     pub fn blocks(&self) -> impl Iterator<Item = BodyBlock<'_>> {
         crate::semantic::container_blocks(&self.source, self.root_id)
+    }
+    pub fn pictures(&self) -> impl Iterator<Item = Picture<'_>> + '_ {
+        crate::picture::pictures(&self.source)
+    }
+    pub fn fields(&self) -> crate::FieldSet<'_> {
+        crate::field::fields(&self.source)
+    }
+    pub fn content_controls(&self) -> impl Iterator<Item = crate::ContentControl<'_>> + '_ {
+        crate::content_control::content_controls(&self.source)
     }
 }
 

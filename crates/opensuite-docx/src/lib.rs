@@ -1,12 +1,17 @@
 //! Source-aware DOCX infrastructure built on OPC package discovery.
 
+mod content_control;
+mod field;
 mod header_footer;
 mod numbering;
+mod picture;
+mod references;
 mod section;
 mod semantic;
 mod source;
 mod styles;
 
+pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
 pub use header_footer::{
     HeaderFooter, HeaderFooterError, HeaderFooterKind, HeaderFooterReference, HeaderFooterType,
     load_footer, load_header,
@@ -15,6 +20,10 @@ pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
     NumberingInstance, NumberingLevel, load_numbering,
 };
+pub use picture::{
+    ImagePart, ImageReference, Picture, PictureError, PictureExtent, PictureKind, PictureMetadata,
+};
+pub use references::{Bookmark, BookmarkId, Hyperlink, HyperlinkTarget, ReferenceError};
 pub use section::{
     Columns, PageMargins, PageOrientation, PageSize, Section, SectionError, SectionProperties,
     SectionType,
@@ -46,3 +55,7 @@ pub fn open_main_source(package: &Package) -> Result<(Part, SourceDocument), Sou
     let source = SourceDocument::parse(bytes)?;
     Ok((part, source))
 }
+pub use content_control::{
+    ContentControl, ContentControlKind, ContentControlListItem, ContentControlProperties,
+    DataBinding, DateMetadata,
+};

@@ -3,8 +3,8 @@ use std::fmt;
 use quick_xml::escape::unescape;
 
 use crate::{
-    ListReference, NodeId, ParagraphFormatting, RunFormatting, SourceDocument, SourceNodeKind,
-    StyleError, StyleId, StyleSheet,
+    Bookmark, Hyperlink, ListReference, NodeId, ParagraphFormatting, Picture, ReferenceError,
+    RunFormatting, SourceDocument, SourceNodeKind, StyleError, StyleId, StyleSheet,
 };
 
 const WORDPROCESSINGML_NAMESPACES: [&str; 2] = [
@@ -58,13 +58,42 @@ impl<'a> DocxDocument<'a> {
     pub fn sections(&self) -> impl Iterator<Item = crate::Section<'a>> + '_ {
         crate::section::sections(self.source, self.body_id)
     }
+
+    pub fn hyperlinks(&self) -> impl Iterator<Item = Hyperlink<'a>> + '_ {
+        crate::references::hyperlinks(self.source)
+    }
+
+    pub fn bookmarks(&self) -> Result<Vec<Bookmark>, ReferenceError> {
+        crate::references::bookmarks(self.source)
+    }
+
+    pub fn bookmark_by_name(&self, name: &str) -> Result<Option<Bookmark>, ReferenceError> {
+        Ok(self
+            .bookmarks()?
+            .into_iter()
+            .find(|bookmark| bookmark.name == name))
+    }
+
+    pub fn pictures(&self) -> impl Iterator<Item = Picture<'a>> + '_ {
+        crate::picture::pictures(self.source)
+    }
+
+    pub fn fields(&self) -> crate::FieldSet<'a> {
+        crate::field::fields(self.source)
+    }
+
+    pub fn content_controls(&self) -> impl Iterator<Item = crate::ContentControl<'a>> + '_ {
+        crate::content_control::content_controls(self.source)
+    }
 }
 
 pub(crate) fn container_blocks(
     source: &SourceDocument,
     container_id: NodeId,
 ) -> impl Iterator<Item = BodyBlock<'_>> {
-    source.children(container_id).filter_map(move |source_id| {
+    let mut ids = Vec::new();
+    block_ids(source, container_id, &mut ids);
+    ids.into_iter().filter_map(move |source_id| {
         if is_word_element(source, source_id, "p") {
             Some(BodyBlock::Paragraph(Paragraph { source, source_id }))
         } else if is_word_element(source, source_id, "tbl") {
@@ -73,6 +102,18 @@ pub(crate) fn container_blocks(
             None
         }
     })
+}
+
+fn block_ids(source: &SourceDocument, container_id: NodeId, ids: &mut Vec<NodeId>) {
+    for id in source.children(container_id) {
+        if is_word_element(source, id, "p") || is_word_element(source, id, "tbl") {
+            ids.push(id);
+        } else if is_word_element(source, id, "sdt") {
+            if let Some(content_id) = child(source, id, "sdtContent") {
+                block_ids(source, content_id, ids);
+            }
+        }
+    }
 }
 
 /// A direct body child, kept in source order.
@@ -121,14 +162,40 @@ impl<'a> Paragraph<'a> {
         Ok(direct.or(styles.effective_list_reference(self.style_id().as_ref())?))
     }
 
-    pub fn runs(&self) -> impl Iterator<Item = Run<'a>> + '_ {
+    pub fn inlines(&self) -> impl Iterator<Item = ParagraphInline<'a>> + '_ {
         self.source
             .children(self.source_id)
-            .filter(|id| is_word_element(self.source, *id, "r"))
-            .map(|source_id| Run {
-                source: self.source,
-                source_id,
+            .filter_map(move |source_id| {
+                if is_word_element(self.source, source_id, "r") {
+                    Some(ParagraphInline::Run(Run {
+                        source: self.source,
+                        source_id,
+                    }))
+                } else if is_word_element(self.source, source_id, "hyperlink") {
+                    Some(ParagraphInline::Hyperlink(Hyperlink {
+                        source: self.source,
+                        source_id,
+                    }))
+                } else {
+                    None
+                }
             })
+    }
+
+    pub fn runs(&self) -> impl Iterator<Item = Run<'a>> + '_ {
+        let mut ids = Vec::new();
+        inline_run_ids(self.source, self.source_id, &mut ids);
+        ids.into_iter().map(move |source_id| Run {
+            source: self.source,
+            source_id,
+        })
+    }
+
+    pub fn hyperlinks(&self) -> impl Iterator<Item = Hyperlink<'a>> + '_ {
+        self.inlines().filter_map(|inline| match inline {
+            ParagraphInline::Hyperlink(hyperlink) => Some(hyperlink),
+            ParagraphInline::Run(_) => None,
+        })
     }
 
     pub fn text(&self) -> Result<String, SemanticError> {
@@ -138,8 +205,13 @@ impl<'a> Paragraph<'a> {
 
 /// A read-only run view over a source node.
 pub struct Run<'a> {
-    source: &'a SourceDocument,
-    source_id: NodeId,
+    pub(crate) source: &'a SourceDocument,
+    pub(crate) source_id: NodeId,
+}
+
+pub enum ParagraphInline<'a> {
+    Run(Run<'a>),
+    Hyperlink(Hyperlink<'a>),
 }
 
 impl<'a> Run<'a> {
@@ -251,17 +323,44 @@ impl<'a> Cell<'a> {
     }
 
     pub fn paragraphs(&self) -> impl Iterator<Item = Paragraph<'a>> + '_ {
-        self.source
-            .children(self.source_id)
-            .filter(|id| is_word_element(self.source, *id, "p"))
-            .map(|source_id| Paragraph {
-                source: self.source,
-                source_id,
-            })
+        let mut ids = Vec::new();
+        paragraph_ids(self.source, self.source_id, &mut ids);
+        ids.into_iter().map(|source_id| Paragraph {
+            source: self.source,
+            source_id,
+        })
     }
 
     pub fn text(&self) -> Result<String, SemanticError> {
         collect_text(self.paragraphs().map(|paragraph| paragraph.text()))
+    }
+}
+
+fn paragraph_ids(source: &SourceDocument, container_id: NodeId, ids: &mut Vec<NodeId>) {
+    for id in source.children(container_id) {
+        if is_word_element(source, id, "p") {
+            ids.push(id);
+        } else if is_word_element(source, id, "sdt") {
+            if let Some(content_id) = child(source, id, "sdtContent") {
+                paragraph_ids(source, content_id, ids);
+            }
+        }
+    }
+}
+
+fn inline_run_ids(source: &SourceDocument, container_id: NodeId, ids: &mut Vec<NodeId>) {
+    for id in source.children(container_id) {
+        if is_word_element(source, id, "r") {
+            ids.push(id);
+        } else if is_word_element(source, id, "hyperlink")
+            || is_word_element(source, id, "sdtContent")
+        {
+            inline_run_ids(source, id, ids);
+        } else if is_word_element(source, id, "sdt") {
+            if let Some(content_id) = child(source, id, "sdtContent") {
+                inline_run_ids(source, content_id, ids);
+            }
+        }
     }
 }
 
@@ -271,7 +370,7 @@ pub struct Text<'a> {
     source_id: NodeId,
 }
 
-impl<'a> Text<'a> {
+impl Text<'_> {
     pub fn source_id(&self) -> NodeId {
         self.source_id
     }
@@ -288,6 +387,13 @@ impl<'a> Text<'a> {
         }
         Ok(value)
     }
+}
+
+pub(crate) fn text_value(
+    source: &SourceDocument,
+    source_id: NodeId,
+) -> Result<String, SemanticError> {
+    Text { source, source_id }.value()
 }
 
 /// Typed failures while recognizing the minimal DOCX semantic layer.
