@@ -70,6 +70,9 @@ and XML source bytes.
 - Preservation-safe `SetParagraphFormatting` for an ordinary direct body paragraph
   selected through `TextTarget`. It patches only direct `w:pPr` alignment, spacing,
   indentation, and keep properties, then reopens and verifies the direct formatting.
+- Preservation-safe `SetTextFormatting` for one complete ordinary direct body run selected
+  through `TextTarget`. It patches only direct bold, italic, font-size, and font-family
+  properties, then reopens and verifies the direct formatting.
 
 ## Current Repository Target
 
@@ -92,6 +95,7 @@ and XML source bytes.
   combo-box, nested, or multi-paragraph content-control mutation
 - paragraph styles, numbering, tabs, borders, shading, section properties, and paragraph
   formatting outside ordinary direct main-body paragraphs
+- substring, cross-run, table/header/footer, tracked, wrapped, or general character formatting
 - mutation batches or transactions
 - rendering
 - server

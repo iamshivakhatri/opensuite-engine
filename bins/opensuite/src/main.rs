@@ -28,6 +28,8 @@ fn main() {
         set_content_control_text(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-paragraph-formatting")) {
         set_paragraph_formatting(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-text-formatting")) {
+        set_text_formatting(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
         inspect_context(arguments)
     } else {
@@ -385,6 +387,118 @@ fn set_paragraph_formatting(
                 occurrence,
             },
             formatting: patch,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn set_text_formatting(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    use opensuite_protocol::{PropertyPatch, TextFormattingPatch};
+    let (Some(input), Some(output), Some(target)) =
+        (arguments.next(), arguments.next(), arguments.next())
+    else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "set-text-formatting requires input, output, and target text".to_owned(),
+        ));
+    };
+    let target = target.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "target text must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let values = arguments
+        .map(|value| {
+            value.into_string().map_err(|_| {
+                (
+                    "INVALID_ARGUMENTS",
+                    "formatting arguments must be valid UTF-8".to_owned(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut formatting = TextFormattingPatch::default();
+    let mut occurrence = None;
+    let mut index = 0;
+    while index < values.len() {
+        let flag = &values[index];
+        let value = |index: &mut usize| -> Result<&str, (&'static str, String)> {
+            *index += 1;
+            values
+                .get(*index)
+                .map(String::as_str)
+                .ok_or_else(|| ("INVALID_ARGUMENTS", format!("{flag} requires a value")))
+        };
+        match flag.as_str() {
+            "--bold" => {
+                formatting.bold =
+                    Some(PropertyPatch::Set(value(&mut index)?.parse().map_err(
+                        |_| ("INVALID_ARGUMENTS", "bold must be true or false".to_owned()),
+                    )?))
+            }
+            "--clear-bold" => formatting.bold = Some(PropertyPatch::Clear),
+            "--italic" => {
+                formatting.italic = Some(PropertyPatch::Set(value(&mut index)?.parse().map_err(
+                    |_| {
+                        (
+                            "INVALID_ARGUMENTS",
+                            "italic must be true or false".to_owned(),
+                        )
+                    },
+                )?))
+            }
+            "--clear-italic" => formatting.italic = Some(PropertyPatch::Clear),
+            "--font-size" => {
+                formatting.font_size_half_points = Some(PropertyPatch::Set(
+                    value(&mut index)?.parse().map_err(|_| {
+                        (
+                            "INVALID_ARGUMENTS",
+                            "font size must be a positive half-point value".to_owned(),
+                        )
+                    })?,
+                ))
+            }
+            "--clear-font-size" => formatting.font_size_half_points = Some(PropertyPatch::Clear),
+            "--font-family" => {
+                formatting.font_family = Some(PropertyPatch::Set(value(&mut index)?.to_owned()))
+            }
+            "--clear-font-family" => formatting.font_family = Some(PropertyPatch::Clear),
+            "--occurrence" => {
+                occurrence = Some(value(&mut index)?.parse().map_err(|_| {
+                    (
+                        "INVALID_ARGUMENTS",
+                        "occurrence must be a non-negative integer".to_owned(),
+                    )
+                })?)
+            }
+            _ => {
+                return Err((
+                    "INVALID_ARGUMENTS",
+                    format!("unknown text-formatting option {flag}"),
+                ));
+            }
+        }
+        index += 1;
+    }
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_text_formatting(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetTextFormatting {
+            target: opensuite_protocol::TextTarget {
+                text: target,
+                occurrence,
+            },
+            formatting,
             base_revision: None,
         },
         output,

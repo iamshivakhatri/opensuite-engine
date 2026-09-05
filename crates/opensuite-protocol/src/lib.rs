@@ -106,6 +106,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_table_cell_text",
     "set_content_control_text",
     "set_paragraph_formatting",
+    "set_text_formatting",
     "find_text",
     "inspect_context",
 ];
@@ -223,6 +224,23 @@ pub struct ParagraphFormattingPatch {
 pub struct SetParagraphFormatting {
     pub target: TextTarget,
     pub formatting: ParagraphFormattingPatch,
+    pub base_revision: Option<String>,
+}
+
+/// Direct character formatting expressed in native Word half-point units.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TextFormattingPatch {
+    pub bold: Option<PropertyPatch<bool>>,
+    pub italic: Option<PropertyPatch<bool>>,
+    pub font_size_half_points: Option<PropertyPatch<u16>>,
+    pub font_family: Option<PropertyPatch<String>>,
+}
+
+/// Changes selected direct run properties for one whole visible run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetTextFormatting {
+    pub target: TextTarget,
+    pub formatting: TextFormattingPatch,
     pub base_revision: Option<String>,
 }
 
@@ -430,13 +448,21 @@ impl OperationResult {
     }
 
     pub fn paragraph_formatting_set(text: String) -> Self {
+        Self::formatting_set("paragraph_formatting_set", text)
+    }
+
+    pub fn text_formatting_set(text: String) -> Self {
+        Self::formatting_set("text_formatting_set", text)
+    }
+
+    fn formatting_set(kind: &str, text: String) -> Self {
         Self {
             status: OperationStatus::Applied,
             diagnostics: Vec::new(),
             changes: vec![OperationChange {
-                kind: "paragraph_formatting_set".to_owned(),
-                before: text,
-                after: String::new(),
+                kind: kind.to_owned(),
+                before: format!("direct formatting for {text}"),
+                after: "direct formatting updated".to_owned(),
             }],
         }
     }
@@ -533,7 +559,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

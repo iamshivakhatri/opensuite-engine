@@ -27,6 +27,8 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   a new artifact after semantic postcondition checks.
 - `set_paragraph_formatting` targets an exact Current-view `TextTarget` and changes only
   selected direct paragraph properties on one ordinary direct main-body paragraph.
+- `set_text_formatting` targets one complete visible direct run through `TextTarget` and
+  changes only selected direct character properties; source run identities remain internal.
 - `find_text` performs exact DOCX Current-view search and returns bounded,
   ordered semantic matches without source identities.
 - `inspect_context` resolves the same `TextTarget` and returns its full
