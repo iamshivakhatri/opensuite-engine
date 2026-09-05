@@ -67,6 +67,9 @@ and XML source bytes.
 - Preservation-safe `SetContentControlText` for a simple text content control selected
   by exact tag and/or alias. It supports one ordinary paragraph with direct runs,
   including empty paragraphs, and verifies the reopened control text and metadata.
+- Preservation-safe `SetParagraphFormatting` for an ordinary direct body paragraph
+  selected through `TextTarget`. It patches only direct `w:pPr` alignment, spacing,
+  indentation, and keep properties, then reopens and verifies the direct formatting.
 
 ## Current Repository Target
 
@@ -87,6 +90,8 @@ and XML source bytes.
   and generic table editing
 - data-bound, locked, placeholder-state, repeating, group, picture, checkbox, dropdown,
   combo-box, nested, or multi-paragraph content-control mutation
+- paragraph styles, numbering, tabs, borders, shading, section properties, and paragraph
+  formatting outside ordinary direct main-body paragraphs
 - mutation batches or transactions
 - rendering
 - server

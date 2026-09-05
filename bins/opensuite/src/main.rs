@@ -26,6 +26,8 @@ fn main() {
         set_table_cell_text(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-content-control-text")) {
         set_content_control_text(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-paragraph-formatting")) {
+        set_paragraph_formatting(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
         inspect_context(arguments)
     } else {
@@ -51,7 +53,7 @@ fn main() {
         }
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text> | opensuite inspect-context <input.docx> <text> [occurrence] [before] [after] | opensuite insert-paragraph-after <input.docx> <output.docx> <anchor-text> <new-paragraph-text> [occurrence] | opensuite delete-paragraph <input.docx> <output.docx> <target-text> [occurrence] | opensuite set-table-cell-text <input.docx> <output.docx> <row-label> <column-header> <expected-current-text> <replacement> [occurrence] | opensuite set-content-control-text <input.docx> <output.docx> <tag> <expected-current-text> <replacement> [occurrence]"
+            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text> | opensuite inspect-context <input.docx> <text> [occurrence] [before] [after] | opensuite insert-paragraph-after <input.docx> <output.docx> <anchor-text> <new-paragraph-text> [occurrence] | opensuite delete-paragraph <input.docx> <output.docx> <target-text> [occurrence] | opensuite set-table-cell-text <input.docx> <output.docx> <row-label> <column-header> <expected-current-text> <replacement> [occurrence] | opensuite set-content-control-text <input.docx> <output.docx> <tag> <expected-current-text> <replacement> [occurrence] | opensuite set-paragraph-formatting <input.docx> <output.docx> <target-text> [--alignment value|--clear-alignment|--space-before twips|--clear-space-before|--space-after twips|--clear-space-after|--line value [--line-rule auto|exact|atLeast]|--clear-line|--left-indent twips|--right-indent twips|--first-line-indent twips|--hanging-indent twips|--keep-next true|false|--keep-lines true|false|--occurrence n]"
                 .to_owned(),
         )),
         }
@@ -197,6 +199,192 @@ fn set_content_control_text(
             },
             expected_current_text,
             replacement,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn set_paragraph_formatting(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    use opensuite_protocol::{
+        LineSpacing, LineSpacingRule, ParagraphAlignment, ParagraphFormattingPatch, PropertyPatch,
+    };
+    let (Some(input), Some(output), Some(target)) =
+        (arguments.next(), arguments.next(), arguments.next())
+    else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "set-paragraph-formatting requires input, output, and target text".to_owned(),
+        ));
+    };
+    let target = target.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "target text must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let values = arguments
+        .map(|value| {
+            value.into_string().map_err(|_| {
+                (
+                    "INVALID_ARGUMENTS",
+                    "formatting arguments must be valid UTF-8".to_owned(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut patch = ParagraphFormattingPatch::default();
+    let mut occurrence = None;
+    let mut line_rule = None;
+    let mut index = 0;
+    while index < values.len() {
+        let flag = &values[index];
+        let value = |index: &mut usize| -> Result<&str, (&'static str, String)> {
+            *index += 1;
+            values
+                .get(*index)
+                .map(String::as_str)
+                .ok_or_else(|| ("INVALID_ARGUMENTS", format!("{flag} requires a value")))
+        };
+        let integer = |value: &str| {
+            value
+                .parse::<i32>()
+                .map_err(|_| ("INVALID_ARGUMENTS", format!("{flag} must be an integer")))
+        };
+        match flag.as_str() {
+            "--alignment" => {
+                patch.alignment = Some(PropertyPatch::Set(match value(&mut index)? {
+                    "left" => ParagraphAlignment::Left,
+                    "center" => ParagraphAlignment::Center,
+                    "right" => ParagraphAlignment::Right,
+                    "both" => ParagraphAlignment::Both,
+                    "distribute" => ParagraphAlignment::Distribute,
+                    _ => {
+                        return Err((
+                            "INVALID_ARGUMENTS",
+                            "alignment must be left, center, right, both, or distribute".to_owned(),
+                        ));
+                    }
+                }))
+            }
+            "--clear-alignment" => patch.alignment = Some(PropertyPatch::Clear),
+            "--space-before" => {
+                patch.spacing_before_twips = Some(PropertyPatch::Set(integer(value(&mut index)?)?))
+            }
+            "--clear-space-before" => patch.spacing_before_twips = Some(PropertyPatch::Clear),
+            "--space-after" => {
+                patch.spacing_after_twips = Some(PropertyPatch::Set(integer(value(&mut index)?)?))
+            }
+            "--clear-space-after" => patch.spacing_after_twips = Some(PropertyPatch::Clear),
+            "--line" => {
+                patch.line_spacing = Some(PropertyPatch::Set(LineSpacing {
+                    value: value(&mut index)?.parse().map_err(|_| {
+                        (
+                            "INVALID_ARGUMENTS",
+                            "line must be a non-negative integer".to_owned(),
+                        )
+                    })?,
+                    rule: None,
+                }))
+            }
+            "--line-rule" => {
+                line_rule = Some(match value(&mut index)? {
+                    "auto" => LineSpacingRule::Auto,
+                    "exact" => LineSpacingRule::Exact,
+                    "atLeast" => LineSpacingRule::AtLeast,
+                    _ => {
+                        return Err((
+                            "INVALID_ARGUMENTS",
+                            "line rule must be auto, exact, or atLeast".to_owned(),
+                        ));
+                    }
+                })
+            }
+            "--clear-line" => patch.line_spacing = Some(PropertyPatch::Clear),
+            "--left-indent" => {
+                patch.left_indent_twips = Some(PropertyPatch::Set(integer(value(&mut index)?)?))
+            }
+            "--clear-left-indent" => patch.left_indent_twips = Some(PropertyPatch::Clear),
+            "--right-indent" => {
+                patch.right_indent_twips = Some(PropertyPatch::Set(integer(value(&mut index)?)?))
+            }
+            "--clear-right-indent" => patch.right_indent_twips = Some(PropertyPatch::Clear),
+            "--first-line-indent" => {
+                patch.first_line_indent_twips =
+                    Some(PropertyPatch::Set(integer(value(&mut index)?)?))
+            }
+            "--clear-first-line-indent" => {
+                patch.first_line_indent_twips = Some(PropertyPatch::Clear)
+            }
+            "--hanging-indent" => {
+                patch.hanging_indent_twips = Some(PropertyPatch::Set(integer(value(&mut index)?)?))
+            }
+            "--clear-hanging-indent" => patch.hanging_indent_twips = Some(PropertyPatch::Clear),
+            "--keep-next" => {
+                patch.keep_with_next = Some(PropertyPatch::Set(
+                    value(&mut index)?.parse().map_err(|_| {
+                        (
+                            "INVALID_ARGUMENTS",
+                            "keep-next must be true or false".to_owned(),
+                        )
+                    })?,
+                ))
+            }
+            "--keep-lines" => {
+                patch.keep_lines = Some(PropertyPatch::Set(value(&mut index)?.parse().map_err(
+                    |_| {
+                        (
+                            "INVALID_ARGUMENTS",
+                            "keep-lines must be true or false".to_owned(),
+                        )
+                    },
+                )?))
+            }
+            "--clear-keep-next" => patch.keep_with_next = Some(PropertyPatch::Clear),
+            "--clear-keep-lines" => patch.keep_lines = Some(PropertyPatch::Clear),
+            "--occurrence" => {
+                occurrence = Some(value(&mut index)?.parse().map_err(|_| {
+                    (
+                        "INVALID_ARGUMENTS",
+                        "occurrence must be a non-negative integer".to_owned(),
+                    )
+                })?)
+            }
+            _ => {
+                return Err((
+                    "INVALID_ARGUMENTS",
+                    format!("unknown formatting option {flag}"),
+                ));
+            }
+        }
+        index += 1;
+    }
+    if let Some(rule) = line_rule {
+        let Some(PropertyPatch::Set(line)) = &mut patch.line_spacing else {
+            return Err((
+                "INVALID_ARGUMENTS",
+                "--line-rule requires --line".to_owned(),
+            ));
+        };
+        line.rule = Some(rule);
+    }
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_paragraph_formatting(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetParagraphFormatting {
+            target: opensuite_protocol::TextTarget {
+                text: target,
+                occurrence,
+            },
+            formatting: patch,
             base_revision: None,
         },
         output,

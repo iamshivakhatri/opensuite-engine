@@ -25,6 +25,8 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
 - `set_content_control_text` targets an exact content-control tag, alias, or their
   intersection. It accepts only simple unlocked and unbound text controls and writes
   a new artifact after semantic postcondition checks.
+- `set_paragraph_formatting` targets an exact Current-view `TextTarget` and changes only
+  selected direct paragraph properties on one ordinary direct main-body paragraph.
 - `find_text` performs exact DOCX Current-view search and returns bounded,
   ordered semantic matches without source identities.
 - `inspect_context` resolves the same `TextTarget` and returns its full

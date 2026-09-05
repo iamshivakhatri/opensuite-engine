@@ -105,6 +105,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "delete_paragraph",
     "set_table_cell_text",
     "set_content_control_text",
+    "set_paragraph_formatting",
     "find_text",
     "inspect_context",
 ];
@@ -173,6 +174,55 @@ pub struct SetContentControlText {
     pub target: ContentControlTarget,
     pub expected_current_text: String,
     pub replacement: String,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PropertyPatch<T> {
+    Set(T),
+    Clear,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParagraphAlignment {
+    Left,
+    Center,
+    Right,
+    Both,
+    Distribute,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineSpacingRule {
+    Auto,
+    Exact,
+    AtLeast,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineSpacing {
+    pub value: u32,
+    pub rule: Option<LineSpacingRule>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ParagraphFormattingPatch {
+    pub alignment: Option<PropertyPatch<ParagraphAlignment>>,
+    pub spacing_before_twips: Option<PropertyPatch<i32>>,
+    pub spacing_after_twips: Option<PropertyPatch<i32>>,
+    pub line_spacing: Option<PropertyPatch<LineSpacing>>,
+    pub left_indent_twips: Option<PropertyPatch<i32>>,
+    pub right_indent_twips: Option<PropertyPatch<i32>>,
+    pub first_line_indent_twips: Option<PropertyPatch<i32>>,
+    pub hanging_indent_twips: Option<PropertyPatch<i32>>,
+    pub keep_with_next: Option<PropertyPatch<bool>>,
+    pub keep_lines: Option<PropertyPatch<bool>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetParagraphFormatting {
+    pub target: TextTarget,
+    pub formatting: ParagraphFormattingPatch,
     pub base_revision: Option<String>,
 }
 
@@ -379,6 +429,18 @@ impl OperationResult {
         }
     }
 
+    pub fn paragraph_formatting_set(text: String) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "paragraph_formatting_set".to_owned(),
+                before: text,
+                after: String::new(),
+            }],
+        }
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "ok": self.status == OperationStatus::Applied,
@@ -471,7 +533,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));
