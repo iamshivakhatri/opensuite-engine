@@ -108,6 +108,9 @@ impl HeaderFooter {
     pub fn content_controls(&self) -> impl Iterator<Item = crate::ContentControl<'_>> + '_ {
         crate::content_control::content_controls(&self.source)
     }
+    pub fn tracked_changes(&self) -> impl Iterator<Item = crate::TrackedChange<'_>> + '_ {
+        crate::tracked_change::tracked_changes(&self.source)
+    }
 }
 
 pub fn load_header(

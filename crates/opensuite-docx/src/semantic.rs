@@ -85,6 +85,10 @@ impl<'a> DocxDocument<'a> {
     pub fn content_controls(&self) -> impl Iterator<Item = crate::ContentControl<'a>> + '_ {
         crate::content_control::content_controls(self.source)
     }
+
+    pub fn tracked_changes(&self) -> impl Iterator<Item = crate::TrackedChange<'a>> + '_ {
+        crate::tracked_change::tracked_changes(self.source)
+    }
 }
 
 pub(crate) fn container_blocks(
@@ -200,6 +204,10 @@ impl<'a> Paragraph<'a> {
 
     pub fn text(&self) -> Result<String, SemanticError> {
         collect_text(self.runs().map(|run| run.text()))
+    }
+
+    pub fn text_for_view(&self, view: crate::RevisionView) -> Result<String, SemanticError> {
+        crate::tracked_change::text_for_view(self.source, self.source_id, view)
     }
 }
 
@@ -333,6 +341,13 @@ impl<'a> Cell<'a> {
 
     pub fn text(&self) -> Result<String, SemanticError> {
         collect_text(self.paragraphs().map(|paragraph| paragraph.text()))
+    }
+
+    pub fn text_for_view(&self, view: crate::RevisionView) -> Result<String, SemanticError> {
+        collect_text(
+            self.paragraphs()
+                .map(|paragraph| paragraph.text_for_view(view)),
+        )
     }
 }
 

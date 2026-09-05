@@ -14,9 +14,13 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-images" => inspect_images(path),
         (Some(command), Some(path), None) if command == "inspect-fields" => inspect_fields(path),
         (Some(command), Some(path), None) if command == "inspect-content-controls" => inspect_content_controls(path),
+        (Some(command), Some(path), None) if command == "inspect-tracked-changes" => inspect_tracked_changes(path),
+        (Some(command), Some(path), Some(view)) if command == "inspect-revision-view" => {
+            inspect_revision_view(path, view)
+        }
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls> [path-to-office-file]"
+            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes> [path-to-office-file] | opensuite inspect-revision-view <path-to-office-file> <current|original>"
                 .to_owned(),
         )),
     };
@@ -29,6 +33,106 @@ fn main() {
                 serde_json::json!({ "ok": false, "error": { "code": code, "message": message } })
             );
             std::process::exit(1);
+        }
+    }
+}
+
+fn inspect_tracked_changes(
+    path: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (_, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let tracked_changes = document
+        .tracked_changes()
+        .map(|change| {
+            let metadata = change.metadata();
+            Ok(serde_json::json!({
+                "kind": tracked_change_kind_name(change.kind()),
+                "id": metadata.id,
+                "author": metadata.author,
+                "date": metadata.date,
+                "text": change.text().map_err(|error| (error.code(), error.to_string()))?,
+            }))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(
+        serde_json::json!({ "ok": true, "tracked_change_count": tracked_changes.len(), "tracked_changes": tracked_changes }),
+    )
+}
+
+fn tracked_change_kind_name(kind: opensuite_docx::TrackedChangeKind) -> &'static str {
+    match kind {
+        opensuite_docx::TrackedChangeKind::Insertion => "insertion",
+        opensuite_docx::TrackedChangeKind::Deletion => "deletion",
+        opensuite_docx::TrackedChangeKind::MoveFrom => "move_from",
+        opensuite_docx::TrackedChangeKind::MoveTo => "move_to",
+    }
+}
+
+fn inspect_revision_view(
+    path: std::ffi::OsString,
+    view_name: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (view, view_name) = match view_name.to_str() {
+        Some("current") => (opensuite_docx::RevisionView::Current, "current"),
+        Some("original") => (opensuite_docx::RevisionView::Original, "original"),
+        _ => {
+            return Err((
+                "INVALID_REVISION_VIEW",
+                "revision view must be current or original".to_owned(),
+            ));
+        }
+    };
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (part, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let document = opensuite_docx::DocxDocument::new(&source)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let blocks = document
+        .blocks()
+        .map(|block| inspect_block_for_view(block, view))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "part_name": part.name.as_str(),
+        "revision_view": view_name,
+        "block_count": blocks.len(),
+        "blocks": blocks,
+    }))
+}
+
+fn inspect_block_for_view(
+    block: opensuite_docx::BodyBlock<'_>,
+    view: opensuite_docx::RevisionView,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    match block {
+        opensuite_docx::BodyBlock::Paragraph(paragraph) => Ok(serde_json::json!({
+            "type": "paragraph",
+            "text": paragraph.text_for_view(view).map_err(|error| (error.code(), error.to_string()))?,
+            "run_count": paragraph.runs().count(),
+        })),
+        opensuite_docx::BodyBlock::Table(table) => {
+            let rows = table
+                .rows()
+                .map(|row| {
+                    let cells = row
+                        .cells()
+                        .map(|cell| {
+                            cell.text_for_view(view)
+                                .map(|text| serde_json::json!({ "text": text }))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|error| (error.code(), error.to_string()))?;
+                    Ok(serde_json::json!({ "cells": cells }))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(serde_json::json!({ "type": "table", "row_count": rows.len(), "rows": rows }))
         }
     }
 }

@@ -92,6 +92,7 @@ const DOCX_READ_ONLY_CAPABILITIES: &[&str] = &[
     "pictures",
     "fields",
     "content_controls",
+    "tracked_changes",
 ];
 
 /// A machine-readable runtime diagnostic without source or persistence details.
@@ -157,7 +158,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));
