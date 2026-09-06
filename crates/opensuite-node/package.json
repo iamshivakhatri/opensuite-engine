@@ -1,0 +1,17 @@
+{
+  "name": "@opensuite/engine",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "napi build --platform --release",
+    "test": "npm run build && node --test test/execute-docx-replace-text.test.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0"
+  },
+  "napi": {
+    "binaryName": "opensuite_node"
+  }
+}

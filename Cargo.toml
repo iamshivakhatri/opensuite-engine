@@ -3,6 +3,7 @@ members = [
     "crates/opensuite-opc",
     "crates/opensuite-docx",
     "crates/opensuite-protocol",
+    "crates/opensuite-node",
     "bins/opensuite",
 ]
 resolver = "2"

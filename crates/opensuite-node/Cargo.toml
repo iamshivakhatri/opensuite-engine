@@ -1,0 +1,19 @@
+[package]
+name = "opensuite-node"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2.16", features = ["dyn-symbols", "napi8"] }
+napi-derive = "2.16"
+opensuite-docx = { path = "../opensuite-docx" }
+opensuite-protocol = { path = "../opensuite-protocol" }
+
+[lints]
+workspace = true
