@@ -1,12 +1,16 @@
 use napi::bindgen_prelude::{AsyncTask, Buffer, Task};
 use napi::{Env, Result};
 use napi_derive::napi;
-use opensuite_docx::{execute_docx_replace_text, find_docx_text, inspect_docx};
+use opensuite_docx::{
+    execute_docx_insert_table_row, execute_docx_insert_table_rows, execute_docx_replace_text,
+    execute_docx_set_table_cells_text, find_docx_text, inspect_docx,
+};
 use opensuite_protocol::{
     Diagnostic, DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableRow, FindText,
     FindTextResult, InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult,
     InspectTextContext, InspectTextContextResult, InspectionPage, OperationResult, ReplaceText,
-    RuntimeCapabilities, TextContainer, TextTarget,
+    RuntimeCapabilities, TableCellTarget, TableCellTextUpdate, TableRowTarget, TableTarget,
+    TextContainer, TextTarget,
 };
 
 #[napi(object)]
@@ -49,6 +53,55 @@ pub struct OperationResultOutput {
 pub struct ExecuteDocxReplaceTextOutput {
     pub result: OperationResultOutput,
     pub output: Option<Buffer>,
+}
+
+#[napi(object)]
+pub struct TableTargetInput {
+    pub header_cells: Vec<String>,
+    pub occurrence: Option<u32>,
+}
+
+#[napi(object)]
+pub struct TableRowTargetInput {
+    pub first_cell_text: String,
+    pub occurrence: Option<u32>,
+}
+
+#[napi(object)]
+pub struct InsertTableRowInput {
+    pub table: TableTargetInput,
+    pub after: TableRowTargetInput,
+    pub cells: Vec<String>,
+    pub base_revision: Option<String>,
+}
+
+#[napi(object)]
+pub struct InsertTableRowsInput {
+    pub table: TableTargetInput,
+    pub after: TableRowTargetInput,
+    pub rows: Vec<Vec<String>>,
+    pub base_revision: Option<String>,
+}
+
+#[napi(object)]
+pub struct TableCellTargetInput {
+    pub row_label: String,
+    pub column_header: String,
+    pub occurrence: Option<u32>,
+}
+
+#[napi(object)]
+pub struct TableCellTextUpdateInput {
+    pub target: TableCellTargetInput,
+    pub expected_current_text: String,
+    pub replacement: String,
+}
+
+#[napi(object)]
+pub struct SetTableCellsTextInput {
+    pub table: TableTargetInput,
+    pub updates: Vec<TableCellTextUpdateInput>,
+    pub base_revision: Option<String>,
 }
 
 #[napi(object)]
@@ -297,6 +350,156 @@ pub fn execute_docx_replace_text_node(
             base_revision: operation.base_revision,
         },
     })
+}
+
+/// Runs DOCX table-row insertion away from Node's event loop and returns a Promise.
+#[napi(js_name = "executeDocxInsertTableRow")]
+pub fn execute_docx_insert_table_row_node(
+    input: Buffer,
+    operation: InsertTableRowInput,
+) -> AsyncTask<InsertTableRowTask> {
+    AsyncTask::new(InsertTableRowTask {
+        input: input.to_vec(),
+        operation: opensuite_protocol::InsertTableRowAfter {
+            table: TableTarget {
+                header_cells: operation.table.header_cells,
+                occurrence: operation.table.occurrence.map(|value| value as usize),
+            },
+            after: TableRowTarget {
+                first_cell_text: operation.after.first_cell_text,
+                occurrence: operation.after.occurrence.map(|value| value as usize),
+            },
+            cells: operation.cells,
+            base_revision: operation.base_revision,
+        },
+    })
+}
+
+/// Runs DOCX multi-row insertion away from Node's event loop and returns a Promise.
+#[napi(js_name = "executeDocxInsertTableRows")]
+pub fn execute_docx_insert_table_rows_node(
+    input: Buffer,
+    operation: InsertTableRowsInput,
+) -> AsyncTask<InsertTableRowsTask> {
+    AsyncTask::new(InsertTableRowsTask {
+        input: input.to_vec(),
+        operation: opensuite_protocol::InsertTableRowsAfter {
+            table: table_target(operation.table),
+            after: row_target(operation.after),
+            rows: operation.rows,
+            base_revision: operation.base_revision,
+        },
+    })
+}
+
+/// Runs DOCX multi-cell text replacement away from Node's event loop and returns a Promise.
+#[napi(js_name = "executeDocxSetTableCellsText")]
+pub fn execute_docx_set_table_cells_text_node(
+    input: Buffer,
+    operation: SetTableCellsTextInput,
+) -> AsyncTask<SetTableCellsTextTask> {
+    AsyncTask::new(SetTableCellsTextTask {
+        input: input.to_vec(),
+        operation: opensuite_protocol::SetTableCellsText {
+            table: table_target(operation.table),
+            updates: operation
+                .updates
+                .into_iter()
+                .map(|update| TableCellTextUpdate {
+                    target: TableCellTarget {
+                        row_label: update.target.row_label,
+                        column_header: update.target.column_header,
+                        occurrence: update.target.occurrence.map(|value| value as usize),
+                    },
+                    expected_current_text: update.expected_current_text,
+                    replacement: update.replacement,
+                })
+                .collect(),
+            base_revision: operation.base_revision,
+        },
+    })
+}
+
+pub struct InsertTableRowTask {
+    input: Vec<u8>,
+    operation: opensuite_protocol::InsertTableRowAfter,
+}
+
+impl Task for InsertTableRowTask {
+    type Output = opensuite_docx::DocxExecutionResult;
+    type JsValue = ExecuteDocxReplaceTextOutput;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(execute_docx_insert_table_row(
+            std::mem::take(&mut self.input),
+            &self.operation,
+        ))
+    }
+
+    fn resolve(&mut self, _env: Env, result: Self::Output) -> Result<Self::JsValue> {
+        Ok(ExecuteDocxReplaceTextOutput {
+            result: operation_result_output(result.operation),
+            output: result.output_artifact.map(Buffer::from),
+        })
+    }
+}
+
+pub struct InsertTableRowsTask {
+    input: Vec<u8>,
+    operation: opensuite_protocol::InsertTableRowsAfter,
+}
+
+impl Task for InsertTableRowsTask {
+    type Output = opensuite_docx::DocxExecutionResult;
+    type JsValue = ExecuteDocxReplaceTextOutput;
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(execute_docx_insert_table_rows(
+            std::mem::take(&mut self.input),
+            &self.operation,
+        ))
+    }
+    fn resolve(&mut self, _env: Env, result: Self::Output) -> Result<Self::JsValue> {
+        Ok(ExecuteDocxReplaceTextOutput {
+            result: operation_result_output(result.operation),
+            output: result.output_artifact.map(Buffer::from),
+        })
+    }
+}
+
+pub struct SetTableCellsTextTask {
+    input: Vec<u8>,
+    operation: opensuite_protocol::SetTableCellsText,
+}
+
+impl Task for SetTableCellsTextTask {
+    type Output = opensuite_docx::DocxExecutionResult;
+    type JsValue = ExecuteDocxReplaceTextOutput;
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(execute_docx_set_table_cells_text(
+            std::mem::take(&mut self.input),
+            &self.operation,
+        ))
+    }
+    fn resolve(&mut self, _env: Env, result: Self::Output) -> Result<Self::JsValue> {
+        Ok(ExecuteDocxReplaceTextOutput {
+            result: operation_result_output(result.operation),
+            output: result.output_artifact.map(Buffer::from),
+        })
+    }
+}
+
+fn table_target(target: TableTargetInput) -> TableTarget {
+    TableTarget {
+        header_cells: target.header_cells,
+        occurrence: target.occurrence.map(|value| value as usize),
+    }
+}
+
+fn row_target(target: TableRowTargetInput) -> TableRowTarget {
+    TableRowTarget {
+        first_cell_text: target.first_cell_text,
+        occurrence: target.occurrence.map(|value| value as usize),
+    }
 }
 
 fn text_target(target: TextTargetInput) -> TextTarget {

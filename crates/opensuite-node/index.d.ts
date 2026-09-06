@@ -1,13 +1,7 @@
 export interface DiagnosticOutput { code: string; severity: string; message: string }
 export interface TextTargetInput { text: string; occurrence?: number }
 export interface RuntimeCapabilitiesOutput { ok: boolean; protocolVersion: number; engineVersion: string; formats: Array<{ format: string; capabilities: string[] }> }
-export interface FindTextOutput {
-  ok: boolean
-  query: string
-  matchCount: number
-  matches: Array<{ occurrence: number; text: string; before: string; after: string; container: 'paragraph' | 'table_cell' }>
-  diagnostics: DiagnosticOutput[]
-}
+export interface FindTextOutput { ok: boolean; query: string; matchCount: number; matches: Array<{ occurrence: number; text: string; before: string; after: string; container: 'paragraph' | 'table_cell' }>; diagnostics: DiagnosticOutput[] }
 export type InspectDocxFocus =
   | { kind: 'overview' }
   | { kind: 'headings'; offset?: number; limit?: number }
@@ -30,3 +24,20 @@ export function getDocxCapabilities(): RuntimeCapabilitiesOutput
 export function findDocxText(input: Buffer, request: { text: string }): Promise<FindTextOutput>
 export function inspectDocx(input: Buffer, request: { focus: InspectDocxFocus } | { target: TextTargetInput; before?: number; after?: number }): Promise<InspectDocxOutput>
 export function executeDocxReplaceText(input: Buffer, operation: { target: TextTargetInput; expectedCurrentText: string; replacement: string; baseRevision?: string }): Promise<ExecuteDocxReplaceTextOutput>
+export function executeDocxInsertTableRow(input: Buffer, operation: {
+  table: { headerCells: string[]; occurrence?: number }
+  after: { firstCellText: string; occurrence?: number }
+  cells: string[]
+  baseRevision?: string
+}): Promise<ExecuteDocxReplaceTextOutput>
+export function executeDocxInsertTableRows(input: Buffer, operation: {
+  table: { headerCells: string[]; occurrence?: number }
+  after: { firstCellText: string; occurrence?: number }
+  rows: string[][]
+  baseRevision?: string
+}): Promise<ExecuteDocxReplaceTextOutput>
+export function executeDocxSetTableCellsText(input: Buffer, operation: {
+  table: { headerCells: string[]; occurrence?: number }
+  updates: Array<{ target: { rowLabel: string; columnHeader: string; occurrence?: number }; expectedCurrentText: string; replacement: string }>
+  baseRevision?: string
+}): Promise<ExecuteDocxReplaceTextOutput>

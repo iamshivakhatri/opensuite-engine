@@ -30,6 +30,14 @@ and XML source bytes.
 - Broad `inspectDocx` collections use version-local source order with `offset`, `limit`, total,
   returned count, and `has_more`; table structures remain readable even where future mutation
   would reject them.
+- Preservation-safe `InsertTableRowAfter` inserts one complete row after a semantic first-cell
+  anchor in a simple main-body rectangular table selected by its complete header row. It creates
+  new text content while preserving safe cell, paragraph, run, and selected row formatting from
+  the anchor row, then verifies the reopened table structure and all table text.
+- Preservation-safe `InsertTableRowsAfter` inserts 1–100 complete rows in requested order with one
+  source insertion. `SetTableCellsText` updates 1–100 unique semantic cells in one simple selected
+  table only after all targets and expected values have been validated; both reopen and verify every
+  table while preserving untouched source and OPC payloads.
 - `[Content_Types].xml` Default and Override content type resolution.
 - Package-level `_rels/.rels` parsing and main office document discovery through
   Transitional or Strict `officeDocument` relationships.

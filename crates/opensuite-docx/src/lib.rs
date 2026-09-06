@@ -19,7 +19,8 @@ mod text_search;
 mod tracked_change;
 
 pub use execution::{
-    DocxExecutionResult, execute_docx_replace_text, find_docx_text, inspect_docx,
+    DocxExecutionResult, execute_docx_insert_table_row, execute_docx_insert_table_rows,
+    execute_docx_replace_text, execute_docx_set_table_cells_text, find_docx_text, inspect_docx,
     inspect_docx_context,
 };
 pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
@@ -29,9 +30,10 @@ pub use header_footer::{
 };
 pub use inspection::inspect_docx_document;
 pub use mutation::{
-    delete_paragraph, insert_paragraph_after, replace_picture, replace_text, replace_text_to_vec,
+    delete_paragraph, insert_paragraph_after, insert_table_row_after_to_vec,
+    insert_table_rows_after_to_vec, replace_picture, replace_text, replace_text_to_vec,
     set_content_control_text, set_paragraph_formatting, set_paragraph_style, set_table_cell_text,
-    set_text_formatting,
+    set_table_cells_text_to_vec, set_text_formatting,
 };
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,

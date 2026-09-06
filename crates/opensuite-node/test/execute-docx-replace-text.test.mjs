@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import binding from '../index.js'
 
-const { executeDocxReplaceText, findDocxText, getDocxCapabilities, inspectDocx } = binding
+const { executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetTableCellsText, findDocxText, getDocxCapabilities, inspectDocx } = binding
 const office = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
 const word = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
@@ -20,11 +20,11 @@ function crc32(bytes) {
 
 function docxFixture() {
   const files = [
-    ['[Content_Types].xml', '<Types><Default Extension="xml" ContentType="application/xml"/></Types>'],
+    ['[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'],
     ['_rels/.rels', `<Relationships><Relationship Id="rId1" Type="${office}" Target="word/document.xml"/></Relationships>`],
     ['word/_rels/document.xml.rels', '<Relationships><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
     ['word/styles.xml', `<w:styles xmlns:w="${word}"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/></w:style><w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body Text"/></w:style></w:styles>`],
-    ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Report heading</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Body"/></w:pPr><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table needle</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>second cell</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>uneven row</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`],
+    ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Report heading</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Body"/></w:pPr><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table needle</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>second cell</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>uneven row</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CEO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`],
   ]
   let offset = 0
   const local = []
@@ -104,6 +104,9 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   assert.ok(capabilities.formats[0].capabilities.includes('find_text'))
   assert.ok(capabilities.formats[0].capabilities.includes('inspect_context'))
   assert.ok(capabilities.formats[0].capabilities.includes('replace_text'))
+  assert.ok(capabilities.formats[0].capabilities.includes('insert_table_row'))
+  assert.ok(capabilities.formats[0].capabilities.includes('insert_table_rows'))
+  assert.ok(capabilities.formats[0].capabilities.includes('set_table_cells_text'))
 
   const found = await findDocxText(input, { text: 'Date:' })
   assert.equal(found.ok, true)
@@ -114,7 +117,7 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   const overview = await inspectDocx(input, { focus: { kind: 'overview' } })
   assert.equal(overview.ok, true)
   assert.equal(overview.overview.paragraphCount, 4)
-  assert.equal(overview.overview.tableCount, 1)
+  assert.equal(overview.overview.tableCount, 2)
 
   const headings = await inspectDocx(input, { focus: { kind: 'headings', offset: 0, limit: 1 } })
   assert.equal(headings.headings.page.total, 1)
@@ -130,6 +133,28 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   const tables = await inspectDocx(input, { focus: { kind: 'tables', offset: 0, limit: 1 } })
   assert.equal(tables.tables.items[0].rows[0].cells[0], 'table needle')
   assert.equal(tables.tables.items[0].isRectangular, false)
+
+  const updated = await executeDocxSetTableCellsText(input, {
+    table: { headerCells: ['Name', 'Role'] },
+    updates: [
+      { target: { rowLabel: 'Alice', columnHeader: 'Role' }, expectedCurrentText: 'CEO', replacement: 'Founder & CEO' },
+      { target: { rowLabel: 'Bob', columnHeader: 'Role' }, expectedCurrentText: 'CTO', replacement: 'CTO & VP Engineering' },
+    ],
+  })
+  assert.equal(updated.result.ok, true)
+  const tablesAfterUpdate = await inspectDocx(updated.output, { focus: { kind: 'tables', offset: 1, limit: 1 } })
+  assert.equal(tablesAfterUpdate.tables.items[0].rows[1].cells[1], 'Founder & CEO')
+
+  const inserted = await executeDocxInsertTableRows(updated.output, {
+    table: { headerCells: ['Name', 'Role'] },
+    after: { firstCellText: 'Bob' },
+    rows: [['Charlie', 'CFO'], ['David', 'COO']],
+  })
+  assert.equal(inserted.result.ok, true)
+  writeFileSync('/private/tmp/opensuite-insert-table-row-output.docx', inserted.output)
+  const tablesAfterInsert = await inspectDocx(inserted.output, { focus: { kind: 'tables', offset: 1, limit: 1 } })
+  assert.deepEqual(tablesAfterInsert.tables.items[0].rows[3].cells, ['Charlie', 'CFO'])
+  assert.deepEqual(tablesAfterInsert.tables.items[0].rows[4].cells, ['David', 'COO'])
 
   const context = await inspectDocx(input, { focus: { kind: 'context', text: 'table needle', before: 1, after: 0 } })
   assert.equal(context.ok, true)

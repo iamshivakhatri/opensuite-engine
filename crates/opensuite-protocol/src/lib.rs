@@ -109,6 +109,9 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_text_formatting",
     "set_paragraph_style",
     "replace_picture",
+    "insert_table_row",
+    "insert_table_rows",
+    "set_table_cells_text",
     "find_text",
     "inspect_context",
 ];
@@ -154,12 +157,60 @@ pub struct TableCellTarget {
     pub occurrence: Option<usize>,
 }
 
+/// A simple table selected by its complete first-row cell text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableTarget {
+    pub header_cells: Vec<String>,
+    pub occurrence: Option<usize>,
+}
+
+/// A row selected by its exact Current-view first-cell text within a selected table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableRowTarget {
+    pub first_cell_text: String,
+    pub occurrence: Option<usize>,
+}
+
+/// Inserts one complete row after an existing row in a simple semantic table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertTableRowAfter {
+    pub table: TableTarget,
+    pub after: TableRowTarget,
+    pub cells: Vec<String>,
+    pub base_revision: Option<String>,
+}
+
+/// Inserts several complete rows after an existing row in one simple semantic table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertTableRowsAfter {
+    pub table: TableTarget,
+    pub after: TableRowTarget,
+    pub rows: Vec<Vec<String>>,
+    pub base_revision: Option<String>,
+}
+
 /// Replaces visible text in one simple table cell. `base_revision` is opaque caller metadata only.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SetTableCellText {
     pub target: TableCellTarget,
     pub expected_current_text: String,
     pub replacement: String,
+    pub base_revision: Option<String>,
+}
+
+/// One semantic table-cell text replacement within a multi-cell operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableCellTextUpdate {
+    pub target: TableCellTarget,
+    pub expected_current_text: String,
+    pub replacement: String,
+}
+
+/// Replaces visible text in several cells of one simple semantic table atomically.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetTableCellsText {
+    pub table: TableTarget,
+    pub updates: Vec<TableCellTextUpdate>,
     pub base_revision: Option<String>,
 }
 
@@ -555,6 +606,46 @@ impl OperationResult {
         }
     }
 
+    pub fn table_row_inserted(headers: Vec<String>, anchor: String, cells: Vec<String>) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "table_row_inserted".to_owned(),
+                before: format!("{} after {anchor}", headers.join(" | ")),
+                after: cells.join(" | "),
+            }],
+        }
+    }
+
+    pub fn table_rows_inserted(
+        headers: Vec<String>,
+        anchor: String,
+        rows: Vec<Vec<String>>,
+    ) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "table_rows_inserted".to_owned(),
+                before: format!("{} after {anchor}", headers.join(" | ")),
+                after: format!("{} rows", rows.len()),
+            }],
+        }
+    }
+
+    pub fn table_cells_text_set(count: usize) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "table_cells_text_set".to_owned(),
+                before: format!("{count} cells"),
+                after: "updated".to_owned(),
+            }],
+        }
+    }
+
     pub fn content_control_text_set(before: String, after: String) -> Self {
         Self {
             status: OperationStatus::Applied,
@@ -702,7 +793,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

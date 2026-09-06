@@ -1,13 +1,14 @@
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use quick_xml::escape::escape;
 
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
-    ContentControlTarget, DeleteParagraph, InsertParagraphAfter, OperationResult,
-    ParagraphFormattingPatch, PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText,
-    SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTextFormatting,
-    TableCellTarget, TextFormattingPatch, TextTarget,
+    ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableRowAfter,
+    InsertTableRowsAfter, OperationResult, ParagraphFormattingPatch, PropertyPatch, ReplacePicture,
+    ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
+    SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget, TableRowTarget,
+    TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -16,6 +17,8 @@ const NS: [&str; 2] = [
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
     "http://purl.oclc.org/ooxml/wordprocessingml/main",
 ];
+const MAX_TABLE_ROWS_PER_OPERATION: usize = 100;
+const MAX_TABLE_CELL_UPDATES: usize = 100;
 
 /// Applies one preservation-safe replacement across compatible `w:t` source regions.
 pub fn replace_text(
@@ -248,6 +251,139 @@ pub fn delete_paragraph(
 }
 
 /// Sets visible text in one simple, semantically addressed main-body table cell.
+/// Inserts one complete row after a semantic row anchor in a simple main-body table.
+pub fn insert_table_row_after_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertTableRowAfter,
+) -> Result<Vec<u8>, OperationResult> {
+    let rows = std::slice::from_ref(&operation.cells);
+    insert_table_rows_after(
+        source,
+        package,
+        main,
+        &operation.table,
+        &operation.after,
+        rows,
+    )
+}
+
+/// Inserts several complete rows with one contiguous source insertion.
+pub fn insert_table_rows_after_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertTableRowsAfter,
+) -> Result<Vec<u8>, OperationResult> {
+    insert_table_rows_after(
+        source,
+        package,
+        main,
+        &operation.table,
+        &operation.after,
+        &operation.rows,
+    )
+}
+
+fn insert_table_rows_after(
+    source: &SourceDocument,
+    package: &Package,
+    main: &Part,
+    table: &TableTarget,
+    after: &TableRowTarget,
+    rows: &[Vec<String>],
+) -> Result<Vec<u8>, OperationResult> {
+    if rows.is_empty() || rows.len() > MAX_TABLE_ROWS_PER_OPERATION {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "inserted rows must contain between 1 and 100 rows",
+        ));
+    }
+    let target = resolve_table_row(source, table, after, rows)?;
+    let mut fragment = Vec::new();
+    for cells in rows {
+        fragment.extend(table_row_fragment(source, target.row, cells)?);
+    }
+    let insertion = source.node(target.row).expect("row exists").span().end;
+    let patched = apply_patches(
+        source,
+        vec![Patch {
+            span: SourceSpan {
+                start: insertion,
+                end: insertion,
+            },
+            replacement: fragment,
+        }],
+    )?;
+    let before = all_table_rows(source)?;
+    let mut expected = before.clone();
+    expected[target.table_index].splice(
+        target.row_index + 1..target.row_index + 1,
+        rows.iter().cloned(),
+    );
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_table_row_output_bytes(&output, &expected)?;
+    Ok(output)
+}
+
+/// Replaces visible text in several cells of one semantic table atomically.
+pub fn set_table_cells_text_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetTableCellsText,
+) -> Result<Vec<u8>, OperationResult> {
+    if operation.updates.is_empty() || operation.updates.len() > MAX_TABLE_CELL_UPDATES {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "table cell updates must contain between 1 and 100 updates",
+        ));
+    }
+    let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
+    if !simple_table(source, table) || has_revision_wrapper(source, table) {
+        return Err(unsupported(
+            "set_table_cells_text supports only simple rectangular tables without merges, nesting, or revisions",
+        ));
+    }
+    let mut targets = Vec::with_capacity(operation.updates.len());
+    let mut cells = HashSet::new();
+    for update in &operation.updates {
+        let target =
+            resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)?;
+        if target.text != update.expected_current_text {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "resolved cell text does not match expected current text",
+            ));
+        }
+        if !cells.insert(target.cell) {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "the same table cell was requested more than once",
+            ));
+        }
+        targets.push(target);
+    }
+    let mut patches = Vec::new();
+    for (target, update) in targets.iter().zip(&operation.updates) {
+        patches.extend(table_cell_patches(source, target, &update.replacement)?);
+    }
+    let patched = apply_patches(source, patches)?;
+    let mut expected = all_table_rows(source)?;
+    for (target, update) in targets.iter().zip(&operation.updates) {
+        expected[target.table_index][target.row_index][target.column_index] =
+            update.replacement.clone();
+    }
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_table_row_output_bytes(&output, &expected)?;
+    Ok(output)
+}
+
 pub fn set_table_cell_text(
     package: &Package,
     main: &Part,
@@ -1853,6 +1989,369 @@ struct ResolvedTableCell {
     cell: NodeId,
     paragraph: NodeId,
     text: String,
+    table_index: usize,
+    row_index: usize,
+    column_index: usize,
+}
+
+struct ResolvedTableRow {
+    row: NodeId,
+    table_index: usize,
+    row_index: usize,
+}
+
+fn resolve_table_row(
+    source: &SourceDocument,
+    table_target: &TableTarget,
+    after: &TableRowTarget,
+    inserted_rows: &[Vec<String>],
+) -> Result<ResolvedTableRow, OperationResult> {
+    let (table_index, table, rows, _headers) = resolve_table(source, table_target)?;
+    if !simple_table(source, table) || has_revision_wrapper(source, table) {
+        return Err(unsupported(
+            "insert_table_row supports only simple rectangular tables without merges, nesting, or revisions",
+        ));
+    }
+    let width = rows[0].cells().count();
+    if inserted_rows.iter().any(|cells| cells.len() != width) {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "inserted row cell count must match the table column count",
+        ));
+    }
+    let mut matches = Vec::new();
+    for (row_index, row) in rows.iter().enumerate().skip(1) {
+        let cells = row.cells().collect::<Vec<_>>();
+        if cells.first().is_some_and(|cell| {
+            cell.text_for_view(RevisionView::Current).ok().as_deref()
+                == Some(&after.first_cell_text)
+        }) {
+            matches.push((row_index, row.source_id()));
+        }
+    }
+    let (row_index, row) = select_row(matches, after)?;
+    if !safe_table_row(source, row) {
+        return Err(unsupported(
+            "insert_table_row requires an ordinary anchor row with one direct paragraph per cell",
+        ));
+    }
+    Ok(ResolvedTableRow {
+        row,
+        table_index,
+        row_index,
+    })
+}
+
+fn resolve_table<'a>(
+    source: &'a SourceDocument,
+    target: &TableTarget,
+) -> Result<(usize, NodeId, Vec<crate::Row<'a>>, Vec<String>), OperationResult> {
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    let mut tables = Vec::new();
+    let mut table_index = 0;
+    for block in document.blocks() {
+        let crate::BodyBlock::Table(table) = block else {
+            continue;
+        };
+        if !is_direct_body_table(source, table.source_id()) {
+            continue;
+        }
+        let current_table_index = table_index;
+        table_index += 1;
+        let rows = table.rows().collect::<Vec<_>>();
+        let Some(header) = rows.first() else { continue };
+        let headers = header
+            .cells()
+            .map(|cell| {
+                cell.text_for_view(RevisionView::Current)
+                    .map_err(document_invalid)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if headers == target.header_cells {
+            tables.push((current_table_index, table.source_id(), rows, headers));
+        }
+    }
+    select_table(tables, target)
+}
+
+fn select_table<'a>(
+    mut tables: Vec<(usize, NodeId, Vec<crate::Row<'a>>, Vec<String>)>,
+    target: &TableTarget,
+) -> Result<(usize, NodeId, Vec<crate::Row<'a>>, Vec<String>), OperationResult> {
+    if tables.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table header row was not found",
+        ));
+    }
+    if let Some(occurrence) = target.occurrence {
+        return tables.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "table target occurrence was not found")
+        });
+    }
+    if tables.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "table header row matches more than one table",
+        ));
+    }
+    Ok(tables.pop().expect("one table"))
+}
+
+fn select_row(
+    mut rows: Vec<(usize, NodeId)>,
+    target: &TableRowTarget,
+) -> Result<(usize, NodeId), OperationResult> {
+    if rows.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table row was not found",
+        ));
+    }
+    if let Some(occurrence) = target.occurrence {
+        return rows.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "table row target occurrence was not found",
+            )
+        });
+    }
+    if rows.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "table row first-cell text matches more than one row",
+        ));
+    }
+    Ok(rows.pop().expect("one row"))
+}
+
+fn safe_table_row(source: &SourceDocument, row: NodeId) -> bool {
+    source
+        .children(row)
+        .all(|child| word(source, child, "trPr") || word(source, child, "tc"))
+        && source
+            .children(row)
+            .filter(|child| word(source, *child, "tc"))
+            .all(|cell| safe_template_cell(source, cell))
+        && !source.node_ids().any(|id| {
+            is_descendant(source, id, row)
+                && (word(source, id, "fldChar")
+                    || word(source, id, "fldSimple")
+                    || word(source, id, "instrText")
+                    || word(source, id, "sdt")
+                    || word(source, id, "hyperlink")
+                    || word(source, id, "drawing")
+                    || word(source, id, "pict")
+                    || word(source, id, "bookmarkStart")
+                    || word(source, id, "bookmarkEnd")
+                    || word(source, id, "commentRangeStart")
+                    || word(source, id, "commentRangeEnd")
+                    || word(source, id, "commentReference")
+                    || word(source, id, "rPrChange"))
+        })
+}
+
+fn safe_template_cell(source: &SourceDocument, cell: NodeId) -> bool {
+    let paragraphs = direct_cell_paragraphs(source, cell);
+    paragraphs.len() == 1
+        && source
+            .children(cell)
+            .all(|child| word(source, child, "tcPr") || word(source, child, "p"))
+        && safe_table_paragraph(source, paragraphs[0])
+        && source
+            .children(paragraphs[0])
+            .filter(|child| word(source, *child, "r"))
+            .count()
+            <= 1
+        && source.children(paragraphs[0]).all(|child| {
+            word(source, child, "pPr")
+                || word(source, child, "r")
+                || matches!(
+                    source.node(child).map(|node| node.kind()),
+                    Some(SourceNodeKind::Text)
+                )
+        })
+}
+
+fn table_row_fragment(
+    source: &SourceDocument,
+    row: NodeId,
+    cells: &[String],
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_element_prefix(source, row, "tr")?;
+    let name = |local: &str| qualify(prefix, local);
+    let row_properties = source
+        .children(row)
+        .find(|child| word(source, *child, "trPr"))
+        .filter(|properties| safe_row_properties(source, *properties))
+        .map(|properties| source_bytes(source, properties))
+        .transpose()?
+        .unwrap_or_default();
+    let templates = source
+        .children(row)
+        .filter(|child| word(source, *child, "tc"))
+        .collect::<Vec<_>>();
+    let mut fragment = format!(
+        "<{}>{}",
+        name("tr"),
+        String::from_utf8_lossy(&row_properties)
+    );
+    for (template, value) in templates.into_iter().zip(cells) {
+        fragment.push_str(&cell_fragment(source, template, value, prefix)?);
+    }
+    fragment.push_str(&format!("</{}>", name("tr")));
+    Ok(fragment.into_bytes())
+}
+
+fn safe_row_properties(source: &SourceDocument, properties: NodeId) -> bool {
+    source.children(properties).all(|child| {
+        word(source, child, "trHeight")
+            || word(source, child, "cantSplit")
+            || word(source, child, "jc")
+            || word(source, child, "tblCellSpacing")
+            || word(source, child, "cnfStyle")
+    })
+}
+
+fn cell_fragment(
+    source: &SourceDocument,
+    cell: NodeId,
+    value: &str,
+    prefix: &str,
+) -> Result<String, OperationResult> {
+    let name = |local: &str| qualify(prefix, local);
+    let properties = source
+        .children(cell)
+        .find(|child| word(source, *child, "tcPr"))
+        .map(|id| source_bytes(source, id))
+        .transpose()?
+        .unwrap_or_default();
+    let paragraph = direct_cell_paragraphs(source, cell)[0];
+    let paragraph_properties = source
+        .children(paragraph)
+        .find(|child| word(source, *child, "pPr"))
+        .map(|id| source_bytes(source, id))
+        .transpose()?
+        .unwrap_or_default();
+    let run_properties = source
+        .children(paragraph)
+        .find(|child| word(source, *child, "r"))
+        .and_then(|run| {
+            source
+                .children(run)
+                .find(|child| word(source, *child, "rPr"))
+        })
+        .map(|id| source_bytes(source, id))
+        .transpose()?
+        .unwrap_or_default();
+    let space = if requires_space_preservation(value) {
+        " xml:space=\"preserve\""
+    } else {
+        ""
+    };
+    Ok(format!(
+        "<{}>{}<{}>{}<{}>{}<{}{}>{}</{}></{}></{}></{}>",
+        name("tc"),
+        String::from_utf8_lossy(&properties),
+        name("p"),
+        String::from_utf8_lossy(&paragraph_properties),
+        name("r"),
+        String::from_utf8_lossy(&run_properties),
+        name("t"),
+        space,
+        escape(value),
+        name("t"),
+        name("r"),
+        name("p"),
+        name("tc")
+    ))
+}
+
+fn source_bytes(source: &SourceDocument, id: NodeId) -> Result<Vec<u8>, OperationResult> {
+    let span = source
+        .node(id)
+        .ok_or_else(|| unsupported("template source is unavailable"))?
+        .span();
+    Ok(source.original_bytes()[span.start..span.end].to_vec())
+}
+
+fn word_element_prefix<'a>(
+    source: &'a SourceDocument,
+    id: NodeId,
+    local: &str,
+) -> Result<&'a str, OperationResult> {
+    let SourceNodeKind::Element { start_tag, .. } = source
+        .node(id)
+        .ok_or_else(|| unsupported("template source is unavailable"))?
+        .kind()
+    else {
+        return Err(unsupported("template source node is not an element"));
+    };
+    let tag = std::str::from_utf8(&source.original_bytes()[start_tag.start..start_tag.end])
+        .map_err(|_| unsupported("template tag is not UTF-8"))?;
+    let name = tag
+        .strip_prefix('<')
+        .and_then(|value| {
+            value
+                .split(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+                .next()
+        })
+        .ok_or_else(|| unsupported("template tag is invalid"))?;
+    let expected = if name == local {
+        local
+    } else {
+        name.rsplit(':').next().unwrap_or("")
+    };
+    (expected == local)
+        .then_some(
+            name.strip_suffix(local)
+                .and_then(|value| value.strip_suffix(':'))
+                .unwrap_or(""),
+        )
+        .ok_or_else(|| unsupported("template tag is not WordprocessingML"))
+}
+
+fn all_table_rows(source: &SourceDocument) -> Result<Vec<Vec<Vec<String>>>, OperationResult> {
+    crate::DocxDocument::new(source)
+        .map_err(document_invalid)?
+        .blocks()
+        .filter_map(|block| match block {
+            crate::BodyBlock::Table(table) if is_direct_body_table(source, table.source_id()) => {
+                Some(table)
+            }
+            _ => None,
+        })
+        .map(|table| {
+            table
+                .rows()
+                .map(|row| {
+                    row.cells()
+                        .map(|cell| {
+                            cell.text_for_view(RevisionView::Current)
+                                .map_err(document_invalid)
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn verify_table_row_output_bytes(
+    output: &[u8],
+    expected: &[Vec<Vec<String>>],
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    (all_table_rows(&source)? == expected)
+        .then_some(())
+        .ok_or_else(|| {
+            OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "output table rows do not match the requested insertion",
+            )
+        })
 }
 
 fn resolve_table_cell(
@@ -1930,7 +2429,112 @@ fn resolve_table_cell(
         cell,
         paragraph: paragraphs[0],
         text,
+        table_index: 0,
+        row_index: 0,
+        column_index: 0,
     })
+}
+
+fn resolve_table_cell_in_table(
+    source: &SourceDocument,
+    table_index: usize,
+    rows: &[crate::Row<'_>],
+    headers: &[String],
+    target: &TableCellTarget,
+) -> Result<ResolvedTableCell, OperationResult> {
+    let columns = headers
+        .iter()
+        .enumerate()
+        .skip(1)
+        .filter_map(|(index, header)| (header == &target.column_header).then_some(index))
+        .collect::<Vec<_>>();
+    if columns.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table column header was not found",
+        ));
+    }
+    let mut candidates = Vec::new();
+    for (row_index, row) in rows.iter().enumerate().skip(1) {
+        let cells = row.cells().collect::<Vec<_>>();
+        if cells.first().is_some_and(|cell| {
+            cell.text_for_view(RevisionView::Current).ok().as_deref() == Some(&target.row_label)
+        }) {
+            for &column_index in &columns {
+                candidates.push((row_index, column_index, cells[column_index].source_id()));
+            }
+        }
+    }
+    let (row_index, column_index, cell) = if let Some(occurrence) = target.occurrence {
+        candidates.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "table cell target occurrence was not found",
+            )
+        })?
+    } else if candidates.len() != 1 {
+        return Err(OperationResult::failed(
+            if candidates.is_empty() {
+                "TARGET_NOT_FOUND"
+            } else {
+                "TARGET_AMBIGUOUS"
+            },
+            "table cell target does not resolve to one current semantic cell",
+        ));
+    } else {
+        candidates.pop().expect("one candidate")
+    };
+    let paragraphs = direct_cell_paragraphs(source, cell);
+    if paragraphs.len() != 1 || !safe_table_paragraph(source, paragraphs[0]) {
+        return Err(unsupported(
+            "set_table_cells_text requires one ordinary paragraph with direct runs",
+        ));
+    }
+    Ok(ResolvedTableCell {
+        cell,
+        paragraph: paragraphs[0],
+        text: cell_current_text(source, cell)?,
+        table_index,
+        row_index,
+        column_index,
+    })
+}
+
+fn table_cell_patches(
+    source: &SourceDocument,
+    target: &ResolvedTableCell,
+    replacement: &str,
+) -> Result<Vec<Patch>, OperationResult> {
+    if target.text.is_empty() {
+        return if replacement.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(vec![empty_cell_patch(
+                source,
+                target.paragraph,
+                replacement,
+            )?])
+        };
+    }
+    let matches = crate::text_search::resolve_text(source, &target.text)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let matched = matches
+        .into_iter()
+        .find(|matched| {
+            matched.start == 0
+                && matched.end == target.text.len()
+                && matched
+                    .segments
+                    .iter()
+                    .all(|segment| is_descendant(source, segment.id, target.cell))
+        })
+        .ok_or_else(|| {
+            OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "resolved cell has no compatible text source range",
+            )
+        })?;
+    patches_for_match(source, &matched, replacement)
 }
 
 fn is_direct_body_table(source: &SourceDocument, table: NodeId) -> bool {
@@ -2970,10 +3574,11 @@ mod tests {
     };
 
     use opensuite_protocol::{
-        ContentControlTarget, DeleteParagraph, InsertParagraphAfter, ParagraphAlignment,
-        ParagraphFormattingPatch, PropertyPatch, ReplaceText, SetContentControlText,
-        SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTextFormatting,
-        TableCellTarget, TextFormattingPatch, TextTarget,
+        ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableRowAfter,
+        InsertTableRowsAfter, ParagraphAlignment, ParagraphFormattingPatch, PropertyPatch,
+        ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
+        SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
+        TableCellTextUpdate, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -3159,6 +3764,48 @@ mod tests {
         let package = Package::open(input).unwrap();
         let (main, source) = crate::open_main_source(&package).unwrap();
         set_table_cell_text(&package, &main, &source, operation, output)
+    }
+
+    fn row_operation(headers: &[&str], after: &str, cells: &[&str]) -> InsertTableRowAfter {
+        InsertTableRowAfter {
+            table: TableTarget {
+                header_cells: headers.iter().map(|value| (*value).to_owned()).collect(),
+                occurrence: None,
+            },
+            after: TableRowTarget {
+                first_cell_text: after.to_owned(),
+                occurrence: None,
+            },
+            cells: cells.iter().map(|value| (*value).to_owned()).collect(),
+            base_revision: Some("caller-version-7".to_owned()),
+        }
+    }
+
+    fn row_execute(
+        input: &Path,
+        operation: &InsertTableRowAfter,
+    ) -> Result<Vec<u8>, OperationResult> {
+        let package = Package::open(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        insert_table_row_after_to_vec(&package, &main, &source, operation)
+    }
+
+    fn rows_execute(
+        input: &Path,
+        operation: &InsertTableRowsAfter,
+    ) -> Result<Vec<u8>, OperationResult> {
+        let package = Package::open(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        insert_table_rows_after_to_vec(&package, &main, &source, operation)
+    }
+
+    fn cells_execute(
+        input: &Path,
+        operation: &SetTableCellsText,
+    ) -> Result<Vec<u8>, OperationResult> {
+        let package = Package::open(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        set_table_cells_text_to_vec(&package, &main, &source, operation)
     }
 
     fn control_operation(
@@ -3713,6 +4360,188 @@ mod tests {
         Package::open(&output).unwrap().verify().unwrap();
         fs::remove_file(input).unwrap();
         fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn inserts_a_safe_row_after_a_semantic_anchor_and_preserves_tables() {
+        let xml = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:tcPr><w:shd w:fill=\"DDDDDD\"/></w:tcPr><w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:shd w:fill=\"EEEEEE\"/></w:tcPr><w:p><w:pPr><w:jc w:val=\"left\"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CEO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:shd w:fill=\"EEEEEE\"/></w:tcPr><w:p><w:pPr><w:jc w:val=\"left\"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Other</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Table</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Keep</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Same</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+        );
+        let input = table_fixture(&xml);
+        let output = row_execute(
+            &input,
+            &row_operation(&["Name", "Role"], "Bob", &[" Charlie ", "CFO & < >"]),
+        )
+        .unwrap();
+        let package = Package::from_bytes(output.clone()).unwrap();
+        package.verify().unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            all_table_rows(&source).unwrap(),
+            vec![
+                vec![
+                    vec!["Name".to_owned(), "Role".to_owned()],
+                    vec!["Alice".to_owned(), "CEO".to_owned()],
+                    vec!["Bob".to_owned(), "CTO".to_owned()],
+                    vec![" Charlie ".to_owned(), "CFO & < >".to_owned()],
+                ],
+                vec![
+                    vec!["Other".to_owned(), "Table".to_owned()],
+                    vec!["Keep".to_owned(), "Same".to_owned()],
+                ],
+            ]
+        );
+        let output_xml = String::from_utf8(
+            package
+                .read_part(&package.main_office_document().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(output_xml.contains("xml:space=\"preserve\"> Charlie </w:t>"));
+        assert!(output_xml.contains("CFO &amp; &lt; &gt;"));
+        assert!(output_xml.contains("<w:shd w:fill=\"EEEEEE\"/>"));
+        assert_eq!(entry(&input, "word/media/image.bin"), vec![1, 2, 3]);
+        fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn inserts_multiple_rows_contiguously_and_validates_all_rows_first() {
+        let xml = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CEO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+        );
+        let input = table_fixture(&xml);
+        let operation = InsertTableRowsAfter {
+            table: TableTarget {
+                header_cells: vec!["Name".to_owned(), "Role".to_owned()],
+                occurrence: None,
+            },
+            after: TableRowTarget {
+                first_cell_text: "Alice".to_owned(),
+                occurrence: None,
+            },
+            rows: vec![
+                vec!["Charlie".to_owned(), "CFO".to_owned()],
+                vec!["David".to_owned(), "COO".to_owned()],
+                vec!["Emma".to_owned(), String::new()],
+            ],
+            base_revision: None,
+        };
+        let output = rows_execute(&input, &operation).unwrap();
+        let package = Package::from_bytes(output.clone()).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            all_table_rows(&source).unwrap()[0][2..],
+            [
+                vec!["Charlie", "CFO"],
+                vec!["David", "COO"],
+                vec!["Emma", ""],
+                vec!["Bob", "CTO"]
+            ]
+        );
+        assert_eq!(entry(&input, "word/media/image.bin"), vec![1, 2, 3]);
+
+        let after_final = InsertTableRowsAfter {
+            after: TableRowTarget {
+                first_cell_text: "Bob".to_owned(),
+                occurrence: None,
+            },
+            rows: vec![
+                vec!["Final one".to_owned(), "CIO".to_owned()],
+                vec!["Final two".to_owned(), "CPO".to_owned()],
+            ],
+            ..operation.clone()
+        };
+        let output = rows_execute(&input, &after_final).unwrap();
+        let package = Package::from_bytes(output).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            all_table_rows(&source).unwrap()[0][3..],
+            [vec!["Final one", "CIO"], vec!["Final two", "CPO"]]
+        );
+
+        let mut invalid = operation;
+        invalid.rows[1].pop();
+        assert_eq!(
+            rows_execute(&input, &invalid).unwrap_err().diagnostics[0].code,
+            "PRECONDITION_FAILED"
+        );
+        fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn sets_multiple_table_cells_atomically() {
+        let xml = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Team</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CEO</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Product</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CTO</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Platform</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+        );
+        let input = table_fixture(&xml);
+        let update =
+            |row: &str, column: &str, expected: &str, replacement: &str| TableCellTextUpdate {
+                target: TableCellTarget {
+                    row_label: row.to_owned(),
+                    column_header: column.to_owned(),
+                    occurrence: None,
+                },
+                expected_current_text: expected.to_owned(),
+                replacement: replacement.to_owned(),
+            };
+        let operation = SetTableCellsText {
+            table: TableTarget {
+                header_cells: vec!["Name".to_owned(), "Role".to_owned(), "Team".to_owned()],
+                occurrence: None,
+            },
+            updates: vec![
+                update("Alice", "Role", "CEO", "Founder & CEO"),
+                update("Bob", "Role", "CTO", "CTO & VP Engineering"),
+                update("Bob", "Team", "Platform", "Engineering"),
+            ],
+            base_revision: None,
+        };
+        let output = cells_execute(&input, &operation).unwrap();
+        let package = Package::from_bytes(output).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(all_table_rows(&source).unwrap()[0][1][1], "Founder & CEO");
+        assert_eq!(
+            all_table_rows(&source).unwrap()[0][2][1..],
+            ["CTO & VP Engineering", "Engineering"]
+        );
+        let mut bad = operation.clone();
+        bad.updates[2].expected_current_text = "wrong".to_owned();
+        assert_eq!(
+            cells_execute(&input, &bad).unwrap_err().diagnostics[0].code,
+            "PRECONDITION_FAILED"
+        );
+        let duplicate = SetTableCellsText {
+            updates: vec![operation.updates[0].clone(), operation.updates[0].clone()],
+            ..operation
+        };
+        assert_eq!(
+            cells_execute(&input, &duplicate).unwrap_err().diagnostics[0].code,
+            "PRECONDITION_FAILED"
+        );
+        fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn rejects_unsafe_or_ambiguous_row_insertions() {
+        let table = "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        let input = table_fixture(&format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body>{table}{table}</w:body></w:document>"
+        ));
+        let operation = row_operation(&["Name", "Role"], "Bob", &["Charlie", "CFO"]);
+        assert_eq!(
+            row_execute(&input, &operation).unwrap_err().diagnostics[0].code,
+            "TARGET_AMBIGUOUS"
+        );
+        let wrong = row_operation(&["Name", "Role"], "Bob", &["Charlie"]);
+        let single = table_fixture(&format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body>{table}</w:body></w:document>"
+        ));
+        assert_eq!(
+            row_execute(&single, &wrong).unwrap_err().diagnostics[0].code,
+            "PRECONDITION_FAILED"
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(single).unwrap();
     }
 
     #[test]
