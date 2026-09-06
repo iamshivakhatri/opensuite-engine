@@ -284,6 +284,9 @@ impl StyleSheet {
     pub fn styles(&self) -> impl Iterator<Item = &Style> {
         self.styles.values()
     }
+    pub fn style(&self, id: &StyleId) -> Option<&Style> {
+        self.styles.get(id)
+    }
     pub fn default_paragraph_style_id(&self) -> Option<&StyleId> {
         self.default_paragraph_style.as_ref()
     }

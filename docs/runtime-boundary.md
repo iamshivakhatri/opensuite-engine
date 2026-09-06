@@ -35,6 +35,9 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   ordered semantic matches without source identities.
 - `inspect_context` resolves the same `TextTarget` and returns its full
   paragraph or table-cell paragraph plus bounded nearby semantic containers.
+- `inspect` supports DOCX-only overview, headings, main-body paragraphs, top-level tables, and
+  context. Lists are bounded by version-local source order and report total, returned count, and
+  whether more items remain. Readable complex tables are not implied to be safely mutable.
 - The Node N-API adapter exposes the same DOCX capability manifest, `find_text`,
   `inspect_context`, and `replace_text` against in-memory `Buffer` artifacts. It is only an
   adapter: capabilities come from Rust, normal failures remain structured, and source identities

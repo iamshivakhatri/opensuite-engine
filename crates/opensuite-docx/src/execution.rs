@@ -1,7 +1,7 @@
 use opensuite_opc::Package;
 use opensuite_protocol::{
-    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InspectTextContext,
-    InspectTextContextResult, OperationResult, ReplaceText,
+    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InspectDocx, InspectDocxResult,
+    InspectTextContext, InspectTextContextResult, OperationResult, ReplaceText,
 };
 
 use crate::{open_main_source, replace_text_to_vec};
@@ -57,8 +57,25 @@ pub fn find_docx_text(input_artifact: Vec<u8>, request: &FindText) -> FindTextRe
     crate::find_text(&source, request).unwrap_or_else(|error| failed_find(request, error.code()))
 }
 
+/// Inspects an immutable DOCX artifact through a typed, bounded semantic request.
+pub fn inspect_docx(input_artifact: Vec<u8>, request: &InspectDocx) -> InspectDocxResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => {
+            return InspectDocxResult::failed(error.code(), "could not load DOCX artifact");
+        }
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => {
+            return InspectDocxResult::failed(error.code(), "could not load DOCX artifact");
+        }
+    };
+    crate::inspect_docx_document(&package, &main, &source, request)
+}
+
 /// Inspects bounded text context in an immutable DOCX artifact.
-pub fn inspect_docx(
+pub fn inspect_docx_context(
     input_artifact: Vec<u8>,
     request: &InspectTextContext,
 ) -> InspectTextContextResult {

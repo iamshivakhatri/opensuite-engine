@@ -22,7 +22,9 @@ function docxFixture() {
   const files = [
     ['[Content_Types].xml', '<Types><Default Extension="xml" ContentType="application/xml"/></Types>'],
     ['_rels/.rels', `<Relationships><Relationship Id="rId1" Type="${office}" Target="word/document.xml"/></Relationships>`],
-    ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table needle</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`],
+    ['word/_rels/document.xml.rels', '<Relationships><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+    ['word/styles.xml', `<w:styles xmlns:w="${word}"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/></w:style><w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body Text"/></w:style></w:styles>`],
+    ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Report heading</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Body"/></w:pPr><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table needle</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>second cell</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>uneven row</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`],
   ]
   let offset = 0
   const local = []
@@ -109,27 +111,51 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   assert.deepEqual(found.matches.map((match) => match.occurrence), [0, 1])
   assert.deepEqual(Object.keys(found.matches[0]).sort(), ['after', 'before', 'container', 'occurrence', 'text'])
 
-  const context = await inspectDocx(input, { target: { text: 'table needle' }, before: 1, after: 0 })
+  const overview = await inspectDocx(input, { focus: { kind: 'overview' } })
+  assert.equal(overview.ok, true)
+  assert.equal(overview.overview.paragraphCount, 4)
+  assert.equal(overview.overview.tableCount, 1)
+
+  const headings = await inspectDocx(input, { focus: { kind: 'headings', offset: 0, limit: 1 } })
+  assert.equal(headings.headings.page.total, 1)
+  assert.equal(headings.headings.items[0].text, 'Report heading')
+  assert.equal(headings.headings.items[0].styleName, 'Heading 1')
+  assert.equal(headings.headings.items[0].level, 1)
+
+  const paragraphs = await inspectDocx(input, { focus: { kind: 'paragraphs', offset: 1, limit: 2 } })
+  assert.equal(paragraphs.paragraphs.page.total, 4)
+  assert.equal(paragraphs.paragraphs.items[0].text, 'old text')
+  assert.equal(paragraphs.paragraphs.items[0].styleName, 'Body Text')
+
+  const tables = await inspectDocx(input, { focus: { kind: 'tables', offset: 0, limit: 1 } })
+  assert.equal(tables.tables.items[0].rows[0].cells[0], 'table needle')
+  assert.equal(tables.tables.items[0].isRectangular, false)
+
+  const context = await inspectDocx(input, { focus: { kind: 'context', text: 'table needle', before: 1, after: 0 } })
   assert.equal(context.ok, true)
-  assert.equal(context.container.text, 'table needle')
-  assert.equal(context.container.container, 'table_cell')
-  assert.equal(context.nearby.length, 2)
-  assert.deepEqual(Object.keys(context.container).sort(), ['container', 'relativePosition', 'text'])
+  assert.equal(context.context.container.text, 'table needle')
+  assert.equal(context.context.container.container, 'table_cell')
+  assert.equal(context.context.nearby.length, 2)
+  assert.deepEqual(Object.keys(context.context.container).sort(), ['container', 'relativePosition', 'text'])
 
   const changed = await executeDocxReplaceText(input, operation('old text', 'new text'))
   assert.equal(changed.result.ok, true)
   const foundOutput = await findDocxText(changed.output, { text: 'new text' })
-  const contextOutput = await inspectDocx(changed.output, { target: { text: 'new text' } })
+  const contextOutput = await inspectDocx(changed.output, { focus: { kind: 'context', text: 'new text' } })
   assert.equal(foundOutput.matchCount, 1)
-  assert.equal(contextOutput.container.text, 'new text')
+  assert.equal(contextOutput.context.container.text, 'new text')
 
   for (const result of [
     await findDocxText(Buffer.from('not a DOCX'), { text: 'anything' }),
-    await inspectDocx(Buffer.from('not a DOCX'), { target: { text: 'anything' } }),
+    await inspectDocx(Buffer.from('not a DOCX'), { focus: { kind: 'overview' } }),
   ]) {
     assert.equal(result.ok, false)
     assert.equal(result.diagnostics[0].code, 'INVALID_ZIP')
     assert.equal(JSON.stringify(result).includes('NodeId'), false)
     assert.equal(JSON.stringify(result).includes('SourceSpan'), false)
   }
+
+  const invalidBounds = await inspectDocx(input, { focus: { kind: 'tables', offset: 0, limit: 101 } })
+  assert.equal(invalidBounds.ok, false)
+  assert.equal(invalidBounds.diagnostics[0].code, 'INVALID_INSPECTION_BOUNDS')
 })

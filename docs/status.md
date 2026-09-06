@@ -23,10 +23,13 @@ and XML source bytes.
 - Embeddable `ReplaceText` execution from immutable DOCX bytes to verified output bytes and
   structured diagnostics. Artifact persistence and versioning remain application-owned.
 - The Node.js N-API adapter exposes Rust-sourced DOCX capabilities plus async `findDocxText`,
-  bounded `inspectDocx` text context, and `executeDocxReplaceText`. Node `Buffer` bytes cross
-  into semantic inspection/search or typed replacement and replacement returns verified `Buffer`
-  bytes. The core engine remains Node-independent; normal failures stay structured and source
-  identities remain internal.
+  bounded `inspectDocx` overview/headings/main-body paragraphs/tables/context, and
+  `executeDocxReplaceText`. Node `Buffer` bytes cross into semantic inspection/search or typed
+  replacement and replacement returns verified `Buffer` bytes. The core engine remains
+  Node-independent; normal failures stay structured and source identities remain internal.
+- Broad `inspectDocx` collections use version-local source order with `offset`, `limit`, total,
+  returned count, and `has_more`; table structures remain readable even where future mutation
+  would reject them.
 - `[Content_Types].xml` Default and Override content type resolution.
 - Package-level `_rels/.rels` parsing and main office document discovery through
   Transitional or Strict `officeDocument` relationships.

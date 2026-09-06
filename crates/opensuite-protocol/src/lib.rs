@@ -392,6 +392,98 @@ impl FindTextResult {
     }
 }
 
+/// A bounded, DOCX-specific semantic inspection request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InspectDocx {
+    pub focus: InspectDocxFocus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InspectDocxFocus {
+    Overview,
+    Headings { offset: usize, limit: usize },
+    Paragraphs { offset: usize, limit: usize },
+    Tables { offset: usize, limit: usize },
+    Context(InspectTextContext),
+}
+
+/// A page of version-local, source-order semantic items.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InspectionPage<T> {
+    pub total: usize,
+    pub offset: usize,
+    pub returned: usize,
+    pub has_more: bool,
+    pub items: Vec<T>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxOverview {
+    pub body_block_count: usize,
+    pub paragraph_count: usize,
+    pub table_count: usize,
+    pub section_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxHeading {
+    pub occurrence: usize,
+    pub text: String,
+    pub style_name: String,
+    pub level: Option<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxParagraph {
+    pub occurrence: usize,
+    pub text: String,
+    pub style_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxTable {
+    pub occurrence: usize,
+    pub row_count: usize,
+    pub is_rectangular: bool,
+    pub rows: Vec<DocxTableRow>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxTableRow {
+    pub cells: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InspectDocxContent {
+    Overview(DocxOverview),
+    Headings(InspectionPage<DocxHeading>),
+    Paragraphs(InspectionPage<DocxParagraph>),
+    Tables(InspectionPage<DocxTable>),
+    Context(InspectTextContextResult),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InspectDocxResult {
+    pub content: Option<InspectDocxContent>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl InspectDocxResult {
+    pub fn success(content: InspectDocxContent) -> Self {
+        Self {
+            content: Some(content),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn failed(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            content: None,
+            diagnostics: vec![Diagnostic::new(code, DiagnosticSeverity::Error, message)],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationChange {
     pub kind: String,
