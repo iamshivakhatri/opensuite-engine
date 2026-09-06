@@ -2,15 +2,16 @@ use napi::bindgen_prelude::{AsyncTask, Buffer, Task};
 use napi::{Env, Result};
 use napi_derive::napi;
 use opensuite_docx::{
-    execute_docx_insert_table_row, execute_docx_insert_table_rows, execute_docx_replace_text,
-    execute_docx_set_table_cells_text, find_docx_text, inspect_docx,
+    execute_docx_insert_table_column, execute_docx_insert_table_row,
+    execute_docx_insert_table_rows, execute_docx_replace_text, execute_docx_set_table_cells_text,
+    find_docx_text, inspect_docx,
 };
 use opensuite_protocol::{
     Diagnostic, DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableRow, FindText,
-    FindTextResult, InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult,
-    InspectTextContext, InspectTextContextResult, InspectionPage, OperationResult, ReplaceText,
-    RuntimeCapabilities, TableCellTarget, TableCellTextUpdate, TableRowTarget, TableTarget,
-    TextContainer, TextTarget,
+    FindTextResult, InsertTableColumnAfter, InspectDocx, InspectDocxContent, InspectDocxFocus,
+    InspectDocxResult, InspectTextContext, InspectTextContextResult, InspectionPage,
+    OperationResult, ReplaceText, RuntimeCapabilities, TableCellTarget, TableCellTextUpdate,
+    TableRowTarget, TableTarget, TextContainer, TextTarget,
 };
 
 #[napi(object)]
@@ -80,6 +81,15 @@ pub struct InsertTableRowsInput {
     pub table: TableTargetInput,
     pub after: TableRowTargetInput,
     pub rows: Vec<Vec<String>>,
+    pub base_revision: Option<String>,
+}
+
+#[napi(object)]
+pub struct InsertTableColumnInput {
+    pub table: TableTargetInput,
+    pub after_column_header: String,
+    pub header: String,
+    pub cells: Vec<String>,
     pub base_revision: Option<String>,
 }
 
@@ -392,6 +402,23 @@ pub fn execute_docx_insert_table_rows_node(
     })
 }
 
+#[napi(js_name = "executeDocxInsertTableColumn")]
+pub fn execute_docx_insert_table_column_node(
+    input: Buffer,
+    operation: InsertTableColumnInput,
+) -> AsyncTask<InsertTableColumnTask> {
+    AsyncTask::new(InsertTableColumnTask {
+        input: input.to_vec(),
+        operation: InsertTableColumnAfter {
+            table: table_target(operation.table),
+            after_column_header: operation.after_column_header,
+            header: operation.header,
+            cells: operation.cells,
+            base_revision: operation.base_revision,
+        },
+    })
+}
+
 /// Runs DOCX multi-cell text replacement away from Node's event loop and returns a Promise.
 #[napi(js_name = "executeDocxSetTableCellsText")]
 pub fn execute_docx_set_table_cells_text_node(
@@ -447,6 +474,28 @@ impl Task for InsertTableRowTask {
 pub struct InsertTableRowsTask {
     input: Vec<u8>,
     operation: opensuite_protocol::InsertTableRowsAfter,
+}
+
+pub struct InsertTableColumnTask {
+    input: Vec<u8>,
+    operation: InsertTableColumnAfter,
+}
+
+impl Task for InsertTableColumnTask {
+    type Output = opensuite_docx::DocxExecutionResult;
+    type JsValue = ExecuteDocxReplaceTextOutput;
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(execute_docx_insert_table_column(
+            std::mem::take(&mut self.input),
+            &self.operation,
+        ))
+    }
+    fn resolve(&mut self, _env: Env, result: Self::Output) -> Result<Self::JsValue> {
+        Ok(ExecuteDocxReplaceTextOutput {
+            result: operation_result_output(result.operation),
+            output: result.output_artifact.map(Buffer::from),
+        })
+    }
 }
 
 impl Task for InsertTableRowsTask {

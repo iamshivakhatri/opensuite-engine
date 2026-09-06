@@ -38,6 +38,9 @@ and XML source bytes.
   source insertion. `SetTableCellsText` updates 1–100 unique semantic cells in one simple selected
   table only after all targets and expected values have been validated; both reopen and verify every
   table while preserving untouched source and OPC payloads.
+- Preservation-safe `InsertTableColumnAfter` adds one column to a simple table only when an explicit
+  `w:tblGrid` has one positive-width `w:gridCol` per cell. It copies the adjacent grid column and
+  safe cell formatting, preserving existing widths while increasing the table's grid width by one.
 - `[Content_Types].xml` Default and Override content type resolution.
 - Package-level `_rels/.rels` parsing and main office document discovery through
   Transitional or Strict `officeDocument` relationships.

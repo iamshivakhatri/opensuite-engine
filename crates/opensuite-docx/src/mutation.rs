@@ -4,11 +4,11 @@ use quick_xml::escape::escape;
 
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
-    ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableRowAfter,
-    InsertTableRowsAfter, OperationResult, ParagraphFormattingPatch, PropertyPatch, ReplacePicture,
-    ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
-    SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget, TableRowTarget,
-    TableTarget, TextFormattingPatch, TextTarget,
+    ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableColumnAfter,
+    InsertTableRowAfter, InsertTableRowsAfter, OperationResult, ParagraphFormattingPatch,
+    PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText, SetParagraphFormatting,
+    SetParagraphStyle, SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
+    TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -381,6 +381,107 @@ pub fn set_table_cells_text_to_vec(
         .write_replaced_part_to_vec(main, &patched)
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
     verify_table_row_output_bytes(&output, &expected)?;
+    Ok(output)
+}
+
+/// Inserts one grid-aware column into a simple semantic table.
+pub fn insert_table_column_after_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertTableColumnAfter,
+) -> Result<Vec<u8>, OperationResult> {
+    let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
+    if !simple_table(source, table) || has_revision_wrapper(source, table) {
+        return Err(unsupported(
+            "insert_table_column supports only simple rectangular tables without merges, nesting, or revisions",
+        ));
+    }
+    if operation.cells.len() != rows.len() - 1 {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "column cell count must match the table data-row count",
+        ));
+    }
+    let columns = headers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, header)| (header == &operation.after_column_header).then_some(index))
+        .collect::<Vec<_>>();
+    if columns.len() != 1 {
+        return Err(OperationResult::failed(
+            if columns.is_empty() {
+                "TARGET_NOT_FOUND"
+            } else {
+                "TARGET_AMBIGUOUS"
+            },
+            "column header does not resolve to one current table column",
+        ));
+    }
+    let column = columns[0];
+    let grid = explicit_table_grid(source, table, headers.len())?;
+    for row in &rows {
+        if !safe_table_row(source, row.source_id()) {
+            return Err(unsupported(
+                "insert_table_column requires ordinary rows with one direct paragraph per cell",
+            ));
+        }
+    }
+    let mut patches = vec![Patch {
+        span: SourceSpan {
+            start: source
+                .node(grid.columns[column])
+                .expect("grid column exists")
+                .span()
+                .end,
+            end: source
+                .node(grid.columns[column])
+                .expect("grid column exists")
+                .span()
+                .end,
+        },
+        replacement: source_bytes(source, grid.columns[column])?,
+    }];
+    for (row_index, row) in rows.iter().enumerate() {
+        let cells = row.cells().collect::<Vec<_>>();
+        let value = if row_index == 0 {
+            &operation.header
+        } else {
+            &operation.cells[row_index - 1]
+        };
+        let template = cells[column].source_id();
+        let end = source.node(template).expect("cell exists").span().end;
+        patches.push(Patch {
+            span: SourceSpan { start: end, end },
+            replacement: cell_fragment(
+                source,
+                template,
+                value,
+                word_element_prefix(source, row.source_id(), "tr")?,
+            )?
+            .into_bytes(),
+        });
+    }
+    let patched = apply_patches(source, patches)?;
+    let mut expected = all_table_rows(source)?;
+    for (row_index, row) in expected[table_index].iter_mut().enumerate() {
+        row.insert(
+            column + 1,
+            if row_index == 0 {
+                operation.header.clone()
+            } else {
+                operation.cells[row_index - 1].clone()
+            },
+        );
+    }
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let mut output_target = operation.table.clone();
+    output_target
+        .header_cells
+        .insert(column + 1, operation.header.clone());
+    verify_table_column_output_bytes(&output, &output_target, &expected)?;
     Ok(output)
 }
 
@@ -2577,6 +2678,61 @@ fn simple_table(source: &SourceDocument, table: NodeId) -> bool {
         })
 }
 
+struct ExplicitTableGrid {
+    columns: Vec<NodeId>,
+}
+
+fn explicit_table_grid(
+    source: &SourceDocument,
+    table: NodeId,
+    width: usize,
+) -> Result<ExplicitTableGrid, OperationResult> {
+    let grids = source
+        .children(table)
+        .filter(|id| word(source, *id, "tblGrid"))
+        .collect::<Vec<_>>();
+    if grids.len() != 1 {
+        return Err(unsupported(
+            "insert_table_column requires one explicit table grid",
+        ));
+    }
+    let columns = source.children(grids[0]).collect::<Vec<_>>();
+    if columns.len() != width
+        || columns.iter().any(|column| {
+            !word(source, *column, "gridCol")
+                || source
+                    .node(*column)
+                    .and_then(|node| node.attribute("w"))
+                    .and_then(|width| width.parse::<u32>().ok())
+                    .is_none_or(|width| width == 0)
+        })
+    {
+        return Err(unsupported(
+            "insert_table_column requires grid columns with positive explicit widths matching the table",
+        ));
+    }
+    Ok(ExplicitTableGrid { columns })
+}
+
+fn verify_table_column_output_bytes(
+    output: &[u8],
+    target: &TableTarget,
+    expected: &[Vec<Vec<String>>],
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    if all_table_rows(&source)? != expected {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output table cells do not match the requested column insertion",
+        ));
+    }
+    let (_, table, _rows, headers) = resolve_table(&source, target)?;
+    explicit_table_grid(&source, table, headers.len())?;
+    Ok(())
+}
+
 fn direct_cell_paragraphs(source: &SourceDocument, cell: NodeId) -> Vec<NodeId> {
     source
         .children(cell)
@@ -3574,10 +3730,10 @@ mod tests {
     };
 
     use opensuite_protocol::{
-        ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableRowAfter,
-        InsertTableRowsAfter, ParagraphAlignment, ParagraphFormattingPatch, PropertyPatch,
-        ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
-        SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
+        ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableColumnAfter,
+        InsertTableRowAfter, InsertTableRowsAfter, ParagraphAlignment, ParagraphFormattingPatch,
+        PropertyPatch, ReplaceText, SetContentControlText, SetParagraphFormatting,
+        SetParagraphStyle, SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
         TableCellTextUpdate, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -4518,6 +4674,47 @@ mod tests {
             cells_execute(&input, &duplicate).unwrap_err().diagnostics[0].code,
             "PRECONDITION_FAILED"
         );
+        fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn inserts_a_grid_aware_table_column() {
+        let xml = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"3600\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"3600\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"3600\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>CEO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"3600\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+        );
+        let input = table_fixture(&xml);
+        let operation = InsertTableColumnAfter {
+            table: TableTarget {
+                header_cells: vec!["Name".to_owned(), "Role".to_owned()],
+                occurrence: None,
+            },
+            after_column_header: "Role".to_owned(),
+            header: "Location".to_owned(),
+            cells: vec!["New York".to_owned(), String::new()],
+            base_revision: None,
+        };
+        let package = Package::open(&input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let output =
+            insert_table_column_after_to_vec(&package, &main, &source, &operation).unwrap();
+        let package = Package::from_bytes(output.clone()).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            all_table_rows(&source).unwrap()[0],
+            vec![
+                vec!["Name", "Role", "Location"],
+                vec!["Alice", "CEO", "New York"],
+                vec!["Bob", "CTO", ""]
+            ]
+        );
+        let xml = String::from_utf8(
+            package
+                .read_part(&package.main_office_document().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(xml.matches("<w:gridCol").count(), 3);
+        assert!(xml.contains("<w:rPr><w:b/></w:rPr><w:t>Location</w:t>"));
         fs::remove_file(input).unwrap();
     }
 

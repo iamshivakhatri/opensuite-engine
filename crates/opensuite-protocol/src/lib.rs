@@ -112,6 +112,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "insert_table_row",
     "insert_table_rows",
     "set_table_cells_text",
+    "insert_table_column",
     "find_text",
     "inspect_context",
 ];
@@ -211,6 +212,16 @@ pub struct TableCellTextUpdate {
 pub struct SetTableCellsText {
     pub table: TableTarget,
     pub updates: Vec<TableCellTextUpdate>,
+    pub base_revision: Option<String>,
+}
+
+/// Inserts one complete column after an exact header in a simple semantic table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertTableColumnAfter {
+    pub table: TableTarget,
+    pub after_column_header: String,
+    pub header: String,
+    pub cells: Vec<String>,
     pub base_revision: Option<String>,
 }
 
@@ -646,6 +657,18 @@ impl OperationResult {
         }
     }
 
+    pub fn table_column_inserted(headers: Vec<String>, after: String, header: String) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "table_column_inserted".to_owned(),
+                before: format!("{} after {after}", headers.join(" | ")),
+                after: header,
+            }],
+        }
+    }
+
     pub fn content_control_text_set(before: String, after: String) -> Self {
         Self {
             status: OperationStatus::Applied,
@@ -793,7 +816,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

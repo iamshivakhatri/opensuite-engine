@@ -45,6 +45,9 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   source patch. `set_table_cells_text` selects one such table and updates 1–100 unique cells only
   after resolving every target and expected value, so either plural operation produces one verified
   artifact or no output at all.
+- `insert_table_column` selects one simple table and exact header, then inserts one grid column and
+  one cell per row. It accepts only explicit positive-width grids whose column count matches the
+  table, copying the adjacent column's width and safe cell formatting.
 - The Node N-API adapter exposes the same DOCX capability manifest, `find_text`,
   `inspect_context`, and `replace_text` against in-memory `Buffer` artifacts. It is only an
   adapter: capabilities come from Rust, normal failures remain structured, and source identities

@@ -1,13 +1,14 @@
 use opensuite_opc::Package;
 use opensuite_protocol::{
-    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertTableRowAfter,
-    InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
+    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertTableColumnAfter,
+    InsertTableRowAfter, InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
     InspectTextContextResult, OperationResult, ReplaceText, SetTableCellsText,
 };
 
 use crate::{
-    insert_table_row_after_to_vec, insert_table_rows_after_to_vec, open_main_source,
-    replace_text_to_vec, set_table_cells_text_to_vec,
+    insert_table_column_after_to_vec, insert_table_row_after_to_vec,
+    insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
+    set_table_cells_text_to_vec,
 };
 
 /// The result of executing one DOCX operation against an immutable artifact.
@@ -100,6 +101,35 @@ pub fn execute_docx_insert_table_rows(
                 operation.table.header_cells.clone(),
                 operation.after.first_cell_text.clone(),
                 operation.rows.clone(),
+            ),
+            output_artifact: Some(output_artifact),
+        },
+        Err(operation) => DocxExecutionResult {
+            operation,
+            output_artifact: None,
+        },
+    }
+}
+
+/// Executes `InsertTableColumnAfter` against owned DOCX bytes and returns verified output bytes.
+pub fn execute_docx_insert_table_column(
+    input_artifact: Vec<u8>,
+    operation: &InsertTableColumnAfter,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    match insert_table_column_after_to_vec(&package, &main, &source, operation) {
+        Ok(output_artifact) => DocxExecutionResult {
+            operation: OperationResult::table_column_inserted(
+                operation.table.header_cells.clone(),
+                operation.after_column_header.clone(),
+                operation.header.clone(),
             ),
             output_artifact: Some(output_artifact),
         },
