@@ -32,6 +32,8 @@ fn main() {
         set_text_formatting(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-paragraph-style")) {
         set_paragraph_style(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("replace-picture")) {
+        replace_picture(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
         inspect_context(arguments)
     } else {
@@ -598,6 +600,110 @@ fn set_paragraph_style(
                 occurrence,
             },
             style,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn replace_picture(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output)) = (arguments.next(), arguments.next()) else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "replace-picture requires input and output".to_owned(),
+        ));
+    };
+    let values = arguments
+        .map(|value| {
+            value.into_string().map_err(|_| {
+                (
+                    "INVALID_ARGUMENTS",
+                    "picture arguments must be UTF-8".to_owned(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut name = None;
+    let mut description = None;
+    let mut image = None;
+    let mut occurrence = None;
+    let mut index = 0;
+    while index < values.len() {
+        match values[index].as_str() {
+            "--name" => {
+                index += 1;
+                name = values.get(index).cloned();
+            }
+            "--description" => {
+                index += 1;
+                description = values.get(index).cloned();
+            }
+            "--image" => {
+                index += 1;
+                image = values.get(index).cloned();
+            }
+            "--occurrence" => {
+                index += 1;
+                occurrence = Some(
+                    values
+                        .get(index)
+                        .ok_or_else(|| {
+                            (
+                                "INVALID_ARGUMENTS",
+                                "--occurrence requires a value".to_owned(),
+                            )
+                        })?
+                        .parse()
+                        .map_err(|_| {
+                            (
+                                "INVALID_ARGUMENTS",
+                                "occurrence must be an integer".to_owned(),
+                            )
+                        })?,
+                );
+            }
+            other => {
+                return Err((
+                    "INVALID_ARGUMENTS",
+                    format!("unknown picture option {other}"),
+                ));
+            }
+        };
+        index += 1;
+    }
+    let image = image.ok_or_else(|| ("INVALID_ARGUMENTS", "--image is required".to_owned()))?;
+    let bytes = std::fs::read(&image).map_err(|error| ("INVALID_ARGUMENTS", error.to_string()))?;
+    let content_type = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        "image/jpeg"
+    } else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "replacement must be PNG or JPEG".to_owned(),
+        ));
+    };
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::replace_picture(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::ReplacePicture {
+            target: opensuite_protocol::PictureTarget {
+                name,
+                description,
+                occurrence,
+            },
+            replacement: opensuite_protocol::ImagePayload {
+                content_type: content_type.to_owned(),
+                bytes,
+            },
             base_revision: None,
         },
         output,

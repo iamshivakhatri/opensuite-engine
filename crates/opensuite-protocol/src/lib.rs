@@ -108,6 +108,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_paragraph_formatting",
     "set_text_formatting",
     "set_paragraph_style",
+    "replace_picture",
     "find_text",
     "inspect_context",
 ];
@@ -250,6 +251,24 @@ pub struct SetTextFormatting {
 pub struct SetParagraphStyle {
     pub target: TextTarget,
     pub style: PropertyPatch<String>,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PictureTarget {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub occurrence: Option<usize>,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImagePayload {
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplacePicture {
+    pub target: PictureTarget,
+    pub replacement: ImagePayload,
     pub base_revision: Option<String>,
 }
 
@@ -475,6 +494,17 @@ impl OperationResult {
             }],
         }
     }
+    pub fn picture_replaced(name: String, before: usize, after: usize) -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "picture_replaced".to_owned(),
+                before: format!("{name}: {before} bytes"),
+                after: format!("{after} bytes"),
+            }],
+        }
+    }
 
     fn formatting_set(kind: &str, text: String) -> Self {
         Self {
@@ -580,7 +610,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

@@ -5,7 +5,7 @@ use quick_xml::escape::escape;
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
     ContentControlTarget, DeleteParagraph, InsertParagraphAfter, OperationResult,
-    ParagraphFormattingPatch, PropertyPatch, ReplaceText, SetContentControlText,
+    ParagraphFormattingPatch, PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText,
     SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTextFormatting,
     TableCellTarget, TextFormattingPatch, TextTarget,
 };
@@ -563,6 +563,115 @@ pub fn set_paragraph_style(
     }
     let after = resolved_style.map_or_else(|| "direct style cleared".to_owned(), |style| style.1);
     OperationResult::paragraph_style_set(text, before, after)
+}
+
+pub fn replace_picture(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &ReplacePicture,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if operation.target.name.is_none() && operation.target.description.is_none() {
+        return OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "picture target requires name or description",
+        );
+    }
+    let document = match crate::DocxDocument::new(source) {
+        Ok(value) => value,
+        Err(error) => return document_invalid(error),
+    };
+    let mut pictures = document
+        .pictures()
+        .filter(|picture| {
+            picture.metadata().is_some_and(|meta| {
+                operation
+                    .target
+                    .name
+                    .as_ref()
+                    .is_none_or(|name| meta.name.as_ref() == Some(name))
+                    && operation
+                        .target
+                        .description
+                        .as_ref()
+                        .is_none_or(|description| meta.description.as_ref() == Some(description))
+            })
+        })
+        .collect::<Vec<_>>();
+    let picture = if let Some(occurrence) = operation.target.occurrence {
+        match pictures.get(occurrence) {
+            Some(_) => pictures.remove(occurrence),
+            None => {
+                return OperationResult::failed(
+                    "TARGET_NOT_FOUND",
+                    "picture target occurrence was not found",
+                );
+            }
+        }
+    } else if pictures.len() != 1 {
+        return OperationResult::failed(
+            if pictures.is_empty() {
+                "TARGET_NOT_FOUND"
+            } else {
+                "TARGET_AMBIGUOUS"
+            },
+            "picture target did not resolve deterministically",
+        );
+    } else {
+        pictures.pop().expect("one picture")
+    };
+    let metadata = picture.metadata().expect("matched metadata");
+    let name = metadata
+        .name
+        .clone()
+        .or(metadata.description.clone())
+        .unwrap_or_else(|| "picture".to_owned());
+    let crate::ImageReference::Embedded(image) = (match picture.image_reference(package, main) {
+        Ok(value) => value,
+        Err(error) => return unsupported(error.to_string()),
+    }) else {
+        return unsupported("replace_picture supports only internal embedded images");
+    };
+    let content_type = image.part.content_type.as_str();
+    if !matches!(content_type, "image/png" | "image/jpeg")
+        || operation.replacement.content_type != content_type
+        || !valid_image(&operation.replacement.bytes, content_type)
+    {
+        return unsupported(
+            "replacement image must be a valid PNG or JPEG with the existing content type",
+        );
+    }
+    let references = match crate::DocxDocument::new(source) { Ok(document) => document.pictures().filter_map(|item| item.image_reference(package, main).ok()).filter(|reference| matches!(reference, crate::ImageReference::Embedded(other) if other.part.name == image.part.name)).count(), Err(error) => return document_invalid(error) };
+    if references != 1 {
+        return unsupported("replace_picture does not replace shared image parts");
+    }
+    if let Err(error) =
+        package.write_replaced_part(&image.part, &operation.replacement.bytes, output)
+    {
+        return OperationResult::failed(error.code(), error.to_string());
+    }
+    let reopened = match Package::open(output) {
+        Ok(value) => value,
+        Err(error) => return document_invalid(error),
+    };
+    if let Err(error) = reopened.verify() {
+        return document_invalid(error);
+    }
+    OperationResult::picture_replaced(
+        name,
+        image.size_bytes as usize,
+        operation.replacement.bytes.len(),
+    )
+}
+
+fn valid_image(bytes: &[u8], content_type: &str) -> bool {
+    match content_type {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]) && bytes.ends_with(&[0xff, 0xd9]),
+        _ => false,
+    }
 }
 
 fn resolve_paragraph_style(
