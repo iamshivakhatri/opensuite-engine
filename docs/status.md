@@ -20,6 +20,8 @@ and XML source bytes.
 - Minimal Rust workspace, CI, and native CLI.
 - Read-only OPC package opening from filesystem paths or owned ZIP bytes, with safe ZIP entry indexing.
 - Preservation-safe single-part package output to a filesystem path or in-memory ZIP bytes.
+- Embeddable `ReplaceText` execution from immutable DOCX bytes to verified output bytes and
+  structured diagnostics. Artifact persistence and versioning remain application-owned.
 - `[Content_Types].xml` Default and Override content type resolution.
 - Package-level `_rels/.rels` parsing and main office document discovery through
   Transitional or Strict `officeDocument` relationships.

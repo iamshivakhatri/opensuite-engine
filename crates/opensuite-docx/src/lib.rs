@@ -2,6 +2,7 @@
 
 mod comment;
 mod content_control;
+mod execution;
 mod field;
 mod header_footer;
 mod mutation;
@@ -16,6 +17,7 @@ mod text_context;
 mod text_search;
 mod tracked_change;
 
+pub use execution::{DocxExecutionResult, execute_docx_replace_text};
 pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
 pub use header_footer::{
     HeaderFooter, HeaderFooterError, HeaderFooterKind, HeaderFooterReference, HeaderFooterType,
