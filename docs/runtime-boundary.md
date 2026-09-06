@@ -35,6 +35,11 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   ordered semantic matches without source identities.
 - `inspect_context` resolves the same `TextTarget` and returns its full
   paragraph or table-cell paragraph plus bounded nearby semantic containers.
+- The Node N-API adapter exposes the same DOCX capability manifest, `find_text`,
+  `inspect_context`, and `replace_text` against in-memory `Buffer` artifacts. It is only an
+  adapter: capabilities come from Rust, normal failures remain structured, and source identities
+  do not cross the boundary. Its lifecycle is `Buffer → Rust semantic read or mutation → verified
+  Buffer` for replacement output.
 
 Source identities such as `NodeId`, XML paths, source spans, OPC relationships,
 ZIP offsets, and byte positions remain engine implementation details. They are

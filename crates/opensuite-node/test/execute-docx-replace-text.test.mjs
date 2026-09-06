@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import binding from '../index.js'
 
-const { executeDocxReplaceText } = binding
+const { executeDocxReplaceText, findDocxText, getDocxCapabilities, inspectDocx } = binding
 const office = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
 const word = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
@@ -22,7 +22,7 @@ function docxFixture() {
   const files = [
     ['[Content_Types].xml', '<Types><Default Extension="xml" ContentType="application/xml"/></Types>'],
     ['_rels/.rels', `<Relationships><Relationship Id="rId1" Type="${office}" Target="word/document.xml"/></Relationships>`],
-    ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p></w:body></w:document>`],
+    ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table needle</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`],
   ]
   let offset = 0
   const local = []
@@ -92,5 +92,44 @@ test('returns structured failures without output buffers', async () => {
     assert.equal(value.result.status, 'failed')
     assert.ok(value.result.diagnostics.length)
     assert.equal(value.output, undefined)
+  }
+})
+
+test('reads and writes the same DOCX Buffer through the Rust engine', async () => {
+  const capabilities = getDocxCapabilities()
+  assert.equal(capabilities.ok, true)
+  assert.equal(capabilities.formats[0].format, 'docx')
+  assert.ok(capabilities.formats[0].capabilities.includes('find_text'))
+  assert.ok(capabilities.formats[0].capabilities.includes('inspect_context'))
+  assert.ok(capabilities.formats[0].capabilities.includes('replace_text'))
+
+  const found = await findDocxText(input, { text: 'Date:' })
+  assert.equal(found.ok, true)
+  assert.equal(found.matchCount, 2)
+  assert.deepEqual(found.matches.map((match) => match.occurrence), [0, 1])
+  assert.deepEqual(Object.keys(found.matches[0]).sort(), ['after', 'before', 'container', 'occurrence', 'text'])
+
+  const context = await inspectDocx(input, { target: { text: 'table needle' }, before: 1, after: 0 })
+  assert.equal(context.ok, true)
+  assert.equal(context.container.text, 'table needle')
+  assert.equal(context.container.container, 'table_cell')
+  assert.equal(context.nearby.length, 2)
+  assert.deepEqual(Object.keys(context.container).sort(), ['container', 'relativePosition', 'text'])
+
+  const changed = await executeDocxReplaceText(input, operation('old text', 'new text'))
+  assert.equal(changed.result.ok, true)
+  const foundOutput = await findDocxText(changed.output, { text: 'new text' })
+  const contextOutput = await inspectDocx(changed.output, { target: { text: 'new text' } })
+  assert.equal(foundOutput.matchCount, 1)
+  assert.equal(contextOutput.container.text, 'new text')
+
+  for (const result of [
+    await findDocxText(Buffer.from('not a DOCX'), { text: 'anything' }),
+    await inspectDocx(Buffer.from('not a DOCX'), { target: { text: 'anything' } }),
+  ]) {
+    assert.equal(result.ok, false)
+    assert.equal(result.diagnostics[0].code, 'INVALID_ZIP')
+    assert.equal(JSON.stringify(result).includes('NodeId'), false)
+    assert.equal(JSON.stringify(result).includes('SourceSpan'), false)
   }
 })

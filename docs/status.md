@@ -22,9 +22,11 @@ and XML source bytes.
 - Preservation-safe single-part package output to a filesystem path or in-memory ZIP bytes.
 - Embeddable `ReplaceText` execution from immutable DOCX bytes to verified output bytes and
   structured diagnostics. Artifact persistence and versioning remain application-owned.
-- A narrow Node.js N-API adapter exposes only async `executeDocxReplaceText`: Node `Buffer`
-  bytes cross into typed DOCX replacement and return as verified `Buffer` bytes. The core engine
-  remains Node-independent; normal engine failures stay structured and return no artifact.
+- The Node.js N-API adapter exposes Rust-sourced DOCX capabilities plus async `findDocxText`,
+  bounded `inspectDocx` text context, and `executeDocxReplaceText`. Node `Buffer` bytes cross
+  into semantic inspection/search or typed replacement and replacement returns verified `Buffer`
+  bytes. The core engine remains Node-independent; normal failures stay structured and source
+  identities remain internal.
 - `[Content_Types].xml` Default and Override content type resolution.
 - Package-level `_rels/.rels` parsing and main office document discovery through
   Transitional or Strict `officeDocument` relationships.

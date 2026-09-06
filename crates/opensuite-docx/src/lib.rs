@@ -17,7 +17,7 @@ mod text_context;
 mod text_search;
 mod tracked_change;
 
-pub use execution::{DocxExecutionResult, execute_docx_replace_text};
+pub use execution::{DocxExecutionResult, execute_docx_replace_text, find_docx_text, inspect_docx};
 pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
 pub use header_footer::{
     HeaderFooter, HeaderFooterError, HeaderFooterKind, HeaderFooterReference, HeaderFooterType,

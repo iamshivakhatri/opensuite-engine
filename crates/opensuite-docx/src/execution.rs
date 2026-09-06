@@ -1,5 +1,8 @@
 use opensuite_opc::Package;
-use opensuite_protocol::{OperationResult, ReplaceText};
+use opensuite_protocol::{
+    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InspectTextContext,
+    InspectTextContextResult, OperationResult, ReplaceText,
+};
 
 use crate::{open_main_source, replace_text_to_vec};
 
@@ -42,6 +45,57 @@ pub fn execute_docx_replace_text(
                 output_artifact: None,
             }
         }
+    }
+}
+
+/// Finds exact Current-view text in an immutable DOCX artifact.
+pub fn find_docx_text(input_artifact: Vec<u8>, request: &FindText) -> FindTextResult {
+    let source = match source_from_artifact(input_artifact) {
+        Ok(source) => source,
+        Err(code) => return failed_find(request, code),
+    };
+    crate::find_text(&source, request).unwrap_or_else(|error| failed_find(request, error.code()))
+}
+
+/// Inspects bounded text context in an immutable DOCX artifact.
+pub fn inspect_docx(
+    input_artifact: Vec<u8>,
+    request: &InspectTextContext,
+) -> InspectTextContextResult {
+    let source = match source_from_artifact(input_artifact) {
+        Ok(source) => source,
+        Err(code) => {
+            return InspectTextContextResult::failed(
+                request.target.clone(),
+                code,
+                "could not load DOCX artifact",
+            );
+        }
+    };
+    crate::inspect_text_context(&source, request).unwrap_or_else(|error| {
+        InspectTextContextResult::failed(
+            request.target.clone(),
+            error.code(),
+            "could not inspect DOCX artifact",
+        )
+    })
+}
+
+fn source_from_artifact(input_artifact: Vec<u8>) -> Result<crate::SourceDocument, &'static str> {
+    let package = Package::from_bytes(input_artifact).map_err(|error| error.code())?;
+    let (_, source) = open_main_source(&package).map_err(|error| error.code())?;
+    Ok(source)
+}
+
+fn failed_find(request: &FindText, code: impl Into<String>) -> FindTextResult {
+    FindTextResult {
+        query: request.text.clone(),
+        matches: Vec::new(),
+        diagnostics: vec![Diagnostic::new(
+            code,
+            DiagnosticSeverity::Error,
+            "could not load DOCX artifact",
+        )],
     }
 }
 
