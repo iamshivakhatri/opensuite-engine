@@ -18,7 +18,8 @@ and XML source bytes.
 ## Implemented
 
 - Minimal Rust workspace, CI, and native CLI.
-- Read-only OPC package opening with safe ZIP entry indexing.
+- Read-only OPC package opening from filesystem paths or owned ZIP bytes, with safe ZIP entry indexing.
+- Preservation-safe single-part package output to a filesystem path or in-memory ZIP bytes.
 - `[Content_Types].xml` Default and Override content type resolution.
 - Package-level `_rels/.rels` parsing and main office document discovery through
   Transitional or Strict `officeDocument` relationships.
@@ -76,6 +77,8 @@ and XML source bytes.
 - Preservation-safe `SetParagraphStyle` for an ordinary direct body paragraph selected through
   `TextTarget`. It resolves an existing paragraph style by exact display name and changes only
   the direct `w:pStyle` reference.
+- Preservation-safe `ReplacePicture` for a uniquely referenced, internal main-document PNG or
+  JPEG selected by exact picture metadata. It replaces only the same-type media payload.
 
 ## Current Repository Target
 
@@ -100,6 +103,7 @@ and XML source bytes.
   formatting outside ordinary direct main-body paragraphs
 - table/header/footer, tracked, wrapped, or general character formatting
 - style creation, definition editing, non-paragraph style assignment, or style cleanup
+- image insertion, deletion, resizing, relationship rewiring, or shared-image cloning
 - mutation batches or transactions
 - rendering
 - server

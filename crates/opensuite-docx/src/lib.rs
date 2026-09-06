@@ -22,7 +22,7 @@ pub use header_footer::{
     load_footer, load_header,
 };
 pub use mutation::{
-    delete_paragraph, insert_paragraph_after, replace_picture, replace_text,
+    delete_paragraph, insert_paragraph_after, replace_picture, replace_text, replace_text_to_vec,
     set_content_control_text, set_paragraph_formatting, set_paragraph_style, set_table_cell_text,
     set_text_formatting,
 };

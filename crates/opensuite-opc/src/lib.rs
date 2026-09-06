@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     fs::File,
-    io::{self, Read, Write},
+    io::{self, Cursor, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
@@ -234,18 +234,61 @@ impl std::error::Error for PackageError {}
 
 /// Read-only OPC package metadata. ZIP entry storage remains private.
 pub struct Package {
-    path: PathBuf,
+    source: PackageSource,
     entry_count: usize,
     parts: HashSet<PartName>,
     content_types: ContentTypes,
     relationships: Vec<Relationship>,
 }
 
+enum PackageSource {
+    Path(PathBuf),
+    Bytes(Vec<u8>),
+}
+
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
+
 impl Package {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PackageError> {
         let path = path.as_ref().to_path_buf();
         let file = File::open(&path).map_err(PackageError::Io)?;
-        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        Self::from_archive(
+            ZipArchive::new(file).map_err(PackageError::InvalidZip)?,
+            PackageSource::Path(path),
+        )
+    }
+
+    /// Opens an OPC package from owned ZIP bytes.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, PackageError> {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(PackageError::InvalidZip)?;
+        let (entry_count, parts, content_types, relationships) = Self::index_archive(&mut archive)?;
+        Ok(Self {
+            source: PackageSource::Bytes(archive.into_inner().into_inner()),
+            entry_count,
+            parts,
+            content_types,
+            relationships,
+        })
+    }
+
+    fn from_archive<R: Read + Seek>(
+        mut archive: ZipArchive<R>,
+        source: PackageSource,
+    ) -> Result<Self, PackageError> {
+        let (entry_count, parts, content_types, relationships) = Self::index_archive(&mut archive)?;
+        Ok(Self {
+            source,
+            entry_count,
+            parts,
+            content_types,
+            relationships,
+        })
+    }
+
+    fn index_archive<R: Read + Seek>(
+        archive: &mut ZipArchive<R>,
+    ) -> Result<(usize, HashSet<PartName>, ContentTypes, Vec<Relationship>), PackageError> {
         let entry_count = archive.len();
         let mut entries = HashSet::new();
 
@@ -259,31 +302,27 @@ impl Package {
             }
         }
 
-        let content_types = parse_content_types(read_entry(&mut archive, CONTENT_TYPES_ENTRY)?)?;
+        let content_types = parse_content_types(read_entry(archive, CONTENT_TYPES_ENTRY)?)?;
         let relationships =
-            parse_relationships(read_entry(&mut archive, PACKAGE_RELATIONSHIPS_ENTRY)?, None)?;
+            parse_relationships(read_entry(archive, PACKAGE_RELATIONSHIPS_ENTRY)?, None)?;
 
-        Ok(Self {
-            path,
-            entry_count,
-            parts: entries,
-            content_types,
-            relationships,
-        })
+        Ok((entry_count, entries, content_types, relationships))
     }
 
     pub fn entry_count(&self) -> usize {
         self.entry_count
     }
 
-    pub fn source_path(&self) -> &Path {
-        &self.path
+    pub fn source_path(&self) -> Option<&Path> {
+        match &self.source {
+            PackageSource::Path(path) => Some(path),
+            PackageSource::Bytes(_) => None,
+        }
     }
 
     /// Verifies ZIP payloads, XML syntax, and internal OPC relationship targets.
     pub fn verify(&self) -> Result<(), PackageError> {
-        let file = File::open(&self.path).map_err(PackageError::Io)?;
-        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        let mut archive = self.archive()?;
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).map_err(PackageError::InvalidZip)?;
             if entry.is_dir() {
@@ -299,8 +338,7 @@ impl Package {
         self.verify_relationships(&self.relationships)?;
         for relationship_part in self.parts.iter().filter_map(relationship_source_part) {
             let entry = relationship_entry_name(&relationship_part)?;
-            let file = File::open(&self.path).map_err(PackageError::Io)?;
-            let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+            let mut archive = self.archive()?;
             let relationships = parse_relationships(
                 read_named_entry(&mut archive, &entry)?,
                 Some(&relationship_part),
@@ -329,7 +367,7 @@ impl Package {
         output: impl AsRef<Path>,
     ) -> Result<(), PackageError> {
         let output = output.as_ref();
-        if output == self.path {
+        if self.source_path().is_some_and(|input| output == input) {
             return Err(PackageError::OutputMatchesInput);
         }
         if !self.parts.contains(&part.name) {
@@ -345,24 +383,35 @@ impl Package {
                 .unwrap_or_default()
                 .as_nanos()
         ));
-        let result = self.write_replaced_part_to(&temporary, part, replacement);
-        if result.is_err() {
+        let file = File::create_new(&temporary).map_err(PackageError::Serialization)?;
+        if let Err(error) = self.write_replaced_part_to(part, replacement, file) {
             let _ = std::fs::remove_file(&temporary);
-            return result;
+            return Err(error);
         }
         std::fs::rename(&temporary, output).map_err(PackageError::Serialization)
     }
 
-    fn write_replaced_part_to(
+    /// Copies this package to ZIP bytes, changing only one uncompressed part payload.
+    pub fn write_replaced_part_to_vec(
         &self,
-        output: &Path,
         part: &Part,
         replacement: &[u8],
-    ) -> Result<(), PackageError> {
-        let input = File::open(&self.path).map_err(PackageError::Io)?;
-        let mut archive = ZipArchive::new(input).map_err(PackageError::InvalidZip)?;
-        let file = File::create_new(output).map_err(PackageError::Serialization)?;
-        let mut writer = ZipWriter::new(file);
+    ) -> Result<Vec<u8>, PackageError> {
+        let cursor = self.write_replaced_part_to(part, replacement, Cursor::new(Vec::new()))?;
+        Ok(cursor.into_inner())
+    }
+
+    fn write_replaced_part_to<W: Write + Seek>(
+        &self,
+        part: &Part,
+        replacement: &[u8],
+        output: W,
+    ) -> Result<W, PackageError> {
+        if !self.parts.contains(&part.name) {
+            return Err(PackageError::MissingTargetPart(part.name.clone()));
+        }
+        let mut archive = self.archive()?;
+        let mut writer = ZipWriter::new(output);
         let replacement_name = part.name.as_str().trim_start_matches('/');
 
         for index in 0..archive.len() {
@@ -387,8 +436,7 @@ impl Package {
         }
         writer
             .finish()
-            .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
-        Ok(())
+            .map_err(|error| PackageError::Serialization(io::Error::other(error)))
     }
 
     pub fn part_count(&self) -> usize {
@@ -405,8 +453,7 @@ impl Package {
     /// Reads relationships belonging to one package part without reading other parts.
     pub fn part_relationships(&self, part: &Part) -> Result<Vec<Relationship>, PackageError> {
         let entry_name = relationship_entry_name(&part.name)?;
-        let file = File::open(&self.path).map_err(PackageError::Io)?;
-        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        let mut archive = self.archive()?;
         let content = read_named_entry(&mut archive, &entry_name)
             .map_err(|_| PackageError::MissingPartRelationships(part.name.clone()))?;
         parse_relationships(content, Some(&part.name))
@@ -432,8 +479,7 @@ impl Package {
         if !self.parts.contains(&part.name) {
             return Err(PackageError::MissingTargetPart(part.name.clone()));
         }
-        let file = File::open(&self.path).map_err(PackageError::Io)?;
-        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        let mut archive = self.archive()?;
         read_entry(&mut archive, part.name.as_str().trim_start_matches('/'))
     }
 
@@ -442,8 +488,7 @@ impl Package {
         if !self.parts.contains(&part.name) {
             return Err(PackageError::MissingTargetPart(part.name.clone()));
         }
-        let file = File::open(&self.path).map_err(PackageError::Io)?;
-        let mut archive = ZipArchive::new(file).map_err(PackageError::InvalidZip)?;
+        let mut archive = self.archive()?;
         archive
             .by_name(part.name.as_str().trim_start_matches('/'))
             .map(|entry| entry.size())
@@ -473,6 +518,14 @@ impl Package {
             name: part_name.clone(),
             content_type: self.content_type(part_name)?,
         })
+    }
+
+    fn archive(&self) -> Result<ZipArchive<Box<dyn ReadSeek + '_>>, PackageError> {
+        let reader: Box<dyn ReadSeek + '_> = match &self.source {
+            PackageSource::Path(path) => Box::new(File::open(path).map_err(PackageError::Io)?),
+            PackageSource::Bytes(bytes) => Box::new(Cursor::new(bytes.as_slice())),
+        };
+        ZipArchive::new(reader).map_err(PackageError::InvalidZip)
     }
 }
 
@@ -513,7 +566,10 @@ fn validate_path(path: &str) -> Result<(), PackageError> {
     Ok(())
 }
 
-fn read_entry(archive: &mut ZipArchive<File>, name: &str) -> Result<Vec<u8>, PackageError> {
+fn read_entry<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    name: &str,
+) -> Result<Vec<u8>, PackageError> {
     let mut entry = archive.by_name(name).map_err(|error| match error {
         zip::result::ZipError::FileNotFound => {
             if name == CONTENT_TYPES_ENTRY {
@@ -529,7 +585,10 @@ fn read_entry(archive: &mut ZipArchive<File>, name: &str) -> Result<Vec<u8>, Pac
     Ok(content)
 }
 
-fn read_named_entry(archive: &mut ZipArchive<File>, name: &str) -> Result<Vec<u8>, PackageError> {
+fn read_named_entry<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    name: &str,
+) -> Result<Vec<u8>, PackageError> {
     let mut entry = archive.by_name(name).map_err(PackageError::InvalidZip)?;
     let mut content = Vec::new();
     entry.read_to_end(&mut content).map_err(PackageError::Io)?;
@@ -859,6 +918,53 @@ mod tests {
     }
 
     #[test]
+    fn reads_verifies_and_rewrites_owned_bytes() {
+        let input = package_file(
+            &content_types("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[
+                (
+                    "custom/main.xml",
+                    "<document><text>before</text></document>",
+                ),
+                ("media.xml", "<media>unchanged bytes</media>"),
+            ],
+        );
+        let input_bytes = fs::read(&input).unwrap();
+        fs::remove_file(input).unwrap();
+        let package = Package::from_bytes(input_bytes).unwrap();
+        assert!(package.source_path().is_none());
+        package.verify().unwrap();
+        let main = package.main_office_document().unwrap();
+        assert_eq!(
+            package.read_part(&main).unwrap(),
+            b"<document><text>before</text></document>"
+        );
+
+        let output = package
+            .write_replaced_part_to_vec(&main, b"<document><text>after</text></document>")
+            .unwrap();
+        let reopened = Package::from_bytes(output).unwrap();
+        reopened.verify().unwrap();
+        assert_eq!(
+            reopened
+                .read_part(&reopened.main_office_document().unwrap())
+                .unwrap(),
+            b"<document><text>after</text></document>"
+        );
+        assert_eq!(
+            reopened
+                .read_part(
+                    &reopened
+                        .part(&PartName::parse("/media.xml").unwrap())
+                        .unwrap()
+                )
+                .unwrap(),
+            b"<media>unchanged bytes</media>"
+        );
+    }
+
+    #[test]
     fn verification_rejects_malformed_xml_outside_the_opened_main_part() {
         let input = package_file(
             &content_types("/custom/main.xml"),
@@ -917,6 +1023,14 @@ mod tests {
         fs::remove_file(path).unwrap();
 
         assert!(matches!(result, Err(PackageError::InvalidZip(_))));
+    }
+
+    #[test]
+    fn rejects_invalid_owned_bytes() {
+        assert!(matches!(
+            Package::from_bytes(b"not a zip".to_vec()),
+            Err(PackageError::InvalidZip(_))
+        ));
     }
 
     #[test]

@@ -26,10 +26,7 @@ pub fn replace_text(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if output == package.source_path()
-        || output.exists()
-            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
-    {
+    if output_matches_input(package, output) {
         return OperationResult::failed(
             "OUTPUT_MATCHES_INPUT",
             "output path must differ from input path",
@@ -74,6 +71,28 @@ pub fn replace_text(
     )
 }
 
+/// Applies one preservation-safe text replacement and returns the updated DOCX bytes.
+pub fn replace_text_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &ReplaceText,
+) -> Result<Vec<u8>, OperationResult> {
+    let target = resolve_target(source, operation)?;
+    if target.value != operation.expected_current_text {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "resolved text does not match expected current text",
+        ));
+    }
+    let patched = apply_patches(source, target.patches)?;
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_output_bytes(&output, &operation.replacement)?;
+    Ok(output)
+}
+
 /// Inserts one plain paragraph after a safe, direct main-body paragraph anchor.
 pub fn insert_paragraph_after(
     package: &Package,
@@ -83,10 +102,7 @@ pub fn insert_paragraph_after(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if output == package.source_path()
-        || output.exists()
-            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
-    {
+    if output_matches_input(package, output) {
         return OperationResult::failed(
             "OUTPUT_MATCHES_INPUT",
             "output path must differ from input path",
@@ -151,10 +167,7 @@ pub fn delete_paragraph(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if output == package.source_path()
-        || output.exists()
-            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
-    {
+    if output_matches_input(package, output) {
         return OperationResult::failed(
             "OUTPUT_MATCHES_INPUT",
             "output path must differ from input path",
@@ -243,10 +256,7 @@ pub fn set_table_cell_text(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if output == package.source_path()
-        || output.exists()
-            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
-    {
+    if output_matches_input(package, output) {
         return OperationResult::failed(
             "OUTPUT_MATCHES_INPUT",
             "output path must differ from input path",
@@ -348,10 +358,7 @@ pub fn set_content_control_text(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if output == package.source_path()
-        || output.exists()
-            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
-    {
+    if output_matches_input(package, output) {
         return OperationResult::failed(
             "OUTPUT_MATCHES_INPUT",
             "output path must differ from input path",
@@ -453,10 +460,7 @@ pub fn set_paragraph_formatting(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if output == package.source_path()
-        || output.exists()
-            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
-    {
+    if output_matches_input(package, output) {
         return OperationResult::failed(
             "OUTPUT_MATCHES_INPUT",
             "output path must differ from input path",
@@ -500,10 +504,7 @@ pub fn set_paragraph_style(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if output == package.source_path()
-        || output.exists()
-            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
-    {
+    if output_matches_input(package, output) {
         return OperationResult::failed(
             "OUTPUT_MATCHES_INPUT",
             "output path must differ from input path",
@@ -658,6 +659,67 @@ pub fn replace_picture(
     };
     if let Err(error) = reopened.verify() {
         return document_invalid(error);
+    }
+    let (reopened_main, reopened_source) = match crate::open_main_source(&reopened) {
+        Ok(value) => value,
+        Err(error) => return document_invalid(error),
+    };
+    let output_picture = match crate::DocxDocument::new(&reopened_source) {
+        Ok(document) => document
+            .pictures()
+            .filter(|picture| {
+                picture.metadata().is_some_and(|meta| {
+                    operation
+                        .target
+                        .name
+                        .as_ref()
+                        .is_none_or(|name| meta.name.as_ref() == Some(name))
+                        && operation
+                            .target
+                            .description
+                            .as_ref()
+                            .is_none_or(|description| {
+                                meta.description.as_ref() == Some(description)
+                            })
+                })
+            })
+            .nth(operation.target.occurrence.unwrap_or(0)),
+        Err(error) => return document_invalid(error),
+    };
+    let Some(output_picture) = output_picture else {
+        return OperationResult::failed("DOCUMENT_INVALID", "output picture target was not found");
+    };
+    if output_picture.kind() != picture.kind()
+        || output_picture.extent().ok() != picture.extent().ok()
+    {
+        return OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output picture metadata or dimensions changed",
+        );
+    }
+    let crate::ImageReference::Embedded(output_image) =
+        (match output_picture.image_reference(&reopened, &reopened_main) {
+            Ok(value) => value,
+            Err(error) => return document_invalid(error),
+        })
+    else {
+        return OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output picture image relationship changed",
+        );
+    };
+    if output_image.part.content_type != image.part.content_type
+        || reopened
+            .read_part(&output_image.part)
+            .map_err(document_invalid)
+            .ok()
+            .as_deref()
+            != Some(operation.replacement.bytes.as_slice())
+    {
+        return OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output picture payload does not match replacement",
+        );
     }
     OperationResult::picture_replaced(
         name,
@@ -825,10 +887,7 @@ pub fn set_text_formatting(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if output == package.source_path()
-        || output.exists()
-            && output.canonicalize().ok() == package.source_path().canonicalize().ok()
-    {
+    if output_matches_input(package, output) {
         return OperationResult::failed(
             "OUTPUT_MATCHES_INPUT",
             "output path must differ from input path",
@@ -2448,6 +2507,39 @@ fn unsupported(message: impl Into<String>) -> OperationResult {
     OperationResult::failed("UNSUPPORTED_OPERATION", message)
 }
 
+fn output_matches_input(package: &Package, output: &Path) -> bool {
+    package.source_path().is_some_and(|input| {
+        output == input
+            || output.exists() && output.canonicalize().ok() == input.canonicalize().ok()
+    })
+}
+
+fn verify_output_bytes(output: &[u8], replacement: &str) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let document = crate::DocxDocument::new(&source).map_err(document_invalid)?;
+    let text = document
+        .blocks()
+        .map(|block| match block {
+            crate::BodyBlock::Paragraph(paragraph) => {
+                paragraph.text_for_view(RevisionView::Current)
+            }
+            crate::BodyBlock::Table(table) => table_current_text(table),
+        })
+        .collect::<Result<String, SemanticError>>()
+        .map_err(document_invalid)?;
+    text.contains(replacement).then_some(()).ok_or_else(|| {
+        OperationResult::failed(
+            "DOCUMENT_INVALID",
+            format!(
+                "output package {0} does not contain the replacement",
+                main.name
+            ),
+        )
+    })
+}
+
 fn verify_output(output: &Path, replacement: &str) -> Result<(), OperationResult> {
     let package = Package::open(output).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
@@ -2870,8 +2962,10 @@ fn word(source: &SourceDocument, id: NodeId, local_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
+        fmt::Write as _,
         fs,
-        io::Write,
+        io::{Read, Write},
         sync::atomic::{AtomicUsize, Ordering},
     };
 
@@ -2896,6 +2990,86 @@ mod tests {
             std::process::id(),
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    fn valid_picture_fixture() -> std::path::PathBuf {
+        let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/images.docx");
+        let output = path("picture-input");
+        let mut input = ZipArchive::new(fs::File::open(source).unwrap()).unwrap();
+        let mut writer = ZipWriter::new(fs::File::create(&output).unwrap());
+        for index in 0..input.len() {
+            let mut entry = input.by_index(index).unwrap();
+            let name = entry.name().to_owned();
+            if entry.is_dir() {
+                writer
+                    .add_directory(name, SimpleFileOptions::default())
+                    .unwrap();
+            } else {
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes).unwrap();
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(&bytes).unwrap();
+            }
+        }
+        writer
+            .start_file("media/missing.png", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"missing fixture image").unwrap();
+        writer.finish().unwrap();
+        output
+    }
+
+    fn payloads(path: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
+        let mut archive = ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+        (0..archive.len())
+            .filter_map(|index| {
+                let mut entry = archive.by_index(index).unwrap();
+                (!entry.is_dir()).then(|| {
+                    let mut bytes = Vec::new();
+                    entry.read_to_end(&mut bytes).unwrap();
+                    (entry.name().to_owned(), bytes)
+                })
+            })
+            .collect()
+    }
+
+    fn picture_fixture(pictures: &[(&str, &str, &str)]) -> std::path::PathBuf {
+        let output = path("picture-targets");
+        let mut writer = ZipWriter::new(fs::File::create(&output).unwrap());
+        let options = SimpleFileOptions::default();
+        writer.start_file("[Content_Types].xml", options).unwrap();
+        writer.write_all(b"<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Override PartName=\"/custom/main.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>").unwrap();
+        writer.start_file("_rels/.rels", options).unwrap();
+        writer.write_all(format!("<Relationships><Relationship Id=\"rId1\" Type=\"{OFFICE}\" Target=\"custom/main.xml\"/></Relationships>").as_bytes()).unwrap();
+        writer.start_file("custom/main.xml", options).unwrap();
+        let mut body = String::new();
+        for (index, (name, relationship, _)) in pictures.iter().enumerate() {
+            write!(body, "<w:p><w:r><w:drawing><wp:inline><wp:extent cx=\"1\" cy=\"2\"/><wp:docPr id=\"{}\" name=\"{}\"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed=\"{}\"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>", index + 1, name, relationship).unwrap();
+        }
+        writer.write_all(format!("<w:document xmlns:w=\"{WORD}\" xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>{body}</w:body></w:document>").as_bytes()).unwrap();
+        writer
+            .start_file("custom/_rels/main.xml.rels", options)
+            .unwrap();
+        let mut relationships = String::new();
+        for (_, relationship, target) in pictures {
+            write!(relationships, "<Relationship Id=\"{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"{}\"/>", relationship, target).unwrap();
+        }
+        writer
+            .write_all(format!("<Relationships>{relationships}</Relationships>").as_bytes())
+            .unwrap();
+        let mut written = std::collections::BTreeSet::new();
+        for (_, _, target) in pictures {
+            let name = target.trim_start_matches("../");
+            if written.insert(name) {
+                writer.start_file(name, options).unwrap();
+                writer.write_all(b"original image").unwrap();
+            }
+        }
+        writer.finish().unwrap();
+        output
     }
 
     fn fixture() -> std::path::PathBuf {
@@ -3076,6 +3250,46 @@ mod tests {
         let mut value = Vec::new();
         std::io::Read::read_to_end(&mut zip.by_name(name).unwrap(), &mut value).unwrap();
         value
+    }
+
+    #[test]
+    fn inspects_and_replaces_text_entirely_in_memory() {
+        let input = fixture();
+        let bytes = fs::read(&input).unwrap();
+        fs::remove_file(input).unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            crate::DocxDocument::new(&source)
+                .unwrap()
+                .paragraphs()
+                .next()
+                .unwrap()
+                .text_for_view(RevisionView::Current)
+                .unwrap(),
+            "OLD UNIQUE TEXT"
+        );
+
+        let output = replace_text_to_vec(
+            &package,
+            &main,
+            &source,
+            &operation("OLD UNIQUE TEXT", "OLD UNIQUE TEXT", "NEW UNIQUE TEXT"),
+        )
+        .unwrap();
+        let reopened = Package::from_bytes(output).unwrap();
+        reopened.verify().unwrap();
+        let (_, source) = crate::open_main_source(&reopened).unwrap();
+        assert_eq!(
+            crate::DocxDocument::new(&source)
+                .unwrap()
+                .paragraphs()
+                .next()
+                .unwrap()
+                .text_for_view(RevisionView::Current)
+                .unwrap(),
+            "NEW UNIQUE TEXT"
+        );
     }
 
     #[test]
@@ -3982,5 +4196,224 @@ mod tests {
         fs::remove_file(input).unwrap();
         fs::remove_file(output).unwrap();
         fs::remove_file(cleared).unwrap();
+    }
+
+    #[test]
+    fn replaces_unique_png_picture_and_preserves_xml_parts() {
+        let input = valid_picture_fixture();
+        let output = path("picture-output");
+        let package = Package::open(&input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let replacement = b"\x89PNG\r\n\x1a\nreplacement".to_vec();
+        let result = replace_picture(
+            &package,
+            &main,
+            &source,
+            &ReplacePicture {
+                target: opensuite_protocol::PictureTarget {
+                    name: None,
+                    description: Some("Company logo".to_owned()),
+                    occurrence: None,
+                },
+                replacement: opensuite_protocol::ImagePayload {
+                    content_type: "image/png".to_owned(),
+                    bytes: replacement.clone(),
+                },
+                base_revision: None,
+            },
+            &output,
+        );
+        assert_eq!(
+            result.status,
+            opensuite_protocol::OperationStatus::Applied,
+            "{result:?}"
+        );
+        assert_eq!(entry(&output, "media/logo.png"), replacement);
+        let mut input_payloads = payloads(&input);
+        let mut output_payloads = payloads(&output);
+        input_payloads.remove("media/logo.png");
+        output_payloads.remove("media/logo.png");
+        assert_eq!(input_payloads, output_payloads);
+        let reopened = Package::open(&output).unwrap();
+        let (main, source) = crate::open_main_source(&reopened).unwrap();
+        let picture = crate::DocxDocument::new(&source)
+            .unwrap()
+            .pictures()
+            .find(|picture| {
+                picture.metadata().and_then(|meta| meta.name) == Some("Logo".to_owned())
+            })
+            .unwrap();
+        assert_eq!(
+            picture.metadata().unwrap().description.as_deref(),
+            Some("Company logo")
+        );
+        assert_eq!(
+            reopened
+                .read_part(&match picture.image_reference(&reopened, &main).unwrap() {
+                    crate::ImageReference::Embedded(image) => image.part,
+                    _ => panic!(),
+                })
+                .unwrap(),
+            replacement
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn rejects_picture_type_mismatch_invalid_and_ambiguous_targets() {
+        let input = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/images.docx");
+        let package = Package::open(&input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let run = |name: Option<&str>, content_type: &str, bytes: Vec<u8>| {
+            replace_picture(
+                &package,
+                &main,
+                &source,
+                &ReplacePicture {
+                    target: opensuite_protocol::PictureTarget {
+                        name: name.map(str::to_owned),
+                        description: None,
+                        occurrence: None,
+                    },
+                    replacement: opensuite_protocol::ImagePayload {
+                        content_type: content_type.to_owned(),
+                        bytes,
+                    },
+                    base_revision: None,
+                },
+                path("picture-rejected"),
+            )
+        };
+        assert_eq!(
+            run(
+                Some("Logo"),
+                "image/jpeg",
+                vec![0xff, 0xd8, 0xff, 0xff, 0xd9]
+            )
+            .diagnostics[0]
+                .code,
+            "UNSUPPORTED_OPERATION"
+        );
+        assert_eq!(
+            run(Some("Logo"), "image/png", b"bad".to_vec()).diagnostics[0].code,
+            "UNSUPPORTED_OPERATION"
+        );
+        assert_eq!(
+            run(Some("Missing"), "image/png", b"\x89PNG\r\n\x1a\n".to_vec()).diagnostics[0].code,
+            "TARGET_NOT_FOUND"
+        );
+    }
+
+    #[test]
+    fn replaces_unique_jpeg_picture_by_name() {
+        let input = valid_picture_fixture();
+        let output = path("picture-jpeg-output");
+        let package = Package::open(&input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let replacement = vec![0xff, 0xd8, 0xff, 0, 0xff, 0xd9];
+        let result = replace_picture(
+            &package,
+            &main,
+            &source,
+            &ReplacePicture {
+                target: opensuite_protocol::PictureTarget {
+                    name: Some("Photo".to_owned()),
+                    description: None,
+                    occurrence: None,
+                },
+                replacement: opensuite_protocol::ImagePayload {
+                    content_type: "image/jpeg".to_owned(),
+                    bytes: replacement.clone(),
+                },
+                base_revision: None,
+            },
+            &output,
+        );
+        assert_eq!(
+            result.status,
+            opensuite_protocol::OperationStatus::Applied,
+            "{result:?}"
+        );
+        assert_eq!(entry(&output, "media/photo.jpeg"), replacement);
+        assert_eq!(
+            entry(&input, "media/logo.png"),
+            entry(&output, "media/logo.png")
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn requires_occurrence_for_duplicate_pictures_and_rejects_shared_media() {
+        let input = picture_fixture(&[
+            ("Duplicate", "one", "../media/one.png"),
+            ("Duplicate", "two", "../media/two.png"),
+        ]);
+        let output = path("picture-duplicate-output");
+        let package = Package::open(&input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let operation = |occurrence| ReplacePicture {
+            target: opensuite_protocol::PictureTarget {
+                name: Some("Duplicate".to_owned()),
+                description: None,
+                occurrence,
+            },
+            replacement: opensuite_protocol::ImagePayload {
+                content_type: "image/png".to_owned(),
+                bytes: b"\x89PNG\r\n\x1a\nreplacement".to_vec(),
+            },
+            base_revision: None,
+        };
+        assert_eq!(
+            replace_picture(&package, &main, &source, &operation(None), &output).diagnostics[0]
+                .code,
+            "TARGET_AMBIGUOUS"
+        );
+        let result = replace_picture(&package, &main, &source, &operation(Some(1)), &output);
+        assert_eq!(
+            result.status,
+            opensuite_protocol::OperationStatus::Applied,
+            "{result:?}"
+        );
+        assert_eq!(
+            entry(&input, "media/one.png"),
+            entry(&output, "media/one.png")
+        );
+        assert_eq!(
+            entry(&output, "media/two.png"),
+            b"\x89PNG\r\n\x1a\nreplacement"
+        );
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+
+        let shared = picture_fixture(&[
+            ("First", "one", "../media/shared.png"),
+            ("Second", "two", "../media/shared.png"),
+        ]);
+        let package = Package::open(&shared).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let shared_operation = ReplacePicture {
+            target: opensuite_protocol::PictureTarget {
+                name: Some("First".to_owned()),
+                description: None,
+                occurrence: None,
+            },
+            ..operation(None)
+        };
+        assert_eq!(
+            replace_picture(
+                &package,
+                &main,
+                &source,
+                &shared_operation,
+                path("shared-output")
+            )
+            .diagnostics[0]
+                .code,
+            "UNSUPPORTED_OPERATION"
+        );
+        fs::remove_file(shared).unwrap();
     }
 }
