@@ -1,15 +1,17 @@
 use opensuite_opc::Package;
 use opensuite_protocol::{
-    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertParagraph,
-    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
-    InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult, ReplaceText,
-    SetTableCellsText,
+    DeleteParagraph, Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertParagraph,
+    InsertParagraphs, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
+    InspectDocx, InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult,
+    ReplaceText, SetParagraphFormatting, SetParagraphStyle, SetTableCellsText, SetTextFormatting,
 };
 
 use crate::{
-    insert_paragraph_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
+    delete_paragraph_to_vec, insert_paragraph_to_vec, insert_paragraphs_to_vec,
+    insert_table_column_after_to_vec, insert_table_row_after_to_vec,
     insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
-    set_table_cells_text_to_vec,
+    set_paragraph_formatting_to_vec, set_paragraph_style_to_vec, set_table_cells_text_to_vec,
+    set_text_formatting_to_vec,
 };
 
 /// The result of executing one DOCX operation against an immutable artifact.
@@ -48,6 +50,38 @@ pub fn execute_docx_insert_paragraph(
     }
 }
 
+/// Executes atomic `InsertParagraphs` against owned DOCX bytes.
+pub fn execute_docx_insert_paragraphs(
+    input_artifact: Vec<u8>,
+    operation: &InsertParagraphs,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    match insert_paragraphs_to_vec(&package, &main, &source, operation) {
+        Ok(output_artifact) => DocxExecutionResult {
+            operation: OperationResult::paragraph_inserted(
+                String::new(),
+                operation.texts.join("\n"),
+            ),
+            output_artifact: Some(output_artifact),
+        },
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "insert_paragraphs",
+                placement_handle(&operation.placement),
+            ),
+            output_artifact: None,
+        },
+    }
+}
+
 fn placement_handle(placement: &opensuite_protocol::ParagraphPlacement) -> Option<&str> {
     match placement {
         opensuite_protocol::ParagraphPlacement::Before { handle }
@@ -56,6 +90,55 @@ fn placement_handle(placement: &opensuite_protocol::ParagraphPlacement) -> Optio
         | opensuite_protocol::ParagraphPlacement::End => None,
     }
 }
+
+macro_rules! execute_paragraph_mutation {
+    ($name:ident, $operation:ty, $apply:ident, $id:literal) => {
+        pub fn $name(input_artifact: Vec<u8>, operation: &$operation) -> DocxExecutionResult {
+            let package = match Package::from_bytes(input_artifact) {
+                Ok(value) => value,
+                Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+            };
+            let (main, source) = match open_main_source(&package) {
+                Ok(value) => value,
+                Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+            };
+            match $apply(&package, &main, &source, operation) {
+                Ok(output_artifact) => DocxExecutionResult {
+                    operation: OperationResult::applied(String::new(), String::new()),
+                    output_artifact: Some(output_artifact),
+                },
+                Err(error) => DocxExecutionResult {
+                    operation: structured_failure(error, $id, None),
+                    output_artifact: None,
+                },
+            }
+        }
+    };
+}
+execute_paragraph_mutation!(
+    execute_docx_delete_paragraph,
+    DeleteParagraph,
+    delete_paragraph_to_vec,
+    "delete_paragraph"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_paragraph_formatting,
+    SetParagraphFormatting,
+    set_paragraph_formatting_to_vec,
+    "set_paragraph_formatting"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_paragraph_style,
+    SetParagraphStyle,
+    set_paragraph_style_to_vec,
+    "set_paragraph_style"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_text_formatting,
+    SetTextFormatting,
+    set_text_formatting_to_vec,
+    "set_text_formatting"
+);
 
 /// Executes `ReplaceText` against owned DOCX bytes and returns verified output bytes on success.
 pub fn execute_docx_replace_text(

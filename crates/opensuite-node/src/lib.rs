@@ -3,17 +3,17 @@ use napi::{Env, Result};
 use napi_derive::napi;
 use opensuite_docx::{
     DocxExecutionResult, create_blank_docx, execute_docx_insert_paragraph,
-    execute_docx_insert_table_column, execute_docx_insert_table_row,
-    execute_docx_insert_table_rows, execute_docx_replace_text, execute_docx_set_table_cells_text,
-    find_docx_text, inspect_docx,
+    execute_docx_insert_paragraphs, execute_docx_insert_table_column,
+    execute_docx_insert_table_row, execute_docx_insert_table_rows, execute_docx_replace_text,
+    execute_docx_set_table_cells_text, find_docx_text, inspect_docx,
 };
 use opensuite_protocol::{
     Affordance, Diagnostic, DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxTable,
-    DocxTableRow, FindText, FindTextResult, InsertParagraph, InsertTableColumnAfter, InspectDocx,
-    InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectTextContext,
-    InspectTextContextResult, InspectionPage, OperationResult, ParagraphPlacement, ReplaceText,
-    RuntimeCapabilities, TableCellTarget, TableCellTextUpdate, TableRowTarget, TableTarget,
-    TextContainer, TextTarget,
+    DocxTableRow, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
+    InsertTableColumnAfter, InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult,
+    InspectTextContext, InspectTextContextResult, InspectionPage, OperationResult,
+    ParagraphPlacement, ReplaceText, RuntimeCapabilities, TableCellTarget, TableCellTextUpdate,
+    TableRowTarget, TableTarget, TextContainer, TextTarget,
 };
 
 #[napi(object)]
@@ -33,6 +33,13 @@ pub struct ReplaceTextInput {
 #[napi(object)]
 pub struct InsertParagraphInput {
     pub text: String,
+    pub placement: ParagraphPlacementInput,
+    pub base_revision: Option<String>,
+}
+
+#[napi(object)]
+pub struct InsertParagraphsInput {
+    pub texts: Vec<String>,
     pub placement: ParagraphPlacementInput,
     pub base_revision: Option<String>,
 }
@@ -451,6 +458,36 @@ pub fn execute_docx_insert_paragraph_node(
         input: input.to_vec(),
         operation: placement.map(|placement| InsertParagraph {
             text: operation.text,
+            placement,
+            base_revision: operation.base_revision,
+        }),
+    })
+}
+
+#[napi(js_name = "executeDocxInsertParagraphs")]
+pub fn execute_docx_insert_paragraphs_node(
+    input: Buffer,
+    operation: InsertParagraphsInput,
+) -> AsyncTask<InsertParagraphsTask> {
+    let placement = match operation.placement.kind.as_str() {
+        "start" => Ok(ParagraphPlacement::Start),
+        "end" => Ok(ParagraphPlacement::End),
+        "before" => operation
+            .placement
+            .handle
+            .map(|handle| ParagraphPlacement::Before { handle })
+            .ok_or("before placement requires a body block handle"),
+        "after" => operation
+            .placement
+            .handle
+            .map(|handle| ParagraphPlacement::After { handle })
+            .ok_or("after placement requires a body block handle"),
+        _ => Err("paragraph placement is not supported"),
+    };
+    AsyncTask::new(InsertParagraphsTask {
+        input: input.to_vec(),
+        operation: placement.map(|placement| InsertParagraphs {
+            texts: operation.texts,
             placement,
             base_revision: operation.base_revision,
         }),
@@ -955,6 +992,33 @@ pub struct ReplaceTextTask {
 pub struct InsertParagraphTask {
     input: Vec<u8>,
     operation: std::result::Result<InsertParagraph, &'static str>,
+}
+
+pub struct InsertParagraphsTask {
+    input: Vec<u8>,
+    operation: std::result::Result<InsertParagraphs, &'static str>,
+}
+impl Task for InsertParagraphsTask {
+    type Output = DocxExecutionResult;
+    type JsValue = ExecuteDocxReplaceTextOutput;
+    fn compute(&mut self) -> Result<Self::Output> {
+        match &self.operation {
+            Ok(operation) => Ok(execute_docx_insert_paragraphs(
+                std::mem::take(&mut self.input),
+                operation,
+            )),
+            Err(message) => Ok(DocxExecutionResult {
+                operation: OperationResult::failed("INVALID_OPERATION", *message),
+                output_artifact: None,
+            }),
+        }
+    }
+    fn resolve(&mut self, _env: Env, result: Self::Output) -> Result<Self::JsValue> {
+        Ok(ExecuteDocxReplaceTextOutput {
+            result: operation_result_output(result.operation),
+            output: result.output_artifact.map(Buffer::from),
+        })
+    }
 }
 
 impl Task for InsertParagraphTask {

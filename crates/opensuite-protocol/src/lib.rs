@@ -104,6 +104,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "create_blank_docx",
     "body_blocks",
     "insert_paragraph",
+    "insert_paragraphs",
     "insert_paragraph_after",
     "delete_paragraph",
     "set_table_cell_text",
@@ -149,6 +150,14 @@ pub struct InsertParagraphAfter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InsertParagraph {
     pub text: String,
+    pub placement: ParagraphPlacement,
+    pub base_revision: Option<String>,
+}
+
+/// Inserts several plain paragraphs as one atomic body mutation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertParagraphs {
+    pub texts: Vec<String>,
     pub placement: ParagraphPlacement,
     pub base_revision: Option<String>,
 }
@@ -1014,7 +1023,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

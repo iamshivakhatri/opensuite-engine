@@ -5,11 +5,11 @@ use quick_xml::escape::escape;
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
     AffordanceReason, ContentControlTarget, DeleteParagraph, InsertParagraph, InsertParagraphAfter,
-    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, OperationResult,
-    ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture, ReplaceText,
-    SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
-    SetTableCellsText, SetTextFormatting, TableCellTarget, TableRowTarget, TableTarget,
-    TextFormattingPatch, TextTarget,
+    InsertParagraphs, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
+    OperationResult, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture,
+    ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
+    SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget, TableRowTarget,
+    TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -20,6 +20,7 @@ const NS: [&str; 2] = [
 ];
 const MAX_TABLE_ROWS_PER_OPERATION: usize = 100;
 const MAX_TABLE_CELL_UPDATES: usize = 100;
+const MAX_PARAGRAPHS_PER_OPERATION: usize = 100;
 
 enum ResolvedParagraphPlacement {
     Start,
@@ -129,7 +130,7 @@ pub fn insert_paragraph_after(
         package,
         main,
         source,
-        &operation.text,
+        std::slice::from_ref(&operation.text),
         ResolvedParagraphPlacement::After(paragraph),
     ) {
         Ok(bytes) => bytes,
@@ -167,7 +168,32 @@ pub fn insert_paragraph_to_vec(
     operation: &InsertParagraph,
 ) -> Result<Vec<u8>, OperationResult> {
     let placement = resolve_paragraph_placement(source, &operation.placement)?;
-    insert_paragraph_bytes(package, main, source, &operation.text, placement)
+    insert_paragraph_bytes(
+        package,
+        main,
+        source,
+        std::slice::from_ref(&operation.text),
+        placement,
+    )
+}
+
+/// Inserts several plain paragraphs as one verified source patch.
+pub fn insert_paragraphs_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertParagraphs,
+) -> Result<Vec<u8>, OperationResult> {
+    if operation.texts.is_empty() || operation.texts.len() > MAX_PARAGRAPHS_PER_OPERATION {
+        return Err(OperationResult::failed(
+            "INVALID_OPERATION",
+            format!(
+                "insert_paragraphs requires between 1 and {MAX_PARAGRAPHS_PER_OPERATION} paragraphs"
+            ),
+        ));
+    }
+    let placement = resolve_paragraph_placement(source, &operation.placement)?;
+    insert_paragraph_bytes(package, main, source, &operation.texts, placement)
 }
 
 /// Deletes one safe, direct main-body paragraph selected by Current-view text.
@@ -257,6 +283,32 @@ pub fn delete_paragraph(
         return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
     }
     OperationResult::paragraph_deleted(paragraph_text)
+}
+
+pub fn delete_paragraph_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeleteParagraph,
+) -> Result<Vec<u8>, OperationResult> {
+    let (_, paragraph) = resolve_paragraph_anchor(source, &operation.target)?;
+    if !safe_to_delete(source, paragraph) {
+        return Err(unsupported(
+            "delete_paragraph rejects paragraphs with ranges, fields, controls, revisions, or unsupported wrappers",
+        ));
+    }
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span: source
+                .node(paragraph)
+                .expect("anchor paragraph exists")
+                .span(),
+            replacement: Vec::new(),
+        }],
+    )
 }
 
 /// Sets visible text in one simple, semantically addressed main-body table cell.
@@ -764,6 +816,21 @@ pub fn set_paragraph_formatting(
     OperationResult::paragraph_formatting_set(text)
 }
 
+pub fn set_paragraph_formatting_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetParagraphFormatting,
+) -> Result<Vec<u8>, OperationResult> {
+    let (_, paragraph) = resolve_paragraph_anchor(source, &operation.target)?;
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        formatting_patches(source, paragraph, &operation.formatting)?,
+    )
+}
+
 /// Sets or clears only the direct paragraph style reference.
 pub fn set_paragraph_style(
     package: &Package,
@@ -833,6 +900,27 @@ pub fn set_paragraph_style(
     }
     let after = resolved_style.map_or_else(|| "direct style cleared".to_owned(), |style| style.1);
     OperationResult::paragraph_style_set(text, before, after)
+}
+
+pub fn set_paragraph_style_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetParagraphStyle,
+) -> Result<Vec<u8>, OperationResult> {
+    let (_, paragraph) = resolve_paragraph_anchor(source, &operation.target)?;
+    let styles = crate::load_styles(package, main).map_err(document_invalid)?;
+    let style = resolve_paragraph_style(styles.as_ref(), &operation.style)?;
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        paragraph_style_patches(
+            source,
+            paragraph,
+            style.as_ref().map(|style| style.0.as_str()),
+        )?,
+    )
 }
 
 pub fn replace_picture(
@@ -1189,6 +1277,21 @@ pub fn set_text_formatting(
         return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
     }
     OperationResult::text_formatting_set(text)
+}
+
+pub fn set_text_formatting_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetTextFormatting,
+) -> Result<Vec<u8>, OperationResult> {
+    let (_, runs) = resolve_formatting_runs(source, &operation.target)?;
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        range_text_formatting_patches(source, &runs, &operation.formatting)?,
+    )
 }
 
 type FormattingRangeRun = (NodeId, usize, usize, String);
@@ -3364,7 +3467,7 @@ fn insert_paragraph_bytes(
     package: &Package,
     main: &Part,
     source: &SourceDocument,
-    text: &str,
+    texts: &[String],
     placement: ResolvedParagraphPlacement,
 ) -> Result<Vec<u8>, OperationResult> {
     let (body, blocks) = direct_body_blocks(source)?;
@@ -3400,7 +3503,10 @@ fn insert_paragraph_bytes(
     } else {
         body_closing_start(source, body)?
     };
-    let fragment = paragraph_fragment_for_body(source, body, text)?;
+    let fragment = texts.iter().try_fold(Vec::new(), |mut fragment, text| {
+        fragment.extend(paragraph_fragment_for_body(source, body, text)?);
+        Ok::<_, OperationResult>(fragment)
+    })?;
     let patched = apply_patches(
         source,
         vec![Patch {
@@ -3414,7 +3520,7 @@ fn insert_paragraph_bytes(
     let output = package
         .write_replaced_part_to_vec(main, &patched)
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
-    verify_inserted_body_bytes(&output, index, text)?;
+    verify_inserted_body_bytes(&output, index, texts)?;
     Ok(output)
 }
 
@@ -3707,6 +3813,22 @@ fn apply_patches(
     Ok(result)
 }
 
+fn write_patches_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    patches: Vec<Patch>,
+) -> Result<Vec<u8>, OperationResult> {
+    let patched = apply_patches(source, patches)?;
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let verified = Package::from_bytes(output.clone()).map_err(document_invalid)?;
+    verified.verify().map_err(document_invalid)?;
+    crate::open_main_source(&verified).map_err(document_invalid)?;
+    Ok(output)
+}
+
 fn ordinary_run(source: &SourceDocument, text: NodeId) -> Option<NodeId> {
     let run = source.node(text)?.parent()?;
     (word(source, run, "r")
@@ -3795,29 +3917,32 @@ fn verify_output_bytes(output: &[u8], replacement: &str) -> Result<(), Operation
 fn verify_inserted_body_bytes(
     output: &[u8],
     expected_index: usize,
-    inserted_text: &str,
+    inserted_texts: &[String],
 ) -> Result<(), OperationResult> {
     let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
     let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
     let (_, blocks) = direct_body_blocks(&source)?;
-    let paragraph = blocks.get(expected_index).ok_or_else(|| {
-        OperationResult::failed("DOCUMENT_INVALID", "inserted paragraph was not found")
-    })?;
-    if !word(&source, *paragraph, "p") {
-        return Err(OperationResult::failed(
-            "DOCUMENT_INVALID",
-            "inserted paragraph is not at the requested body position",
-        ));
+    for (offset, expected) in inserted_texts.iter().enumerate() {
+        let paragraph = blocks.get(expected_index + offset).ok_or_else(|| {
+            OperationResult::failed("DOCUMENT_INVALID", "inserted paragraph was not found")
+        })?;
+        if !word(&source, *paragraph, "p") {
+            return Err(OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "inserted paragraph is not at the requested body position",
+            ));
+        }
+        let text = crate::tracked_change::text_for_view(&source, *paragraph, RevisionView::Current)
+            .map_err(document_invalid)?;
+        if text != *expected {
+            return Err(OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "inserted paragraph text does not match request",
+            ));
+        }
     }
-    let text = crate::tracked_change::text_for_view(&source, *paragraph, RevisionView::Current)
-        .map_err(document_invalid)?;
-    (text == inserted_text).then_some(()).ok_or_else(|| {
-        OperationResult::failed(
-            "DOCUMENT_INVALID",
-            "inserted paragraph text does not match request",
-        )
-    })
+    Ok(())
 }
 
 fn verify_output(output: &Path, replacement: &str) -> Result<(), OperationResult> {
