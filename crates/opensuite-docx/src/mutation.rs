@@ -3827,11 +3827,11 @@ fn table_fragment_for_body(
 ) -> Result<Vec<u8>, OperationResult> {
     let prefix = word_prefix_for(source, body, "body")?;
     let name = |local: &str| qualify(&prefix, local);
-    let width_attribute = qualify(&prefix, "w");
+    let width_attribute = attr_prefix(&prefix);
     let column_width = 9360 / rows[0].len();
     let remainder = 9360 % rows[0].len();
     let mut value = format!(
-        "<{}><{}><{} {}:w=\"9360\" {}:type=\"dxa\"/><{}><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/></{}><{}><{} {}:w=\"100\" {}:type=\"dxa\"/><{} {}:w=\"140\" {}:type=\"dxa\"/><{} {}:w=\"100\" {}:type=\"dxa\"/><{} {}:w=\"140\" {}:type=\"dxa\"/></{}></{}><{}>",
+        "<{}><{}><{} {}w=\"9360\" {}type=\"dxa\"/><{}><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/></{}><{}><{} {}w=\"100\" {}type=\"dxa\"/><{} {}w=\"140\" {}type=\"dxa\"/><{} {}w=\"100\" {}type=\"dxa\"/><{} {}w=\"140\" {}type=\"dxa\"/></{}></{}><{}>",
         name("tbl"),
         name("tblPr"),
         name("tblW"),
@@ -3888,7 +3888,11 @@ fn table_fragment_for_body(
     );
     for index in 0..rows[0].len() {
         let width = column_width + usize::from(index < remainder);
-        value.push_str(&format!("<{} {}:w=\"{width}\"/>", name("gridCol"), prefix));
+        value.push_str(&format!(
+            "<{} {}w=\"{width}\"/>",
+            name("gridCol"),
+            width_attribute
+        ));
     }
     value.push_str(&format!("</{}>", name("tblGrid")));
     for row in rows {
@@ -5141,6 +5145,9 @@ mod tests {
         let xml = String::from_utf8(source.original_bytes().to_vec()).unwrap();
         assert!(xml.contains("<w:tblBorders>"));
         assert!(xml.contains("<w:tblCellMar>"));
+        assert!(xml.contains("w:w=\"9360\""));
+        assert!(xml.contains("w:before=\"0\" w:after=\"0\""));
+        assert!(!xml.contains("w:w:w") && !xml.contains("w:wbefore"));
         assert!(!xml.contains("w:gridCol w:w=\"0\""));
         assert_eq!(
             all_table_rows(&source).unwrap(),

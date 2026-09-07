@@ -97,14 +97,16 @@ and XML source bytes.
   Heading 1–3), and terminal section properties. Ordered direct body-block inspection exposes
   version-local `bN` handles, and `InsertParagraph` places a plain paragraph at start/end or
   before/after a paragraph or table handle while preserving terminal section properties.
-- Blank DOCX authoring defaults provide an Arial 11pt baseline, 1.1-line spacing, and 6pt paragraph
-  spacing. OpenSuite-created tables use neutral single borders, 9360-twip equal-width grids, and
+- Blank DOCX authoring defaults provide Arial 11pt body text, 1.15-line spacing, and 8pt before/after
+  paragraph spacing. OpenSuite-created tables use neutral single borders, 9360-twip equal-width grids, and
   modest cell margins; imported documents remain source-preserved.
 - Fresh blank DOCX packages include a minimal settings part with Word compatibility mode 15, avoiding
   legacy Compatibility Mode without changing settings or borders in imported documents.
 - OpenSuite-created table cells use table-level 5pt vertical and 7pt horizontal margins with compact
   zero-spacing cell paragraphs. `SetTableFormatting` safely patches basic direct table alignment,
   complete cell margins, and theme-safe grid/none borders.
+- Canonical table serialization uses valid single-prefix Word attributes (for example `w:w` and
+  `w:before`), preventing the malformed doubled-prefix attributes that strict DOCX consumers reject.
 - Preservation-safe `DeleteParagraph` for an ordinary direct body paragraph selected
   through semantic text. It removes only that source span, checks ranges and wrappers,
   preserves existing relationships, and verifies the reopened body structure.
