@@ -303,7 +303,10 @@ fn insert_table_rows_after(
     let target = resolve_table_row(source, table, after, rows)?;
     let mut fragment = Vec::new();
     for cells in rows {
-        fragment.extend(table_row_fragment(source, target.row, cells)?);
+        fragment.extend(match target.template {
+            Some(template) => table_row_fragment(source, template, cells)?,
+            None => minimal_table_row_fragment(source, target.row, cells)?,
+        });
     }
     let insertion = source.node(target.row).expect("row exists").span().end;
     let patched = apply_patches(
@@ -406,9 +409,26 @@ pub fn insert_table_column_after_to_vec(
     let columns = headers
         .iter()
         .enumerate()
-        .filter_map(|(index, header)| (header == &operation.after_column_header).then_some(index))
+        .filter_map(|(index, header)| {
+            label_matches(header, &operation.after_column_header).then_some(index)
+        })
         .collect::<Vec<_>>();
-    if columns.len() != 1 {
+    let column = if let Some(handle) = &operation.after_column_handle {
+        let (handle_table, column) = parse_column_handle(handle)?;
+        if handle_table != table_index {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "column handle does not belong to the selected table",
+            ));
+        }
+        if column >= headers.len() {
+            return Err(OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "table column handle was not found",
+            ));
+        }
+        column
+    } else if columns.len() != 1 {
         return Err(OperationResult::failed(
             if columns.is_empty() {
                 "TARGET_NOT_FOUND"
@@ -417,16 +437,10 @@ pub fn insert_table_column_after_to_vec(
             },
             "column header does not resolve to one current table column",
         ));
-    }
-    let column = columns[0];
+    } else {
+        columns[0]
+    };
     let grid = explicit_table_grid(source, table, headers.len())?;
-    for row in &rows {
-        if !safe_table_row(source, row.source_id()) {
-            return Err(unsupported(
-                "insert_table_column requires ordinary rows with one direct paragraph per cell",
-            ));
-        }
-    }
     let mut patches = vec![Patch {
         span: SourceSpan {
             start: source
@@ -453,13 +467,17 @@ pub fn insert_table_column_after_to_vec(
         let end = source.node(template).expect("cell exists").span().end;
         patches.push(Patch {
             span: SourceSpan { start: end, end },
-            replacement: cell_fragment(
-                source,
-                template,
-                value,
-                word_element_prefix(source, row.source_id(), "tr")?,
-            )?
-            .into_bytes(),
+            replacement: if safe_template_cell(source, template) {
+                cell_fragment(
+                    source,
+                    template,
+                    value,
+                    word_element_prefix(source, row.source_id(), "tr")?,
+                )?
+                .into_bytes()
+            } else {
+                minimal_table_cell_fragment(source, row.source_id(), value)?.into_bytes()
+            },
         });
     }
     let patched = apply_patches(source, patches)?;
@@ -2097,6 +2115,7 @@ struct ResolvedTableCell {
 
 struct ResolvedTableRow {
     row: NodeId,
+    template: Option<NodeId>,
     table_index: usize,
     row_index: usize,
 }
@@ -2120,24 +2139,50 @@ fn resolve_table_row(
             "inserted row cell count must match the table column count",
         ));
     }
+    if let Some(handle) = &after.handle {
+        let (handle_table, row_index) = parse_row_handle(handle)?;
+        if handle_table != table_index {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "row handle does not belong to the selected table",
+            ));
+        }
+        let row = rows.get(row_index).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "table row handle was not found")
+        })?;
+        let template = rows
+            .iter()
+            .filter(|candidate| candidate.source_id() != row.source_id())
+            .find(|candidate| safe_table_row(source, candidate.source_id()))
+            .map(crate::Row::source_id);
+        return Ok(ResolvedTableRow {
+            row: row.source_id(),
+            template,
+            table_index,
+            row_index,
+        });
+    }
     let mut matches = Vec::new();
     for (row_index, row) in rows.iter().enumerate().skip(1) {
         let cells = row.cells().collect::<Vec<_>>();
         if cells.first().is_some_and(|cell| {
-            cell.text_for_view(RevisionView::Current).ok().as_deref()
-                == Some(&after.first_cell_text)
+            cell.text_for_view(RevisionView::Current)
+                .ok()
+                .as_deref()
+                .is_some_and(|text| label_matches(text, &after.first_cell_text))
         }) {
             matches.push((row_index, row.source_id()));
         }
     }
     let (row_index, row) = select_row(matches, after)?;
-    if !safe_table_row(source, row) {
-        return Err(unsupported(
-            "insert_table_row requires an ordinary anchor row with one direct paragraph per cell",
-        ));
-    }
+    let template = rows
+        .iter()
+        .filter(|candidate| candidate.source_id() != row)
+        .find(|candidate| safe_table_row(source, candidate.source_id()))
+        .map(crate::Row::source_id);
     Ok(ResolvedTableRow {
         row,
+        template,
         table_index,
         row_index,
     })
@@ -2148,6 +2193,11 @@ fn resolve_table<'a>(
     target: &TableTarget,
 ) -> Result<(usize, NodeId, Vec<crate::Row<'a>>, Vec<String>), OperationResult> {
     let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    let requested_handle = target
+        .handle
+        .as_deref()
+        .map(parse_table_handle)
+        .transpose()?;
     let mut tables = Vec::new();
     let mut table_index = 0;
     for block in document.blocks() {
@@ -2168,11 +2218,67 @@ fn resolve_table<'a>(
                     .map_err(document_invalid)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if headers == target.header_cells {
+        if requested_handle.is_some_and(|handle| handle == current_table_index)
+            || (requested_handle.is_none() && labels_match(&headers, &target.header_cells))
+        {
             tables.push((current_table_index, table.source_id(), rows, headers));
         }
     }
     select_table(tables, target)
+}
+
+fn parse_table_handle(handle: &str) -> Result<usize, OperationResult> {
+    handle
+        .strip_prefix('t')
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| OperationResult::failed("PRECONDITION_FAILED", "table handle is malformed"))
+}
+
+fn parse_row_handle(handle: &str) -> Result<(usize, usize), OperationResult> {
+    let Some((table, row)) = handle.split_once(":r") else {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "row handle is malformed",
+        ));
+    };
+    Ok((
+        parse_table_handle(table)?,
+        row.parse().map_err(|_| {
+            OperationResult::failed("PRECONDITION_FAILED", "row handle is malformed")
+        })?,
+    ))
+}
+
+fn parse_column_handle(handle: &str) -> Result<(usize, usize), OperationResult> {
+    let Some((table, column)) = handle.split_once(":c") else {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "column handle is malformed",
+        ));
+    };
+    Ok((
+        parse_table_handle(table)?,
+        column.parse().map_err(|_| {
+            OperationResult::failed("PRECONDITION_FAILED", "column handle is malformed")
+        })?,
+    ))
+}
+
+fn parse_cell_handle(handle: &str) -> Result<(usize, usize, usize), OperationResult> {
+    let Some((row, column)) = handle.split_once(":c") else {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "cell handle is malformed",
+        ));
+    };
+    let (table, row) = parse_row_handle(row)?;
+    Ok((
+        table,
+        row,
+        column.parse().map_err(|_| {
+            OperationResult::failed("PRECONDITION_FAILED", "cell handle is malformed")
+        })?,
+    ))
 }
 
 fn select_table<'a>(
@@ -2259,11 +2365,6 @@ fn safe_template_cell(source: &SourceDocument, cell: NodeId) -> bool {
             .children(cell)
             .all(|child| word(source, child, "tcPr") || word(source, child, "p"))
         && safe_table_paragraph(source, paragraphs[0])
-        && source
-            .children(paragraphs[0])
-            .filter(|child| word(source, *child, "r"))
-            .count()
-            <= 1
         && source.children(paragraphs[0]).all(|child| {
             word(source, child, "pPr")
                 || word(source, child, "r")
@@ -2272,6 +2373,18 @@ fn safe_template_cell(source: &SourceDocument, cell: NodeId) -> bool {
                     Some(SourceNodeKind::Text)
                 )
         })
+}
+
+fn label_matches(actual: &str, requested: &str) -> bool {
+    actual.trim() == requested.trim()
+}
+
+fn labels_match(actual: &[String], requested: &[String]) -> bool {
+    actual.len() == requested.len()
+        && actual
+            .iter()
+            .zip(requested)
+            .all(|(actual, requested)| label_matches(actual, requested))
 }
 
 fn table_row_fragment(
@@ -2302,6 +2415,65 @@ fn table_row_fragment(
     }
     fragment.push_str(&format!("</{}>", name("tr")));
     Ok(fragment.into_bytes())
+}
+
+fn minimal_table_row_fragment(
+    source: &SourceDocument,
+    position_row: NodeId,
+    cells: &[String],
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_element_prefix(source, position_row, "tr")?;
+    let name = |local: &str| qualify(prefix, local);
+    let mut fragment = format!("<{}>", name("tr"));
+    for value in cells {
+        let space = if requires_space_preservation(value) {
+            " xml:space=\"preserve\""
+        } else {
+            ""
+        };
+        fragment.push_str(&format!(
+            "<{}><{}><{}><{}{}>{}</{}></{}></{}></{}>",
+            name("tc"),
+            name("p"),
+            name("r"),
+            name("t"),
+            space,
+            escape(value),
+            name("t"),
+            name("r"),
+            name("p"),
+            name("tc")
+        ));
+    }
+    fragment.push_str(&format!("</{}>", name("tr")));
+    Ok(fragment.into_bytes())
+}
+
+fn minimal_table_cell_fragment(
+    source: &SourceDocument,
+    row: NodeId,
+    value: &str,
+) -> Result<String, OperationResult> {
+    let prefix = word_element_prefix(source, row, "tr")?;
+    let name = |local: &str| qualify(prefix, local);
+    let space = if requires_space_preservation(value) {
+        " xml:space=\"preserve\""
+    } else {
+        ""
+    };
+    Ok(format!(
+        "<{}><{}><{}><{}{}>{}</{}></{}></{}></{}>",
+        name("tc"),
+        name("p"),
+        name("r"),
+        name("t"),
+        space,
+        escape(value),
+        name("t"),
+        name("r"),
+        name("p"),
+        name("tc")
+    ))
 }
 
 fn safe_row_properties(source: &SourceDocument, properties: NodeId) -> bool {
@@ -2459,6 +2631,47 @@ fn resolve_table_cell(
     source: &SourceDocument,
     target: &TableCellTarget,
 ) -> Result<ResolvedTableCell, OperationResult> {
+    if let Some(handle) = &target.handle {
+        let (table_index, row_index, column_index) = parse_cell_handle(handle)?;
+        let table = TableTarget {
+            header_cells: Vec::new(),
+            occurrence: None,
+            handle: Some(format!("t{table_index}")),
+        };
+        let (_, table_id, rows, _) = resolve_table(source, &table)?;
+        if !simple_table(source, table_id) {
+            return Err(unsupported(
+                "set_table_cell_text supports only simple rectangular tables",
+            ));
+        }
+        let row = rows.get(row_index).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "table cell handle row was not found")
+        })?;
+        let cells = row.cells().collect::<Vec<_>>();
+        let cell = cells
+            .get(column_index)
+            .ok_or_else(|| {
+                OperationResult::failed(
+                    "TARGET_NOT_FOUND",
+                    "table cell handle column was not found",
+                )
+            })?
+            .source_id();
+        let paragraphs = direct_cell_paragraphs(source, cell);
+        if paragraphs.len() != 1 || !safe_table_paragraph(source, paragraphs[0]) {
+            return Err(unsupported(
+                "set_table_cell_text requires one ordinary paragraph with direct runs",
+            ));
+        }
+        return Ok(ResolvedTableCell {
+            cell,
+            paragraph: paragraphs[0],
+            text: cell_current_text(source, cell)?,
+            table_index,
+            row_index,
+            column_index,
+        });
+    }
     let mut candidates = Vec::new();
     let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
     for block in document.blocks() {
@@ -2474,18 +2687,21 @@ fn resolve_table_cell(
         };
         let header_cells = header.cells().collect::<Vec<_>>();
         for (column, header_cell) in header_cells.iter().enumerate().skip(1) {
-            if header_cell
-                .text_for_view(RevisionView::Current)
-                .map_err(document_invalid)?
-                != target.column_header
-            {
+            if !label_matches(
+                &header_cell
+                    .text_for_view(RevisionView::Current)
+                    .map_err(document_invalid)?,
+                &target.column_header,
+            ) {
                 continue;
             }
             for row in rows.iter().skip(1) {
                 let cells = row.cells().collect::<Vec<_>>();
                 if cells.first().is_some_and(|cell| {
-                    cell.text_for_view(RevisionView::Current).ok().as_deref()
-                        == Some(&target.row_label)
+                    cell.text_for_view(RevisionView::Current)
+                        .ok()
+                        .as_deref()
+                        .is_some_and(|text| label_matches(text, &target.row_label))
                 }) && cells.len() > column
                 {
                     candidates.push((table.source_id(), cells[column].source_id()));
@@ -2543,11 +2759,47 @@ fn resolve_table_cell_in_table(
     headers: &[String],
     target: &TableCellTarget,
 ) -> Result<ResolvedTableCell, OperationResult> {
+    if let Some(handle) = &target.handle {
+        let (handle_table, row_index, column_index) = parse_cell_handle(handle)?;
+        if handle_table != table_index {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "cell handle does not belong to the selected table",
+            ));
+        }
+        let row = rows.get(row_index).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "table cell handle row was not found")
+        })?;
+        let cells = row.cells().collect::<Vec<_>>();
+        let cell = cells
+            .get(column_index)
+            .ok_or_else(|| {
+                OperationResult::failed(
+                    "TARGET_NOT_FOUND",
+                    "table cell handle column was not found",
+                )
+            })?
+            .source_id();
+        let paragraphs = direct_cell_paragraphs(source, cell);
+        if paragraphs.len() != 1 || !safe_table_paragraph(source, paragraphs[0]) {
+            return Err(unsupported(
+                "set_table_cells_text requires one ordinary paragraph with direct runs",
+            ));
+        }
+        return Ok(ResolvedTableCell {
+            cell,
+            paragraph: paragraphs[0],
+            text: cell_current_text(source, cell)?,
+            table_index,
+            row_index,
+            column_index,
+        });
+    }
     let columns = headers
         .iter()
         .enumerate()
         .skip(1)
-        .filter_map(|(index, header)| (header == &target.column_header).then_some(index))
+        .filter_map(|(index, header)| label_matches(header, &target.column_header).then_some(index))
         .collect::<Vec<_>>();
     if columns.is_empty() {
         return Err(OperationResult::failed(
@@ -2559,7 +2811,10 @@ fn resolve_table_cell_in_table(
     for (row_index, row) in rows.iter().enumerate().skip(1) {
         let cells = row.cells().collect::<Vec<_>>();
         if cells.first().is_some_and(|cell| {
-            cell.text_for_view(RevisionView::Current).ok().as_deref() == Some(&target.row_label)
+            cell.text_for_view(RevisionView::Current)
+                .ok()
+                .as_deref()
+                .is_some_and(|text| label_matches(text, &target.row_label))
         }) {
             for &column_index in &columns {
                 candidates.push((row_index, column_index, cells[column_index].source_id()));
@@ -3909,6 +4164,7 @@ mod tests {
                 row_label: row_label.to_owned(),
                 column_header: column_header.to_owned(),
                 occurrence: None,
+                handle: None,
             },
             expected_current_text: expected.to_owned(),
             replacement: replacement.to_owned(),
@@ -3927,10 +4183,12 @@ mod tests {
             table: TableTarget {
                 header_cells: headers.iter().map(|value| (*value).to_owned()).collect(),
                 occurrence: None,
+                handle: None,
             },
             after: TableRowTarget {
                 first_cell_text: after.to_owned(),
                 occurrence: None,
+                handle: None,
             },
             cells: cells.iter().map(|value| (*value).to_owned()).collect(),
             base_revision: Some("caller-version-7".to_owned()),
@@ -4570,10 +4828,12 @@ mod tests {
             table: TableTarget {
                 header_cells: vec!["Name".to_owned(), "Role".to_owned()],
                 occurrence: None,
+                handle: None,
             },
             after: TableRowTarget {
                 first_cell_text: "Alice".to_owned(),
                 occurrence: None,
+                handle: None,
             },
             rows: vec![
                 vec!["Charlie".to_owned(), "CFO".to_owned()],
@@ -4597,9 +4857,15 @@ mod tests {
         assert_eq!(entry(&input, "word/media/image.bin"), vec![1, 2, 3]);
 
         let after_final = InsertTableRowsAfter {
-            after: TableRowTarget {
-                first_cell_text: "Bob".to_owned(),
+            table: TableTarget {
+                header_cells: Vec::new(),
                 occurrence: None,
+                handle: Some("t0".to_owned()),
+            },
+            after: TableRowTarget {
+                first_cell_text: String::new(),
+                occurrence: None,
+                handle: Some("t0:r2".to_owned()),
             },
             rows: vec![
                 vec!["Final one".to_owned(), "CIO".to_owned()],
@@ -4636,6 +4902,7 @@ mod tests {
                     row_label: row.to_owned(),
                     column_header: column.to_owned(),
                     occurrence: None,
+                    handle: None,
                 },
                 expected_current_text: expected.to_owned(),
                 replacement: replacement.to_owned(),
@@ -4644,6 +4911,7 @@ mod tests {
             table: TableTarget {
                 header_cells: vec!["Name".to_owned(), "Role".to_owned(), "Team".to_owned()],
                 occurrence: None,
+                handle: None,
             },
             updates: vec![
                 update("Alice", "Role", "CEO", "Founder & CEO"),
@@ -4678,6 +4946,52 @@ mod tests {
     }
 
     #[test]
+    fn fills_a_blank_trailing_row_by_inspected_cell_handles() {
+        let xml = format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Executive Role</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Meeting Access Level</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>CFO</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Full access</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>CHRO</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Limited access</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>"
+        );
+        let input = table_fixture(&xml);
+        let operation = SetTableCellsText {
+            table: TableTarget {
+                header_cells: Vec::new(),
+                occurrence: None,
+                handle: Some("t0".to_owned()),
+            },
+            updates: vec![
+                TableCellTextUpdate {
+                    target: TableCellTarget {
+                        row_label: String::new(),
+                        column_header: String::new(),
+                        occurrence: None,
+                        handle: Some("t0:r3:c0".to_owned()),
+                    },
+                    expected_current_text: String::new(),
+                    replacement: "Guest Panelist".to_owned(),
+                },
+                TableCellTextUpdate {
+                    target: TableCellTarget {
+                        row_label: String::new(),
+                        column_header: String::new(),
+                        occurrence: None,
+                        handle: Some("t0:r3:c1".to_owned()),
+                    },
+                    expected_current_text: String::new(),
+                    replacement: "Invited — selected meetings".to_owned(),
+                },
+            ],
+            base_revision: None,
+        };
+        let output = cells_execute(&input, &operation).unwrap();
+        let package = Package::from_bytes(output).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            all_table_rows(&source).unwrap()[0][3],
+            ["Guest Panelist", "Invited — selected meetings"]
+        );
+        fs::remove_file(input).unwrap();
+    }
+
+    #[test]
     fn inserts_a_grid_aware_table_column() {
         let xml = format!(
             "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"3600\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"3600\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"3600\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>CEO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"3600\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
@@ -4687,8 +5001,10 @@ mod tests {
             table: TableTarget {
                 header_cells: vec!["Name".to_owned(), "Role".to_owned()],
                 occurrence: None,
+                handle: None,
             },
             after_column_header: "Role".to_owned(),
+            after_column_handle: Some("t0:c1".to_owned()),
             header: "Location".to_owned(),
             cells: vec!["New York".to_owned(), String::new()],
             base_revision: None,

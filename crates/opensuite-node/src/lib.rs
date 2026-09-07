@@ -58,14 +58,16 @@ pub struct ExecuteDocxReplaceTextOutput {
 
 #[napi(object)]
 pub struct TableTargetInput {
-    pub header_cells: Vec<String>,
+    pub header_cells: Option<Vec<String>>,
     pub occurrence: Option<u32>,
+    pub handle: Option<String>,
 }
 
 #[napi(object)]
 pub struct TableRowTargetInput {
-    pub first_cell_text: String,
+    pub first_cell_text: Option<String>,
     pub occurrence: Option<u32>,
+    pub handle: Option<String>,
 }
 
 #[napi(object)]
@@ -87,7 +89,8 @@ pub struct InsertTableRowsInput {
 #[napi(object)]
 pub struct InsertTableColumnInput {
     pub table: TableTargetInput,
-    pub after_column_header: String,
+    pub after_column_header: Option<String>,
+    pub after_column_handle: Option<String>,
     pub header: String,
     pub cells: Vec<String>,
     pub base_revision: Option<String>,
@@ -95,9 +98,10 @@ pub struct InsertTableColumnInput {
 
 #[napi(object)]
 pub struct TableCellTargetInput {
-    pub row_label: String,
-    pub column_header: String,
+    pub row_label: Option<String>,
+    pub column_header: Option<String>,
     pub occurrence: Option<u32>,
+    pub handle: Option<String>,
 }
 
 #[napi(object)]
@@ -196,14 +200,25 @@ pub struct ParagraphOutput {
 
 #[napi(object)]
 pub struct TableRowOutput {
+    pub handle: String,
     pub cells: Vec<String>,
+    pub cell_handles: Vec<String>,
+}
+
+#[napi(object)]
+pub struct TableColumnOutput {
+    pub occurrence: u32,
+    pub handle: String,
+    pub text: String,
 }
 
 #[napi(object)]
 pub struct TableOutput {
     pub occurrence: u32,
+    pub handle: String,
     pub row_count: u32,
     pub is_rectangular: bool,
+    pub columns: Vec<TableColumnOutput>,
     pub rows: Vec<TableRowOutput>,
 }
 
@@ -372,12 +387,14 @@ pub fn execute_docx_insert_table_row_node(
         input: input.to_vec(),
         operation: opensuite_protocol::InsertTableRowAfter {
             table: TableTarget {
-                header_cells: operation.table.header_cells,
+                header_cells: operation.table.header_cells.unwrap_or_default(),
                 occurrence: operation.table.occurrence.map(|value| value as usize),
+                handle: operation.table.handle,
             },
             after: TableRowTarget {
-                first_cell_text: operation.after.first_cell_text,
+                first_cell_text: operation.after.first_cell_text.unwrap_or_default(),
                 occurrence: operation.after.occurrence.map(|value| value as usize),
+                handle: operation.after.handle,
             },
             cells: operation.cells,
             base_revision: operation.base_revision,
@@ -411,7 +428,8 @@ pub fn execute_docx_insert_table_column_node(
         input: input.to_vec(),
         operation: InsertTableColumnAfter {
             table: table_target(operation.table),
-            after_column_header: operation.after_column_header,
+            after_column_header: operation.after_column_header.unwrap_or_default(),
+            after_column_handle: operation.after_column_handle,
             header: operation.header,
             cells: operation.cells,
             base_revision: operation.base_revision,
@@ -434,9 +452,10 @@ pub fn execute_docx_set_table_cells_text_node(
                 .into_iter()
                 .map(|update| TableCellTextUpdate {
                     target: TableCellTarget {
-                        row_label: update.target.row_label,
-                        column_header: update.target.column_header,
+                        row_label: update.target.row_label.unwrap_or_default(),
+                        column_header: update.target.column_header.unwrap_or_default(),
                         occurrence: update.target.occurrence.map(|value| value as usize),
+                        handle: update.target.handle,
                     },
                     expected_current_text: update.expected_current_text,
                     replacement: update.replacement,
@@ -539,15 +558,17 @@ impl Task for SetTableCellsTextTask {
 
 fn table_target(target: TableTargetInput) -> TableTarget {
     TableTarget {
-        header_cells: target.header_cells,
+        header_cells: target.header_cells.unwrap_or_default(),
         occurrence: target.occurrence.map(|value| value as usize),
+        handle: target.handle,
     }
 }
 
 fn row_target(target: TableRowTargetInput) -> TableRowTarget {
     TableRowTarget {
-        first_cell_text: target.first_cell_text,
+        first_cell_text: target.first_cell_text.unwrap_or_default(),
         occurrence: target.occurrence.map(|value| value as usize),
+        handle: target.handle,
     }
 }
 
@@ -751,12 +772,32 @@ fn table_page_output(value: InspectionPage<DocxTable>) -> TablePageOutput {
 fn table_output(value: DocxTable) -> TableOutput {
     TableOutput {
         occurrence: value.occurrence as u32,
+        handle: value.handle,
         row_count: value.row_count as u32,
         is_rectangular: value.is_rectangular,
+        columns: value
+            .columns
+            .into_iter()
+            .map(|column| TableColumnOutput {
+                occurrence: column.occurrence as u32,
+                handle: column.handle,
+                text: column.text,
+            })
+            .collect(),
         rows: value
             .rows
             .into_iter()
-            .map(|DocxTableRow { cells }| TableRowOutput { cells })
+            .map(
+                |DocxTableRow {
+                     handle,
+                     cells,
+                     cell_handles,
+                 }| TableRowOutput {
+                    handle,
+                    cells,
+                    cell_handles,
+                },
+            )
             .collect(),
     }
 }

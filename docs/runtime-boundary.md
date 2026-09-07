@@ -19,8 +19,13 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
 - `delete_paragraph` resolves the same target and removes only a safe ordinary direct
   body paragraph. It rejects range markers, fields, controls, revisions, and wrappers;
   existing OPC relationships are preserved even if they become unused.
+- Table inspection returns opaque Current-view structural handles for each table, row, column,
+  and cell. Labels remain convenient semantic selectors; handles select the exact inspected
+  structure. Handles are valid only for that input artifact version, are resolved statelessly
+  from the supplied DOCX bytes, and never expose source identities or replace immutable
+  application document versions.
 - `set_table_cell_text` targets a Current-view cell by exact first-column row label
-  and first-row column header in a simple top-level table. It writes a new artifact
+  and first-row column header, or its inspected cell handle, in a simple top-level table. It writes a new artifact
   after preserving all other source and OPC part payloads.
 - `set_content_control_text` targets an exact content-control tag, alias, or their
   intersection. It accepts only simple unlocked and unbound text controls and writes
@@ -38,14 +43,14 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
 - `inspect` supports DOCX-only overview, headings, main-body paragraphs, top-level tables, and
   context. Lists are bounded by version-local source order and report total, returned count, and
   whether more items remain. Readable complex tables are not implied to be safely mutable.
-- `insert_table_row` selects one simple main-body table by its complete header row and inserts one
-  full row after an exact first-cell anchor. It rejects merged, nested, uneven, revision-owned, or
+- `insert_table_row` selects one simple main-body table by its complete header row or handle and inserts one
+  full row after an exact first-cell anchor or row handle. It rejects merged, nested, uneven, revision-owned, or
   complex-template tables rather than treating inspection order as a persistent target.
 - `insert_table_rows` uses the same target and safety rules to insert 1–100 rows in one contiguous
   source patch. `set_table_cells_text` selects one such table and updates 1–100 unique cells only
   after resolving every target and expected value, so either plural operation produces one verified
   artifact or no output at all.
-- `insert_table_column` selects one simple table and exact header, then inserts one grid column and
+- `insert_table_column` selects one simple table and exact header or their handles, then inserts one grid column and
   one cell per row. It accepts only explicit positive-width grids whose column count matches the
   table, copying the adjacent column's width and safe cell formatting.
 - The Node N-API adapter exposes the same DOCX capability manifest, `find_text`,

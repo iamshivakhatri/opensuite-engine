@@ -1,7 +1,7 @@
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
-    DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableRow, InspectDocx,
-    InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectionPage,
+    DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableColumn, DocxTableRow,
+    InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectionPage,
 };
 
 use crate::{BodyBlock, DocxDocument, RevisionView, SourceDocument, StyleSheet, load_styles};
@@ -176,9 +176,10 @@ fn tables(document: DocxDocument<'_>, offset: usize, limit: usize) -> InspectDoc
             continue;
         }
         let mut rows = Vec::new();
-        for row in table.rows() {
+        for (row_index, row) in table.rows().enumerate() {
             let mut cells = Vec::new();
-            for cell in row.cells() {
+            let mut cell_handles = Vec::new();
+            for (column_index, cell) in row.cells().enumerate() {
                 match cell.text_for_view(RevisionView::Current) {
                     Ok(text) => cells.push(text),
                     Err(error) => {
@@ -188,16 +189,33 @@ fn tables(document: DocxDocument<'_>, offset: usize, limit: usize) -> InspectDoc
                         );
                     }
                 }
+                cell_handles.push(format!("t{occurrence}:r{row_index}:c{column_index}"));
             }
-            rows.push(DocxTableRow { cells });
+            rows.push(DocxTableRow {
+                handle: format!("t{occurrence}:r{row_index}"),
+                cells,
+                cell_handles,
+            });
         }
         let is_rectangular = rows
             .first()
             .is_none_or(|first| rows.iter().all(|row| row.cells.len() == first.cells.len()));
         items.push(DocxTable {
             occurrence,
+            handle: format!("t{occurrence}"),
             row_count: rows.len(),
             is_rectangular,
+            columns: rows.first().map_or_else(Vec::new, |row| {
+                row.cells
+                    .iter()
+                    .enumerate()
+                    .map(|(column, text)| DocxTableColumn {
+                        occurrence: column,
+                        handle: format!("t{occurrence}:c{column}"),
+                        text: text.clone(),
+                    })
+                    .collect()
+            }),
             rows,
         });
     }
@@ -319,6 +337,10 @@ mod tests {
         assert_eq!(tables.total, 2);
         assert!(tables.has_more);
         assert_eq!(tables.items[0].rows[1].cells, ["new"]);
+        assert_eq!(tables.items[0].handle, "t0");
+        assert_eq!(tables.items[0].columns[0].handle, "t0:c0");
+        assert_eq!(tables.items[0].rows[1].handle, "t0:r1");
+        assert_eq!(tables.items[0].rows[1].cell_handles[0], "t0:r1:c0");
         assert!(!tables.items[0].is_rectangular);
     }
 

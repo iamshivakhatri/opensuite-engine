@@ -156,6 +156,8 @@ pub struct TableCellTarget {
     pub row_label: String,
     pub column_header: String,
     pub occurrence: Option<usize>,
+    /// Opaque Current-view structural handle returned by table inspection.
+    pub handle: Option<String>,
 }
 
 /// A simple table selected by its complete first-row cell text.
@@ -163,6 +165,8 @@ pub struct TableCellTarget {
 pub struct TableTarget {
     pub header_cells: Vec<String>,
     pub occurrence: Option<usize>,
+    /// Opaque Current-view structural handle returned by table inspection.
+    pub handle: Option<String>,
 }
 
 /// A row selected by its exact Current-view first-cell text within a selected table.
@@ -170,6 +174,8 @@ pub struct TableTarget {
 pub struct TableRowTarget {
     pub first_cell_text: String,
     pub occurrence: Option<usize>,
+    /// Opaque Current-view structural handle returned by table inspection.
+    pub handle: Option<String>,
 }
 
 /// Inserts one complete row after an existing row in a simple semantic table.
@@ -220,6 +226,8 @@ pub struct SetTableCellsText {
 pub struct InsertTableColumnAfter {
     pub table: TableTarget,
     pub after_column_header: String,
+    /// Opaque Current-view column handle returned by table inspection.
+    pub after_column_handle: Option<String>,
     pub header: String,
     pub cells: Vec<String>,
     pub base_revision: Option<String>,
@@ -505,14 +513,25 @@ pub struct DocxParagraph {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocxTable {
     pub occurrence: usize,
+    pub handle: String,
     pub row_count: usize,
     pub is_rectangular: bool,
+    pub columns: Vec<DocxTableColumn>,
     pub rows: Vec<DocxTableRow>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocxTableRow {
+    pub handle: String,
     pub cells: Vec<String>,
+    pub cell_handles: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxTableColumn {
+    pub occurrence: usize,
+    pub handle: String,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

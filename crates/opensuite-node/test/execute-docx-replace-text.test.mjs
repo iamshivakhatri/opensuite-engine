@@ -24,7 +24,7 @@ function docxFixture() {
     ['_rels/.rels', `<Relationships><Relationship Id="rId1" Type="${office}" Target="word/document.xml"/></Relationships>`],
     ['word/_rels/document.xml.rels', '<Relationships><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
     ['word/styles.xml', `<w:styles xmlns:w="${word}"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/></w:style><w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body Text"/></w:style></w:styles>`],
-    ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Report heading</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Body"/></w:pPr><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table needle</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>second cell</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>uneven row</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CEO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`],
+    ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Report heading</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Body"/></w:pPr><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table needle</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>second cell</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>uneven row</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CEO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>`],
   ]
   let offset = 0
   const local = []
@@ -133,6 +133,20 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   const tables = await inspectDocx(input, { focus: { kind: 'tables', offset: 0, limit: 1 } })
   assert.equal(tables.tables.items[0].rows[0].cells[0], 'table needle')
   assert.equal(tables.tables.items[0].isRectangular, false)
+
+  const namedTable = await inspectDocx(input, { focus: { kind: 'tables', offset: 1, limit: 1 } })
+  const blankRow = namedTable.tables.items[0].rows.at(-1)
+  assert.equal(blankRow.cells[0], '')
+  const handleUpdated = await executeDocxSetTableCellsText(input, {
+    table: { handle: namedTable.tables.items[0].handle },
+    updates: [
+      { target: { handle: blankRow.cellHandles[0] }, expectedCurrentText: '', replacement: 'Guest Panelist' },
+      { target: { handle: blankRow.cellHandles[1] }, expectedCurrentText: '', replacement: 'Invited meetings' },
+    ],
+  })
+  assert.equal(handleUpdated.result.ok, true)
+  const afterHandleUpdate = await inspectDocx(handleUpdated.output, { focus: { kind: 'tables', offset: 1, limit: 1 } })
+  assert.deepEqual(afterHandleUpdate.tables.items[0].rows.at(-1).cells, ['Guest Panelist', 'Invited meetings'])
 
   const updated = await executeDocxSetTableCellsText(input, {
     table: { headerCells: ['Name', 'Role'] },

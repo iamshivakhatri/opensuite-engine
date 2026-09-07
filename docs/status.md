@@ -30,6 +30,9 @@ and XML source bytes.
 - Broad `inspectDocx` collections use version-local source order with `offset`, `limit`, total,
   returned count, and `has_more`; table structures remain readable even where future mutation
   would reject them.
+- Broad table inspection returns opaque version-local handles for tables, rows, columns, and
+  cells. Table mutation accepts those handles alongside existing semantic labels, allowing safe
+  updates and row/column insertion anchors even when visible labels are blank or duplicated.
 - Preservation-safe `InsertTableRowAfter` inserts one complete row after a semantic first-cell
   anchor in a simple main-body rectangular table selected by its complete header row. It creates
   new text content while preserving safe cell, paragraph, run, and selected row formatting from
@@ -41,6 +44,8 @@ and XML source bytes.
 - Preservation-safe `InsertTableColumnAfter` adds one column to a simple table only when an explicit
   `w:tblGrid` has one positive-width `w:gridCol` per cell. It copies the adjacent grid column and
   safe cell formatting, preserving existing widths while increasing the table's grid width by one.
+- Table semantic header and first-cell row-label targeting trims only leading and trailing Unicode
+  whitespace. Raw visible text remains unchanged; normalized duplicates remain ambiguous.
 - `[Content_Types].xml` Default and Override content type resolution.
 - Package-level `_rels/.rels` parsing and main office document discovery through
   Transitional or Strict `officeDocument` relationships.

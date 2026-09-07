@@ -143,6 +143,7 @@ fn set_table_cell_text(
                 row_label,
                 column_header,
                 occurrence,
+                handle: None,
             },
             expected_current_text,
             replacement,
