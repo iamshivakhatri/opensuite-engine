@@ -516,6 +516,7 @@ pub struct DocxTable {
     pub handle: String,
     pub row_count: usize,
     pub is_rectangular: bool,
+    pub affordances: Vec<Affordance>,
     pub columns: Vec<DocxTableColumn>,
     pub rows: Vec<DocxTableRow>,
 }
@@ -525,6 +526,61 @@ pub struct DocxTableRow {
     pub handle: String,
     pub cells: Vec<String>,
     pub cell_handles: Vec<String>,
+    pub cell_affordances: Vec<Vec<Affordance>>,
+}
+
+/// Whether one implemented capability is structurally safe for an inspected object.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Affordance {
+    pub capability: CapabilityId,
+    pub supported: bool,
+    pub reason: Option<AffordanceReason>,
+}
+
+impl Affordance {
+    pub fn supported(capability: &'static str) -> Self {
+        Self {
+            capability: CapabilityId::new(capability),
+            supported: true,
+            reason: None,
+        }
+    }
+
+    pub fn unsupported(capability: &'static str, reason: AffordanceReason) -> Self {
+        Self {
+            capability: CapabilityId::new(capability),
+            supported: false,
+            reason: Some(reason),
+        }
+    }
+}
+
+/// A narrow, machine-readable reason why an inspected object is not editable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AffordanceReason {
+    MultipleParagraphs,
+    UnsafeCellStructure,
+    UnsafeParagraphStructure,
+    NonRectangularTable,
+    MergedTableStructure,
+    NestedTableStructure,
+    RevisionWrapper,
+    InvalidTableGrid,
+}
+
+impl AffordanceReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MultipleParagraphs => "MULTIPLE_PARAGRAPHS",
+            Self::UnsafeCellStructure => "UNSAFE_CELL_STRUCTURE",
+            Self::UnsafeParagraphStructure => "UNSAFE_PARAGRAPH_STRUCTURE",
+            Self::NonRectangularTable => "NON_RECTANGULAR_TABLE",
+            Self::MergedTableStructure => "MERGED_TABLE_STRUCTURE",
+            Self::NestedTableStructure => "NESTED_TABLE_STRUCTURE",
+            Self::RevisionWrapper => "REVISION_WRAPPER",
+            Self::InvalidTableGrid => "INVALID_TABLE_GRID",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -170,6 +170,15 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   assert.deepEqual(tablesAfterInsert.tables.items[0].rows[3].cells, ['Charlie', 'CFO'])
   assert.deepEqual(tablesAfterInsert.tables.items[0].rows[4].cells, ['David', 'COO'])
 
+  const googleDocsTable = readFileSync(join(process.cwd(), '../../tests/fixtures/google-docs-table.docx'))
+  const googleDocsInspection = await inspectDocx(googleDocsTable, { focus: { kind: 'tables', offset: 0, limit: 1 } })
+  const googleDocsRows = googleDocsInspection.tables.items[0].rows
+  assert.equal(googleDocsInspection.tables.items[0].affordances.every((item) => item.supported), true)
+  assert.equal(googleDocsRows[0].cellAffordances[0].every((item) => item.supported), true)
+  assert.deepEqual(googleDocsRows[0].cellAffordances[1].map((item) => item.reason), ['MULTIPLE_PARAGRAPHS', 'MULTIPLE_PARAGRAPHS'])
+  assert.equal(googleDocsRows[1].cellAffordances[0].every((item) => item.supported), true)
+  assert.deepEqual(googleDocsRows[1].cellAffordances[1].map((item) => item.reason), ['MULTIPLE_PARAGRAPHS', 'MULTIPLE_PARAGRAPHS'])
+
   const context = await inspectDocx(input, { focus: { kind: 'context', text: 'table needle', before: 1, after: 0 } })
   assert.equal(context.ok, true)
   assert.equal(context.context.container.text, 'table needle')

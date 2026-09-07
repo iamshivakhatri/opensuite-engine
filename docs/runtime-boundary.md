@@ -24,6 +24,10 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   structure. Handles are valid only for that input artifact version, are resolved statelessly
   from the supplied DOCX bytes, and never expose source identities or replace immutable
   application document versions.
+- Table inspection returns artifact-local affordances alongside those handles. Rust derives each
+  affordance from the same structural checks used by table mutation and supplies a narrow,
+  machine-readable unsupported reason; global runtime capabilities still mean only that a
+  primitive exists in the engine.
 - `set_table_cell_text` targets a Current-view cell by exact first-column row label
   and first-row column header, or its inspected cell handle, in a simple top-level table. It writes a new artifact
   after preserving all other source and OPC part payloads.
@@ -51,8 +55,8 @@ OpenSuite Engine. It does not define product, agent, or storage behavior.
   after resolving every target and expected value, so either plural operation produces one verified
   artifact or no output at all.
 - `insert_table_column` selects one simple table and exact header or their handles, then inserts one grid column and
-  one cell per row. It accepts only explicit positive-width grids whose column count matches the
-  table, copying the adjacent column's width and safe cell formatting.
+  one cell per row. It accepts one explicit `w:tblGrid` whose grid-column count matches the table,
+  copying the adjacent grid-column source unchanged and safe cell formatting.
 - The Node N-API adapter exposes the same DOCX capability manifest, `find_text`,
   `inspect_context`, and `replace_text` against in-memory `Buffer` artifacts. It is only an
   adapter: capabilities come from Rust, normal failures remain structured, and source identities

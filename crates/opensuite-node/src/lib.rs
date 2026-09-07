@@ -7,11 +7,11 @@ use opensuite_docx::{
     find_docx_text, inspect_docx,
 };
 use opensuite_protocol::{
-    Diagnostic, DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableRow, FindText,
-    FindTextResult, InsertTableColumnAfter, InspectDocx, InspectDocxContent, InspectDocxFocus,
-    InspectDocxResult, InspectTextContext, InspectTextContextResult, InspectionPage,
-    OperationResult, ReplaceText, RuntimeCapabilities, TableCellTarget, TableCellTextUpdate,
-    TableRowTarget, TableTarget, TextContainer, TextTarget,
+    Affordance, Diagnostic, DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableRow,
+    FindText, FindTextResult, InsertTableColumnAfter, InspectDocx, InspectDocxContent,
+    InspectDocxFocus, InspectDocxResult, InspectTextContext, InspectTextContextResult,
+    InspectionPage, OperationResult, ReplaceText, RuntimeCapabilities, TableCellTarget,
+    TableCellTextUpdate, TableRowTarget, TableTarget, TextContainer, TextTarget,
 };
 
 #[napi(object)]
@@ -203,6 +203,14 @@ pub struct TableRowOutput {
     pub handle: String,
     pub cells: Vec<String>,
     pub cell_handles: Vec<String>,
+    pub cell_affordances: Vec<Vec<AffordanceOutput>>,
+}
+
+#[napi(object)]
+pub struct AffordanceOutput {
+    pub capability: String,
+    pub supported: bool,
+    pub reason: Option<String>,
 }
 
 #[napi(object)]
@@ -218,6 +226,7 @@ pub struct TableOutput {
     pub handle: String,
     pub row_count: u32,
     pub is_rectangular: bool,
+    pub affordances: Vec<AffordanceOutput>,
     pub columns: Vec<TableColumnOutput>,
     pub rows: Vec<TableRowOutput>,
 }
@@ -775,6 +784,11 @@ fn table_output(value: DocxTable) -> TableOutput {
         handle: value.handle,
         row_count: value.row_count as u32,
         is_rectangular: value.is_rectangular,
+        affordances: value
+            .affordances
+            .into_iter()
+            .map(affordance_output)
+            .collect(),
         columns: value
             .columns
             .into_iter()
@@ -792,13 +806,26 @@ fn table_output(value: DocxTable) -> TableOutput {
                      handle,
                      cells,
                      cell_handles,
+                     cell_affordances,
                  }| TableRowOutput {
                     handle,
                     cells,
                     cell_handles,
+                    cell_affordances: cell_affordances
+                        .into_iter()
+                        .map(|values| values.into_iter().map(affordance_output).collect())
+                        .collect(),
                 },
             )
             .collect(),
+    }
+}
+
+fn affordance_output(value: Affordance) -> AffordanceOutput {
+    AffordanceOutput {
+        capability: value.capability.as_str().to_owned(),
+        supported: value.supported,
+        reason: value.reason.map(|reason| reason.as_str().to_owned()),
     }
 }
 

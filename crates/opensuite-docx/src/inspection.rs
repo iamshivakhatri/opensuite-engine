@@ -1,7 +1,8 @@
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
-    DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableColumn, DocxTableRow,
-    InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectionPage,
+    Affordance, AffordanceReason, DocxHeading, DocxOverview, DocxParagraph, DocxTable,
+    DocxTableColumn, DocxTableRow, InspectDocx, InspectDocxContent, InspectDocxFocus,
+    InspectDocxResult, InspectionPage,
 };
 
 use crate::{BodyBlock, DocxDocument, RevisionView, SourceDocument, StyleSheet, load_styles};
@@ -47,7 +48,7 @@ pub fn inspect_docx_document(
             };
             paragraphs(document, styles.as_ref(), *offset, *limit)
         }
-        InspectDocxFocus::Tables { offset, limit } => tables(document, *offset, *limit),
+        InspectDocxFocus::Tables { offset, limit } => tables(source, document, *offset, *limit),
         InspectDocxFocus::Context(request) => {
             let result = match crate::inspect_text_context(source, request) {
                 Ok(result) => result,
@@ -160,7 +161,12 @@ fn paragraphs(
     )))
 }
 
-fn tables(document: DocxDocument<'_>, offset: usize, limit: usize) -> InspectDocxResult {
+fn tables(
+    source: &SourceDocument,
+    document: DocxDocument<'_>,
+    offset: usize,
+    limit: usize,
+) -> InspectDocxResult {
     let Some(page) = page(offset, limit) else {
         return invalid_bounds();
     };
@@ -175,10 +181,19 @@ fn tables(document: DocxDocument<'_>, offset: usize, limit: usize) -> InspectDoc
         if occurrence < page.0 || items.len() == page.1 {
             continue;
         }
+        let table_id = table.source_id();
+        let cell_table_reason = crate::mutation::table_structure_reason(source, table_id);
+        let table_reason = crate::mutation::table_mutation_reason_from_structure(
+            source,
+            table_id,
+            cell_table_reason,
+        );
+        let width = table.rows().next().map_or(0, |row| row.cells().count());
         let mut rows = Vec::new();
         for (row_index, row) in table.rows().enumerate() {
             let mut cells = Vec::new();
             let mut cell_handles = Vec::new();
+            let mut cell_affordances = Vec::new();
             for (column_index, cell) in row.cells().enumerate() {
                 match cell.text_for_view(RevisionView::Current) {
                     Ok(text) => cells.push(text),
@@ -190,11 +205,17 @@ fn tables(document: DocxDocument<'_>, offset: usize, limit: usize) -> InspectDoc
                     }
                 }
                 cell_handles.push(format!("t{occurrence}:r{row_index}:c{column_index}"));
+                let cell_reason = crate::mutation::table_cell_text_reason(source, cell.source_id());
+                cell_affordances.push(vec![
+                    affordance("set_table_cell_text", cell_table_reason.or(cell_reason)),
+                    affordance("set_table_cells_text", table_reason.or(cell_reason)),
+                ]);
             }
             rows.push(DocxTableRow {
                 handle: format!("t{occurrence}:r{row_index}"),
                 cells,
                 cell_handles,
+                cell_affordances,
             });
         }
         let is_rectangular = rows
@@ -205,6 +226,14 @@ fn tables(document: DocxDocument<'_>, offset: usize, limit: usize) -> InspectDoc
             handle: format!("t{occurrence}"),
             row_count: rows.len(),
             is_rectangular,
+            affordances: vec![
+                affordance("insert_table_rows", table_reason),
+                affordance(
+                    "insert_table_column",
+                    table_reason
+                        .or_else(|| crate::mutation::table_grid_reason(source, table_id, width)),
+                ),
+            ],
             columns: rows.first().map_or_else(Vec::new, |row| {
                 row.cells
                     .iter()
@@ -220,6 +249,13 @@ fn tables(document: DocxDocument<'_>, offset: usize, limit: usize) -> InspectDoc
         });
     }
     InspectDocxResult::success(InspectDocxContent::Tables(page_result(total, page, items)))
+}
+
+fn affordance(capability: &'static str, reason: Option<AffordanceReason>) -> Affordance {
+    reason.map_or_else(
+        || Affordance::supported(capability),
+        |reason| Affordance::unsupported(capability, reason),
+    )
 }
 
 fn paragraph_style_name(
@@ -262,7 +298,12 @@ fn page_result<T>(total: usize, (offset, _): (usize, usize), items: Vec<T>) -> I
 
 #[cfg(test)]
 mod tests {
-    use opensuite_protocol::InspectDocxContent;
+    use std::path::PathBuf;
+
+    use opensuite_protocol::{
+        AffordanceReason, InsertTableColumnAfter, InsertTableRowsAfter, InspectDocxContent,
+        SetTableCellsText, TableCellTarget, TableCellTextUpdate, TableRowTarget, TableTarget,
+    };
 
     use super::*;
 
@@ -330,7 +371,7 @@ mod tests {
         let source = source(
             "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:del><w:r><w:delText>old</w:delText></w:r></w:del><w:ins><w:r><w:t>new</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
         );
-        let result = tables(DocxDocument::new(&source).unwrap(), 0, 1);
+        let result = tables(&source, DocxDocument::new(&source).unwrap(), 0, 1);
         let Some(InspectDocxContent::Tables(tables)) = result.content else {
             panic!("expected tables")
         };
@@ -352,5 +393,119 @@ mod tests {
         let text = format!("{result:?}");
         assert!(!text.contains("NodeId"));
         assert!(!text.contains("SourceSpan"));
+    }
+
+    #[test]
+    fn google_docs_table_affordances_match_current_cell_safety() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/google-docs-table.docx");
+        let package = Package::open(fixture).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let result = tables(&source, DocxDocument::new(&source).unwrap(), 0, 1);
+        let Some(InspectDocxContent::Tables(tables)) = result.content else {
+            panic!("expected tables")
+        };
+        let table = &tables.items[0];
+
+        assert!(table.affordances.iter().all(|item| item.supported));
+        for (row, column, supported) in [(0, 0, true), (0, 1, false), (1, 0, true), (1, 1, false)] {
+            let affordances = &table.rows[row].cell_affordances[column];
+            assert!(affordances.iter().all(|item| item.supported == supported));
+            if !supported {
+                assert!(
+                    affordances
+                        .iter()
+                        .all(|item| { item.reason == Some(AffordanceReason::MultipleParagraphs) })
+                );
+            }
+        }
+
+        let table_target = TableTarget {
+            header_cells: Vec::new(),
+            occurrence: None,
+            handle: Some("t0".to_owned()),
+        };
+        assert!(
+            crate::insert_table_rows_after_to_vec(
+                &package,
+                &main,
+                &source,
+                &InsertTableRowsAfter {
+                    table: table_target.clone(),
+                    after: TableRowTarget {
+                        first_cell_text: String::new(),
+                        occurrence: None,
+                        handle: Some("t0:r1".to_owned()),
+                    },
+                    rows: vec![vec!["Other".to_owned(), "2027".to_owned()]],
+                    base_revision: None,
+                },
+            )
+            .is_ok()
+        );
+        assert!(
+            crate::insert_table_column_after_to_vec(
+                &package,
+                &main,
+                &source,
+                &InsertTableColumnAfter {
+                    table: table_target.clone(),
+                    after_column_header: String::new(),
+                    after_column_handle: Some("t0:c1".to_owned()),
+                    header: "Status".to_owned(),
+                    cells: vec!["Draft".to_owned()],
+                    base_revision: None,
+                },
+            )
+            .is_ok()
+        );
+
+        let supported = SetTableCellsText {
+            table: table_target.clone(),
+            updates: vec![
+                TableCellTextUpdate {
+                    target: TableCellTarget {
+                        row_label: String::new(),
+                        column_header: String::new(),
+                        occurrence: None,
+                        handle: Some("t0:r0:c0".to_owned()),
+                    },
+                    expected_current_text: "Name".to_owned(),
+                    replacement: "Person".to_owned(),
+                },
+                TableCellTextUpdate {
+                    target: TableCellTarget {
+                        row_label: String::new(),
+                        column_header: String::new(),
+                        occurrence: None,
+                        handle: Some("t0:r1:c0".to_owned()),
+                    },
+                    expected_current_text: "OpenSuite ".to_owned(),
+                    replacement: "OpenSuite Engine".to_owned(),
+                },
+            ],
+            base_revision: None,
+        };
+        assert!(crate::set_table_cells_text_to_vec(&package, &main, &source, &supported).is_ok());
+
+        for (handle, text) in [("t0:r0:c1", "     Year"), ("t0:r1:c1", "2026")] {
+            let unsupported = SetTableCellsText {
+                table: table_target.clone(),
+                updates: vec![TableCellTextUpdate {
+                    target: TableCellTarget {
+                        row_label: String::new(),
+                        column_header: String::new(),
+                        occurrence: None,
+                        handle: Some(handle.to_owned()),
+                    },
+                    expected_current_text: text.to_owned(),
+                    replacement: "changed".to_owned(),
+                }],
+                base_revision: None,
+            };
+            let error = crate::set_table_cells_text_to_vec(&package, &main, &source, &unsupported)
+                .expect_err("multi-paragraph cells must remain unsupported");
+            assert_eq!(error.diagnostics[0].code, "UNSUPPORTED_OPERATION");
+        }
     }
 }

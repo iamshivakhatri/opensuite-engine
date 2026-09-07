@@ -4,11 +4,12 @@ use quick_xml::escape::escape;
 
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
-    ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableColumnAfter,
-    InsertTableRowAfter, InsertTableRowsAfter, OperationResult, ParagraphFormattingPatch,
-    PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText, SetParagraphFormatting,
-    SetParagraphStyle, SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
-    TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
+    AffordanceReason, ContentControlTarget, DeleteParagraph, InsertParagraphAfter,
+    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, OperationResult,
+    ParagraphFormattingPatch, PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText,
+    SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTableCellsText,
+    SetTextFormatting, TableCellTarget, TableRowTarget, TableTarget, TextFormattingPatch,
+    TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -346,7 +347,7 @@ pub fn set_table_cells_text_to_vec(
         ));
     }
     let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
-    if !simple_table(source, table) || has_revision_wrapper(source, table) {
+    if table_mutation_reason(source, table).is_some() {
         return Err(unsupported(
             "set_table_cells_text supports only simple rectangular tables without merges, nesting, or revisions",
         ));
@@ -395,7 +396,7 @@ pub fn insert_table_column_after_to_vec(
     operation: &InsertTableColumnAfter,
 ) -> Result<Vec<u8>, OperationResult> {
     let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
-    if !simple_table(source, table) || has_revision_wrapper(source, table) {
+    if table_mutation_reason(source, table).is_some() {
         return Err(unsupported(
             "insert_table_column supports only simple rectangular tables without merges, nesting, or revisions",
         ));
@@ -496,9 +497,11 @@ pub fn insert_table_column_after_to_vec(
         .write_replaced_part_to_vec(main, &patched)
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
     let mut output_target = operation.table.clone();
-    output_target
-        .header_cells
-        .insert(column + 1, operation.header.clone());
+    if output_target.handle.is_none() {
+        output_target
+            .header_cells
+            .insert(column + 1, operation.header.clone());
+    }
     verify_table_column_output_bytes(&output, &output_target, &expected)?;
     Ok(output)
 }
@@ -2127,7 +2130,7 @@ fn resolve_table_row(
     inserted_rows: &[Vec<String>],
 ) -> Result<ResolvedTableRow, OperationResult> {
     let (table_index, table, rows, _headers) = resolve_table(source, table_target)?;
-    if !simple_table(source, table) || has_revision_wrapper(source, table) {
+    if table_mutation_reason(source, table).is_some() {
         return Err(unsupported(
             "insert_table_row supports only simple rectangular tables without merges, nesting, or revisions",
         ));
@@ -2658,7 +2661,7 @@ fn resolve_table_cell(
             })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
-        if paragraphs.len() != 1 || !safe_table_paragraph(source, paragraphs[0]) {
+        if table_cell_text_reason(source, cell).is_some() {
             return Err(unsupported(
                 "set_table_cell_text requires one ordinary paragraph with direct runs",
             ));
@@ -2736,7 +2739,7 @@ fn resolve_table_cell(
         ));
     }
     let paragraphs = direct_cell_paragraphs(source, cell);
-    if paragraphs.len() != 1 || !safe_table_paragraph(source, paragraphs[0]) {
+    if table_cell_text_reason(source, cell).is_some() {
         return Err(unsupported(
             "set_table_cell_text requires one ordinary paragraph with direct runs",
         ));
@@ -2781,7 +2784,7 @@ fn resolve_table_cell_in_table(
             })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
-        if paragraphs.len() != 1 || !safe_table_paragraph(source, paragraphs[0]) {
+        if table_cell_text_reason(source, cell).is_some() {
             return Err(unsupported(
                 "set_table_cells_text requires one ordinary paragraph with direct runs",
             ));
@@ -2841,7 +2844,7 @@ fn resolve_table_cell_in_table(
         candidates.pop().expect("one candidate")
     };
     let paragraphs = direct_cell_paragraphs(source, cell);
-    if paragraphs.len() != 1 || !safe_table_paragraph(source, paragraphs[0]) {
+    if table_cell_text_reason(source, cell).is_some() {
         return Err(unsupported(
             "set_table_cells_text requires one ordinary paragraph with direct runs",
         ));
@@ -2901,28 +2904,54 @@ fn is_direct_body_table(source: &SourceDocument, table: NodeId) -> bool {
 }
 
 fn simple_table(source: &SourceDocument, table: NodeId) -> bool {
+    table_structure_reason(source, table).is_none()
+}
+
+pub(crate) fn table_mutation_reason(
+    source: &SourceDocument,
+    table: NodeId,
+) -> Option<AffordanceReason> {
+    table_mutation_reason_from_structure(source, table, table_structure_reason(source, table))
+}
+
+pub(crate) fn table_mutation_reason_from_structure(
+    source: &SourceDocument,
+    table: NodeId,
+    structure_reason: Option<AffordanceReason>,
+) -> Option<AffordanceReason> {
+    structure_reason.or_else(|| {
+        has_revision_wrapper(source, table).then_some(AffordanceReason::RevisionWrapper)
+    })
+}
+
+pub(crate) fn table_structure_reason(
+    source: &SourceDocument,
+    table: NodeId,
+) -> Option<AffordanceReason> {
     if source
         .node_ids()
         .any(|id| id != table && word(source, id, "tbl") && is_descendant(source, id, table))
-        || source.node_ids().any(|id| {
-            is_descendant(source, id, table)
-                && (word(source, id, "gridSpan") || word(source, id, "vMerge"))
-        })
     {
-        return false;
+        return Some(AffordanceReason::NestedTableStructure);
+    }
+    if source.node_ids().any(|id| {
+        is_descendant(source, id, table)
+            && (word(source, id, "gridSpan") || word(source, id, "vMerge"))
+    }) {
+        return Some(AffordanceReason::MergedTableStructure);
     }
     let rows = source
         .children(table)
         .filter(|id| word(source, *id, "tr"))
         .collect::<Vec<_>>();
     let Some(first) = rows.first() else {
-        return false;
+        return Some(AffordanceReason::NonRectangularTable);
     };
     let width = source
         .children(*first)
         .filter(|id| word(source, *id, "tc"))
         .count();
-    width > 1
+    (width > 1
         && rows.len() > 1
         && rows.iter().all(|row| {
             source
@@ -2930,7 +2959,10 @@ fn simple_table(source: &SourceDocument, table: NodeId) -> bool {
                 .filter(|id| word(source, *id, "tc"))
                 .count()
                 == width
-        })
+        }))
+    .then_some(())
+    .is_none()
+    .then_some(AffordanceReason::NonRectangularTable)
 }
 
 struct ExplicitTableGrid {
@@ -2951,22 +2983,26 @@ fn explicit_table_grid(
             "insert_table_column requires one explicit table grid",
         ));
     }
-    let columns = source.children(grids[0]).collect::<Vec<_>>();
-    if columns.len() != width
-        || columns.iter().any(|column| {
-            !word(source, *column, "gridCol")
-                || source
-                    .node(*column)
-                    .and_then(|node| node.attribute("w"))
-                    .and_then(|width| width.parse::<u32>().ok())
-                    .is_none_or(|width| width == 0)
-        })
-    {
+    let columns = source
+        .children(grids[0])
+        .filter(|column| word(source, *column, "gridCol"))
+        .collect::<Vec<_>>();
+    if columns.len() != width {
         return Err(unsupported(
-            "insert_table_column requires grid columns with positive explicit widths matching the table",
+            "insert_table_column requires one grid column per table column",
         ));
     }
     Ok(ExplicitTableGrid { columns })
+}
+
+pub(crate) fn table_grid_reason(
+    source: &SourceDocument,
+    table: NodeId,
+    width: usize,
+) -> Option<AffordanceReason> {
+    explicit_table_grid(source, table, width)
+        .err()
+        .map(|_| AffordanceReason::InvalidTableGrid)
 }
 
 fn verify_table_column_output_bytes(
@@ -3059,6 +3095,19 @@ fn safe_table_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
             false
         }
     })
+}
+
+pub(crate) fn table_cell_text_reason(
+    source: &SourceDocument,
+    cell: NodeId,
+) -> Option<AffordanceReason> {
+    let paragraphs = direct_cell_paragraphs(source, cell);
+    match paragraphs.len() {
+        0 => Some(AffordanceReason::UnsafeCellStructure),
+        1 if safe_table_paragraph(source, paragraphs[0]) => None,
+        1 => Some(AffordanceReason::UnsafeParagraphStructure),
+        _ => Some(AffordanceReason::MultipleParagraphs),
+    }
 }
 
 fn is_descendant(source: &SourceDocument, mut id: NodeId, ancestor: NodeId) -> bool {
@@ -3986,10 +4035,11 @@ mod tests {
 
     use opensuite_protocol::{
         ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableColumnAfter,
-        InsertTableRowAfter, InsertTableRowsAfter, ParagraphAlignment, ParagraphFormattingPatch,
-        PropertyPatch, ReplaceText, SetContentControlText, SetParagraphFormatting,
-        SetParagraphStyle, SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
-        TableCellTextUpdate, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
+        InsertTableRowAfter, InsertTableRowsAfter, InspectDocx, InspectDocxContent,
+        InspectDocxFocus, ParagraphAlignment, ParagraphFormattingPatch, PropertyPatch, ReplaceText,
+        SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
+        SetTableCellsText, SetTextFormatting, TableCellTarget, TableCellTextUpdate, TableRowTarget,
+        TableTarget, TextFormattingPatch, TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -4036,6 +4086,13 @@ mod tests {
         writer.write_all(b"missing fixture image").unwrap();
         writer.finish().unwrap();
         output
+    }
+
+    fn google_docs_table_fixture() -> &'static [u8] {
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/google-docs-table.docx"
+        ))
     }
 
     fn payloads(path: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
@@ -5032,6 +5089,70 @@ mod tests {
         assert_eq!(xml.matches("<w:gridCol").count(), 3);
         assert!(xml.contains("<w:rPr><w:b/></w:rPr><w:t>Location</w:t>"));
         fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn inserts_a_column_in_the_google_docs_table_without_rewriting_its_grid_change() {
+        let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/google-docs-table.docx");
+        let input = google_docs_table_fixture().to_vec();
+        let inspection = crate::inspect_docx(
+            input.clone(),
+            &InspectDocx {
+                focus: InspectDocxFocus::Tables {
+                    offset: 0,
+                    limit: 10,
+                },
+            },
+        );
+        let Some(InspectDocxContent::Tables(tables)) = inspection.content else {
+            panic!("expected table inspection")
+        };
+        let table = &tables.items[0];
+        assert_eq!(table.rows[0].cells, ["Name", "     Year"]);
+        assert_eq!(table.rows[1].cells, ["OpenSuite ", "2026"]);
+        assert_eq!(table.handle, "t0");
+        assert_eq!(table.columns[1].handle, "t0:c1");
+        assert_eq!(table.rows[1].cell_handles[1], "t0:r1:c1");
+
+        let package = Package::from_bytes(input).unwrap();
+        let before_payloads = payloads(&fixture);
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let operation = InsertTableColumnAfter {
+            table: TableTarget {
+                header_cells: Vec::new(),
+                occurrence: None,
+                handle: Some(table.handle.clone()),
+            },
+            after_column_header: String::new(),
+            after_column_handle: Some(table.columns[1].handle.clone()),
+            header: "Status".to_owned(),
+            cells: vec!["Draft".to_owned()],
+            base_revision: None,
+        };
+        let output =
+            insert_table_column_after_to_vec(&package, &main, &source, &operation).unwrap();
+        let output_path = path("google-docs-table-column-output");
+        fs::write(&output_path, &output).unwrap();
+        let output_package = Package::from_bytes(output).unwrap();
+        let mut after_payloads = payloads(&output_path);
+        let mut before_payloads = before_payloads;
+        before_payloads.remove("word/document.xml");
+        after_payloads.remove("word/document.xml");
+        assert_eq!(after_payloads, before_payloads);
+
+        let (_, output_source) = crate::open_main_source(&output_package).unwrap();
+        assert_eq!(
+            all_table_rows(&output_source).unwrap()[0],
+            vec![
+                vec!["Name", "     Year", "Status"],
+                vec!["OpenSuite ", "2026", "Draft"],
+            ]
+        );
+        let output_xml = String::from_utf8(output_package.read_part(&main).unwrap()).unwrap();
+        assert!(output_xml.contains("<w:tblGridChange w:id=\"0\"><w:tblGrid><w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/></w:tblGrid></w:tblGridChange>"));
+        assert!(output_xml.contains("<w:tblGrid><w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/><w:tblGridChange"));
+        fs::remove_file(output_path).unwrap();
     }
 
     #[test]
