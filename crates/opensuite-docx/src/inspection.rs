@@ -506,6 +506,10 @@ mod tests {
             let error = crate::set_table_cells_text_to_vec(&package, &main, &source, &unsupported)
                 .expect_err("multi-paragraph cells must remain unsupported");
             assert_eq!(error.diagnostics[0].code, "UNSUPPORTED_OPERATION");
+            assert_eq!(
+                error.diagnostics[0].reason_code.as_deref(),
+                Some("MULTIPLE_PARAGRAPHS")
+            );
         }
     }
 }

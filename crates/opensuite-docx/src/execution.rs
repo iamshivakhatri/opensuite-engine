@@ -46,7 +46,7 @@ pub fn execute_docx_replace_text(
                 }
             }
             DocxExecutionResult {
-                operation,
+                operation: structured_failure(operation, "replace_text", None),
                 output_artifact: None,
             }
         }
@@ -75,8 +75,16 @@ pub fn execute_docx_insert_table_row(
             ),
             output_artifact: Some(output_artifact),
         },
-        Err(operation) => DocxExecutionResult {
-            operation,
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "insert_table_row",
+                operation
+                    .after
+                    .handle
+                    .as_deref()
+                    .or(operation.table.handle.as_deref()),
+            ),
             output_artifact: None,
         },
     }
@@ -104,8 +112,16 @@ pub fn execute_docx_insert_table_rows(
             ),
             output_artifact: Some(output_artifact),
         },
-        Err(operation) => DocxExecutionResult {
-            operation,
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "insert_table_rows",
+                operation
+                    .after
+                    .handle
+                    .as_deref()
+                    .or(operation.table.handle.as_deref()),
+            ),
             output_artifact: None,
         },
     }
@@ -133,8 +149,15 @@ pub fn execute_docx_insert_table_column(
             ),
             output_artifact: Some(output_artifact),
         },
-        Err(operation) => DocxExecutionResult {
-            operation,
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "insert_table_column",
+                operation
+                    .after_column_handle
+                    .as_deref()
+                    .or(operation.table.handle.as_deref()),
+            ),
             output_artifact: None,
         },
     }
@@ -158,8 +181,16 @@ pub fn execute_docx_set_table_cells_text(
             operation: OperationResult::table_cells_text_set(operation.updates.len()),
             output_artifact: Some(output_artifact),
         },
-        Err(operation) => DocxExecutionResult {
-            operation,
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "set_table_cells_text",
+                operation
+                    .updates
+                    .first()
+                    .and_then(|update| update.target.handle.as_deref())
+                    .or(operation.table.handle.as_deref()),
+            ),
             output_artifact: None,
         },
     }
@@ -238,6 +269,28 @@ fn failed(code: impl Into<String>, message: impl Into<String>) -> DocxExecutionR
         operation: OperationResult::failed(code, message),
         output_artifact: None,
     }
+}
+
+fn structured_failure(
+    mut result: OperationResult,
+    operation: &str,
+    target_handle: Option<&str>,
+) -> OperationResult {
+    result = result.with_operation(operation);
+    if let Some(handle) = target_handle {
+        result = result.with_target_handle(handle);
+    }
+    for diagnostic in &mut result.diagnostics {
+        if diagnostic.reason_code.is_none()
+            && matches!(
+                diagnostic.code.as_str(),
+                "TARGET_NOT_FOUND" | "TARGET_AMBIGUOUS"
+            )
+        {
+            diagnostic.reason_code = Some(diagnostic.code.clone());
+        }
+    }
+    result
 }
 
 #[cfg(test)]

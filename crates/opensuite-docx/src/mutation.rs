@@ -44,7 +44,8 @@ pub fn replace_text(
         return OperationResult::failed(
             "PRECONDITION_FAILED",
             "resolved text does not match expected current text",
-        );
+        )
+        .with_reason_code("EXPECTED_TEXT_MISMATCH");
     }
     let patched = match apply_patches(source, target.patches) {
         Ok(patched) => patched,
@@ -87,7 +88,8 @@ pub fn replace_text_to_vec(
         return Err(OperationResult::failed(
             "PRECONDITION_FAILED",
             "resolved text does not match expected current text",
-        ));
+        )
+        .with_reason_code("EXPECTED_TEXT_MISMATCH"));
     }
     let patched = apply_patches(source, target.patches)?;
     let output = package
@@ -347,10 +349,11 @@ pub fn set_table_cells_text_to_vec(
         ));
     }
     let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
-    if table_mutation_reason(source, table).is_some() {
+    if let Some(reason) = table_mutation_reason(source, table) {
         return Err(unsupported(
             "set_table_cells_text supports only simple rectangular tables without merges, nesting, or revisions",
-        ));
+        )
+        .with_reason_code(reason.as_str()));
     }
     let mut targets = Vec::with_capacity(operation.updates.len());
     let mut cells = HashSet::new();
@@ -361,7 +364,8 @@ pub fn set_table_cells_text_to_vec(
             return Err(OperationResult::failed(
                 "PRECONDITION_FAILED",
                 "resolved cell text does not match expected current text",
-            ));
+            )
+            .with_reason_code("EXPECTED_TEXT_MISMATCH"));
         }
         if !cells.insert(target.cell) {
             return Err(OperationResult::failed(
@@ -396,10 +400,11 @@ pub fn insert_table_column_after_to_vec(
     operation: &InsertTableColumnAfter,
 ) -> Result<Vec<u8>, OperationResult> {
     let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
-    if table_mutation_reason(source, table).is_some() {
+    if let Some(reason) = table_mutation_reason(source, table) {
         return Err(unsupported(
             "insert_table_column supports only simple rectangular tables without merges, nesting, or revisions",
-        ));
+        )
+        .with_reason_code(reason.as_str()));
     }
     if operation.cells.len() != rows.len() - 1 {
         return Err(OperationResult::failed(
@@ -2130,10 +2135,11 @@ fn resolve_table_row(
     inserted_rows: &[Vec<String>],
 ) -> Result<ResolvedTableRow, OperationResult> {
     let (table_index, table, rows, _headers) = resolve_table(source, table_target)?;
-    if table_mutation_reason(source, table).is_some() {
+    if let Some(reason) = table_mutation_reason(source, table) {
         return Err(unsupported(
             "insert_table_row supports only simple rectangular tables without merges, nesting, or revisions",
-        ));
+        )
+        .with_reason_code(reason.as_str()));
     }
     let width = rows[0].cells().count();
     if inserted_rows.iter().any(|cells| cells.len() != width) {
@@ -2661,10 +2667,11 @@ fn resolve_table_cell(
             })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
-        if table_cell_text_reason(source, cell).is_some() {
+        if let Some(reason) = table_cell_text_reason(source, cell) {
             return Err(unsupported(
                 "set_table_cell_text requires one ordinary paragraph with direct runs",
-            ));
+            )
+            .with_reason_code(reason.as_str()));
         }
         return Ok(ResolvedTableCell {
             cell,
@@ -2739,10 +2746,11 @@ fn resolve_table_cell(
         ));
     }
     let paragraphs = direct_cell_paragraphs(source, cell);
-    if table_cell_text_reason(source, cell).is_some() {
+    if let Some(reason) = table_cell_text_reason(source, cell) {
         return Err(unsupported(
             "set_table_cell_text requires one ordinary paragraph with direct runs",
-        ));
+        )
+        .with_reason_code(reason.as_str()));
     }
     let text = cell_current_text(source, cell)?;
     Ok(ResolvedTableCell {
@@ -2784,10 +2792,11 @@ fn resolve_table_cell_in_table(
             })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
-        if table_cell_text_reason(source, cell).is_some() {
+        if let Some(reason) = table_cell_text_reason(source, cell) {
             return Err(unsupported(
                 "set_table_cells_text requires one ordinary paragraph with direct runs",
-            ));
+            )
+            .with_reason_code(reason.as_str()));
         }
         return Ok(ResolvedTableCell {
             cell,
@@ -2844,10 +2853,11 @@ fn resolve_table_cell_in_table(
         candidates.pop().expect("one candidate")
     };
     let paragraphs = direct_cell_paragraphs(source, cell);
-    if table_cell_text_reason(source, cell).is_some() {
+    if let Some(reason) = table_cell_text_reason(source, cell) {
         return Err(unsupported(
             "set_table_cells_text requires one ordinary paragraph with direct runs",
-        ));
+        )
+        .with_reason_code(reason.as_str()));
     }
     Ok(ResolvedTableCell {
         cell,

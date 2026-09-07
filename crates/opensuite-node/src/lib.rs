@@ -33,6 +33,9 @@ pub struct DiagnosticOutput {
     pub code: String,
     pub severity: String,
     pub message: String,
+    pub reason_code: Option<String>,
+    pub operation: Option<String>,
+    pub target_handle: Option<String>,
 }
 
 #[napi(object)]
@@ -593,6 +596,9 @@ fn diagnostic_output(diagnostic: Diagnostic) -> DiagnosticOutput {
         code: diagnostic.code,
         severity: diagnostic.severity.as_str().to_owned(),
         message: diagnostic.message,
+        reason_code: diagnostic.reason_code,
+        operation: diagnostic.operation,
+        target_handle: diagnostic.target.map(|target| target.handle),
     }
 }
 

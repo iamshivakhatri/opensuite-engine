@@ -71,6 +71,8 @@ and XML source bytes.
   unsupported and source-preserved.
 - Runtime/protocol boundary foundation: versioned DOCX read-side capability
   discovery, compact diagnostics, and `opensuite capabilities`.
+- Mutation diagnostics carry optional machine-readable reason codes, operation IDs, and opaque
+  handle targets. Table safety refusals reuse the same reason identifiers as inspection affordances.
 - Preservation-safe `ReplaceText` for exact Current-view text in one source
   node or across compatible ordinary runs in one paragraph, with semantic
   preconditions, XML escaping, output reopen checks, and structured results.

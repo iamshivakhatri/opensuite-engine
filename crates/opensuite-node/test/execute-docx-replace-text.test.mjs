@@ -178,6 +178,14 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   assert.deepEqual(googleDocsRows[0].cellAffordances[1].map((item) => item.reason), ['MULTIPLE_PARAGRAPHS', 'MULTIPLE_PARAGRAPHS'])
   assert.equal(googleDocsRows[1].cellAffordances[0].every((item) => item.supported), true)
   assert.deepEqual(googleDocsRows[1].cellAffordances[1].map((item) => item.reason), ['MULTIPLE_PARAGRAPHS', 'MULTIPLE_PARAGRAPHS'])
+  const googleDocsFailure = await executeDocxSetTableCellsText(googleDocsTable, {
+    table: { handle: 't0' },
+    updates: [{ target: { handle: 't0:r1:c1' }, expectedCurrentText: '2026', replacement: '2027' }],
+  })
+  assert.equal(googleDocsFailure.result.diagnostics[0].code, 'UNSUPPORTED_OPERATION')
+  assert.equal(googleDocsFailure.result.diagnostics[0].reasonCode, 'MULTIPLE_PARAGRAPHS')
+  assert.equal(googleDocsFailure.result.diagnostics[0].operation, 'set_table_cells_text')
+  assert.equal(googleDocsFailure.result.diagnostics[0].targetHandle, 't0:r1:c1')
 
   const context = await inspectDocx(input, { focus: { kind: 'context', text: 'table needle', before: 1, after: 0 } })
   assert.equal(context.ok, true)

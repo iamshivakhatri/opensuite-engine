@@ -649,11 +649,45 @@ impl OperationResult {
     }
 
     pub fn failed(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::failed_diagnostic(Diagnostic::new(code, DiagnosticSeverity::Error, message))
+    }
+
+    pub fn failed_diagnostic(diagnostic: Diagnostic) -> Self {
         Self {
             status: OperationStatus::Failed,
-            diagnostics: vec![Diagnostic::new(code, DiagnosticSeverity::Error, message)],
+            diagnostics: vec![diagnostic],
             changes: Vec::new(),
         }
+    }
+
+    pub fn with_reason_code(mut self, reason_code: impl Into<String>) -> Self {
+        let reason_code = reason_code.into();
+        for diagnostic in &mut self.diagnostics {
+            diagnostic.reason_code = Some(reason_code.clone());
+        }
+        self
+    }
+
+    pub fn with_operation(mut self, operation: impl Into<String>) -> Self {
+        let operation = operation.into();
+        for diagnostic in &mut self.diagnostics {
+            if diagnostic.operation.is_none() {
+                diagnostic.operation = Some(operation.clone());
+            }
+        }
+        self
+    }
+
+    pub fn with_target_handle(mut self, handle: impl Into<String>) -> Self {
+        let handle = handle.into();
+        for diagnostic in &mut self.diagnostics {
+            if diagnostic.target.is_none() {
+                diagnostic.target = Some(DiagnosticTarget {
+                    handle: handle.clone(),
+                });
+            }
+        }
+        self
     }
 
     pub fn paragraph_inserted(anchor: String, text: String) -> Self {
@@ -834,6 +868,15 @@ pub struct Diagnostic {
     pub code: String,
     pub severity: DiagnosticSeverity,
     pub message: String,
+    pub reason_code: Option<String>,
+    pub operation: Option<String>,
+    pub target: Option<DiagnosticTarget>,
+}
+
+/// Public, opaque context for a diagnostic target.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticTarget {
+    pub handle: String,
 }
 
 impl Diagnostic {
@@ -846,15 +889,49 @@ impl Diagnostic {
             code: code.into(),
             severity,
             message: message.into(),
+            reason_code: None,
+            operation: None,
+            target: None,
         }
     }
 
+    pub fn with_reason_code(mut self, reason_code: impl Into<String>) -> Self {
+        self.reason_code = Some(reason_code.into());
+        self
+    }
+
+    pub fn with_operation(mut self, operation: impl Into<String>) -> Self {
+        self.operation = Some(operation.into());
+        self
+    }
+
+    pub fn with_target_handle(mut self, handle: impl Into<String>) -> Self {
+        self.target = Some(DiagnosticTarget {
+            handle: handle.into(),
+        });
+        self
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut value = serde_json::json!({
             "code": self.code,
             "severity": self.severity.as_str(),
             "message": self.message,
-        })
+        });
+        let object = value.as_object_mut().expect("diagnostic is an object");
+        if let Some(reason_code) = &self.reason_code {
+            object.insert("reason_code".to_owned(), reason_code.clone().into());
+        }
+        if let Some(operation) = &self.operation {
+            object.insert("operation".to_owned(), operation.clone().into());
+        }
+        if let Some(target) = &self.target {
+            object.insert(
+                "target".to_owned(),
+                serde_json::json!({ "handle": target.handle }),
+            );
+        }
+        value
     }
 }
 
@@ -912,5 +989,18 @@ mod tests {
             diagnostic.to_json().to_string(),
             r#"{"code":"UNSUPPORTED_OPERATION","message":"operation is not supported","severity":"error"}"#
         );
+
+        let structured = Diagnostic::new(
+            "UNSUPPORTED_OPERATION",
+            DiagnosticSeverity::Error,
+            "cell cannot be rewritten safely",
+        )
+        .with_reason_code("MULTIPLE_PARAGRAPHS")
+        .with_operation("set_table_cells_text")
+        .with_target_handle("t0:r1:c1")
+        .to_json();
+        assert_eq!(structured["reason_code"], "MULTIPLE_PARAGRAPHS");
+        assert_eq!(structured["operation"], "set_table_cells_text");
+        assert_eq!(structured["target"]["handle"], "t0:r1:c1");
     }
 }
