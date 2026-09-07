@@ -47,6 +47,9 @@ and XML source bytes.
 - Preservation-safe `InsertTableColumnAfter` adds one column to a simple table only when an explicit
   `w:tblGrid` has one `w:gridCol` per cell. It copies the adjacent grid column source unchanged,
   preserving present, zero, or absent widths while increasing the table's grid width by one.
+- Preservation-safe table lifecycle operations create a rectangular direct-body table with a minimal
+  `w:tblGrid`, delete a selected table, and delete one row or one grid-aligned column. Final-row and
+  final-column deletion are rejected explicitly so callers must use table deletion instead.
 - Table semantic header and first-cell row-label targeting trims only leading and trailing Unicode
   whitespace. Raw visible text remains unchanged; normalized duplicates remain ambiguous.
 - `[Content_Types].xml` Default and Override content type resolution.

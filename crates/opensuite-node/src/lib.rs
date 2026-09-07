@@ -2,18 +2,25 @@ use napi::bindgen_prelude::{AsyncTask, Buffer, Task};
 use napi::{Env, Result};
 use napi_derive::napi;
 use opensuite_docx::{
-    DocxExecutionResult, create_blank_docx, execute_docx_insert_paragraph,
-    execute_docx_insert_paragraphs, execute_docx_insert_table_column,
-    execute_docx_insert_table_row, execute_docx_insert_table_rows, execute_docx_replace_text,
-    execute_docx_set_table_cells_text, find_docx_text, inspect_docx,
+    DocxExecutionResult, create_blank_docx, execute_docx_create_table,
+    execute_docx_delete_paragraph, execute_docx_delete_table, execute_docx_delete_table_column,
+    execute_docx_delete_table_row, execute_docx_insert_paragraph, execute_docx_insert_paragraphs,
+    execute_docx_insert_table_column, execute_docx_insert_table_row,
+    execute_docx_insert_table_rows, execute_docx_replace_text,
+    execute_docx_set_paragraph_formatting, execute_docx_set_paragraph_style,
+    execute_docx_set_table_cells_text, execute_docx_set_text_formatting, find_docx_text,
+    inspect_docx,
 };
 use opensuite_protocol::{
-    Affordance, Diagnostic, DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxTable,
-    DocxTableRow, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
-    InsertTableColumnAfter, InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult,
-    InspectTextContext, InspectTextContextResult, InspectionPage, OperationResult,
-    ParagraphPlacement, ReplaceText, RuntimeCapabilities, TableCellTarget, TableCellTextUpdate,
-    TableRowTarget, TableTarget, TextContainer, TextTarget,
+    Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, Diagnostic,
+    DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableRow, FindText,
+    FindTextResult, InsertParagraph, InsertParagraphs, InsertTableColumnAfter, InspectDocx,
+    InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectTextContext,
+    InspectTextContextResult, InspectionPage, OperationResult, ParagraphAlignment,
+    ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplaceText, RuntimeCapabilities,
+    SetParagraphFormatting, SetParagraphStyle, SetTextFormatting, TableCellTarget,
+    TableCellTextUpdate, TableRowTarget, TableTarget, TextContainer, TextFormattingPatch,
+    TextTarget,
 };
 
 #[napi(object)]
@@ -48,6 +55,34 @@ pub struct InsertParagraphsInput {
 pub struct ParagraphPlacementInput {
     pub kind: String,
     pub handle: Option<String>,
+}
+#[napi(object)]
+pub struct DeleteParagraphInput {
+    pub target: TextTargetInput,
+    pub base_revision: Option<String>,
+}
+#[napi(object)]
+pub struct SetParagraphStyleInput {
+    pub target: TextTargetInput,
+    pub style: Option<String>,
+    pub base_revision: Option<String>,
+}
+#[napi(object)]
+pub struct SetParagraphFormattingInput {
+    pub target: TextTargetInput,
+    pub alignment: Option<String>,
+    pub spacing_before_twips: Option<i32>,
+    pub spacing_after_twips: Option<i32>,
+    pub base_revision: Option<String>,
+}
+#[napi(object)]
+pub struct SetTextFormattingInput {
+    pub target: TextTargetInput,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub font_size_half_points: Option<u32>,
+    pub font_family: Option<String>,
+    pub base_revision: Option<String>,
 }
 
 #[napi(object)]
@@ -140,6 +175,31 @@ pub struct TableCellTextUpdateInput {
 pub struct SetTableCellsTextInput {
     pub table: TableTargetInput,
     pub updates: Vec<TableCellTextUpdateInput>,
+    pub base_revision: Option<String>,
+}
+
+#[napi(object)]
+pub struct CreateTableInput {
+    pub rows: Vec<Vec<String>>,
+    pub placement: ParagraphPlacementInput,
+    pub base_revision: Option<String>,
+}
+#[napi(object)]
+pub struct DeleteTableInput {
+    pub table: TableTargetInput,
+    pub base_revision: Option<String>,
+}
+#[napi(object)]
+pub struct DeleteTableRowInput {
+    pub table: TableTargetInput,
+    pub row: TableRowTargetInput,
+    pub base_revision: Option<String>,
+}
+#[napi(object)]
+pub struct DeleteTableColumnInput {
+    pub table: TableTargetInput,
+    pub column_header: Option<String>,
+    pub column_handle: Option<String>,
     pub base_revision: Option<String>,
 }
 
@@ -494,6 +554,90 @@ pub fn execute_docx_insert_paragraphs_node(
     })
 }
 
+#[napi(js_name = "executeDocxDeleteParagraph")]
+pub fn execute_docx_delete_paragraph_node(
+    input: Buffer,
+    operation: DeleteParagraphInput,
+) -> AsyncTask<SimpleTask<opensuite_protocol::DeleteParagraph>> {
+    AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: opensuite_protocol::DeleteParagraph {
+            target: text_target(operation.target),
+            base_revision: operation.base_revision,
+        },
+        run: execute_docx_delete_paragraph,
+    })
+}
+#[napi(js_name = "executeDocxSetParagraphStyle")]
+pub fn execute_docx_set_paragraph_style_node(
+    input: Buffer,
+    operation: SetParagraphStyleInput,
+) -> AsyncTask<SimpleTask<SetParagraphStyle>> {
+    AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: SetParagraphStyle {
+            target: text_target(operation.target),
+            style: operation
+                .style
+                .map(PropertyPatch::Set)
+                .unwrap_or(PropertyPatch::Clear),
+            base_revision: operation.base_revision,
+        },
+        run: execute_docx_set_paragraph_style,
+    })
+}
+#[napi(js_name = "executeDocxSetParagraphFormatting")]
+pub fn execute_docx_set_paragraph_formatting_node(
+    input: Buffer,
+    operation: SetParagraphFormattingInput,
+) -> AsyncTask<SimpleTask<SetParagraphFormatting>> {
+    let alignment = operation
+        .alignment
+        .and_then(|value| match value.as_str() {
+            "left" => Some(ParagraphAlignment::Left),
+            "center" => Some(ParagraphAlignment::Center),
+            "right" => Some(ParagraphAlignment::Right),
+            _ => None,
+        })
+        .map(PropertyPatch::Set);
+    AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: SetParagraphFormatting {
+            target: text_target(operation.target),
+            formatting: ParagraphFormattingPatch {
+                alignment,
+                spacing_before_twips: operation.spacing_before_twips.map(PropertyPatch::Set),
+                spacing_after_twips: operation.spacing_after_twips.map(PropertyPatch::Set),
+                ..Default::default()
+            },
+            base_revision: operation.base_revision,
+        },
+        run: execute_docx_set_paragraph_formatting,
+    })
+}
+#[napi(js_name = "executeDocxSetTextFormatting")]
+pub fn execute_docx_set_text_formatting_node(
+    input: Buffer,
+    operation: SetTextFormattingInput,
+) -> AsyncTask<SimpleTask<SetTextFormatting>> {
+    AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: SetTextFormatting {
+            target: text_target(operation.target),
+            formatting: TextFormattingPatch {
+                bold: operation.bold.map(PropertyPatch::Set),
+                italic: operation.italic.map(PropertyPatch::Set),
+                font_size_half_points: operation
+                    .font_size_half_points
+                    .map(|value| PropertyPatch::Set(value as u16)),
+                font_family: operation.font_family.map(PropertyPatch::Set),
+            },
+            base_revision: operation.base_revision,
+        },
+        run: execute_docx_set_text_formatting,
+    })
+}
+
 /// Runs DOCX table-row insertion away from Node's event loop and returns a Promise.
 #[napi(js_name = "executeDocxInsertTableRow")]
 pub fn execute_docx_insert_table_row_node(
@@ -583,6 +727,77 @@ pub fn execute_docx_set_table_cells_text_node(
     })
 }
 
+#[napi(js_name = "executeDocxCreateTable")]
+pub fn execute_docx_create_table_node(
+    input: Buffer,
+    operation: CreateTableInput,
+) -> AsyncTask<CreateTableTask> {
+    let placement = match operation.placement.kind.as_str() {
+        "start" => ParagraphPlacement::Start,
+        "before" => operation
+            .placement
+            .handle
+            .map(|handle| ParagraphPlacement::Before { handle })
+            .unwrap_or(ParagraphPlacement::End),
+        "after" => operation
+            .placement
+            .handle
+            .map(|handle| ParagraphPlacement::After { handle })
+            .unwrap_or(ParagraphPlacement::End),
+        _ => ParagraphPlacement::End,
+    };
+    AsyncTask::new(CreateTableTask {
+        input: input.to_vec(),
+        operation: CreateTable {
+            rows: operation.rows,
+            placement,
+            base_revision: operation.base_revision,
+        },
+    })
+}
+#[napi(js_name = "executeDocxDeleteTable")]
+pub fn execute_docx_delete_table_node(
+    input: Buffer,
+    operation: DeleteTableInput,
+) -> AsyncTask<DeleteTableTask> {
+    AsyncTask::new(DeleteTableTask {
+        input: input.to_vec(),
+        operation: DeleteTable {
+            table: table_target(operation.table),
+            base_revision: operation.base_revision,
+        },
+    })
+}
+#[napi(js_name = "executeDocxDeleteTableRow")]
+pub fn execute_docx_delete_table_row_node(
+    input: Buffer,
+    operation: DeleteTableRowInput,
+) -> AsyncTask<DeleteTableRowTask> {
+    AsyncTask::new(DeleteTableRowTask {
+        input: input.to_vec(),
+        operation: DeleteTableRow {
+            table: table_target(operation.table),
+            row: row_target(operation.row),
+            base_revision: operation.base_revision,
+        },
+    })
+}
+#[napi(js_name = "executeDocxDeleteTableColumn")]
+pub fn execute_docx_delete_table_column_node(
+    input: Buffer,
+    operation: DeleteTableColumnInput,
+) -> AsyncTask<DeleteTableColumnTask> {
+    AsyncTask::new(DeleteTableColumnTask {
+        input: input.to_vec(),
+        operation: DeleteTableColumn {
+            table: table_target(operation.table),
+            column_header: operation.column_header.unwrap_or_default(),
+            column_handle: operation.column_handle,
+            base_revision: operation.base_revision,
+        },
+    })
+}
+
 pub struct InsertTableRowTask {
     input: Vec<u8>,
     operation: opensuite_protocol::InsertTableRowAfter,
@@ -655,6 +870,40 @@ pub struct SetTableCellsTextTask {
     input: Vec<u8>,
     operation: opensuite_protocol::SetTableCellsText,
 }
+
+macro_rules! table_task {
+    ($name:ident, $operation:ty, $execute:ident) => {
+        pub struct $name {
+            input: Vec<u8>,
+            operation: $operation,
+        }
+        impl Task for $name {
+            type Output = opensuite_docx::DocxExecutionResult;
+            type JsValue = ExecuteDocxReplaceTextOutput;
+            fn compute(&mut self) -> Result<Self::Output> {
+                Ok($execute(std::mem::take(&mut self.input), &self.operation))
+            }
+            fn resolve(&mut self, _env: Env, result: Self::Output) -> Result<Self::JsValue> {
+                Ok(ExecuteDocxReplaceTextOutput {
+                    result: operation_result_output(result.operation),
+                    output: result.output_artifact.map(Buffer::from),
+                })
+            }
+        }
+    };
+}
+table_task!(CreateTableTask, CreateTable, execute_docx_create_table);
+table_task!(DeleteTableTask, DeleteTable, execute_docx_delete_table);
+table_task!(
+    DeleteTableRowTask,
+    DeleteTableRow,
+    execute_docx_delete_table_row
+);
+table_task!(
+    DeleteTableColumnTask,
+    DeleteTableColumn,
+    execute_docx_delete_table_column
+);
 
 impl Task for SetTableCellsTextTask {
     type Output = opensuite_docx::DocxExecutionResult;
@@ -987,6 +1236,25 @@ fn context_output(result: InspectTextContextResult) -> InspectContextOutput {
 pub struct ReplaceTextTask {
     input: Vec<u8>,
     operation: ReplaceText,
+}
+
+pub struct SimpleTask<T> {
+    input: Vec<u8>,
+    operation: T,
+    run: fn(Vec<u8>, &T) -> DocxExecutionResult,
+}
+impl<T: Send> Task for SimpleTask<T> {
+    type Output = DocxExecutionResult;
+    type JsValue = ExecuteDocxReplaceTextOutput;
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok((self.run)(std::mem::take(&mut self.input), &self.operation))
+    }
+    fn resolve(&mut self, _env: Env, result: Self::Output) -> Result<Self::JsValue> {
+        Ok(ExecuteDocxReplaceTextOutput {
+            result: operation_result_output(result.operation),
+            output: result.output_artifact.map(Buffer::from),
+        })
+    }
 }
 
 pub struct InsertParagraphTask {

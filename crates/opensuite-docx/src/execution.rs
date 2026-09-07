@@ -1,14 +1,16 @@
 use opensuite_opc::Package;
 use opensuite_protocol::{
-    DeleteParagraph, Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertParagraph,
-    InsertParagraphs, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
-    InspectDocx, InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult,
-    ReplaceText, SetParagraphFormatting, SetParagraphStyle, SetTableCellsText, SetTextFormatting,
+    CreateTable, DeleteParagraph, DeleteTable, DeleteTableColumn, DeleteTableRow, Diagnostic,
+    DiagnosticSeverity, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
+    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
+    InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult, ReplaceText,
+    SetParagraphFormatting, SetParagraphStyle, SetTableCellsText, SetTextFormatting,
 };
 
 use crate::{
-    delete_paragraph_to_vec, insert_paragraph_to_vec, insert_paragraphs_to_vec,
-    insert_table_column_after_to_vec, insert_table_row_after_to_vec,
+    create_table_to_vec, delete_paragraph_to_vec, delete_table_column_to_vec,
+    delete_table_row_to_vec, delete_table_to_vec, insert_paragraph_to_vec,
+    insert_paragraphs_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
     insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
     set_paragraph_formatting_to_vec, set_paragraph_style_to_vec, set_table_cells_text_to_vec,
     set_text_formatting_to_vec,
@@ -138,6 +140,69 @@ execute_paragraph_mutation!(
     SetTextFormatting,
     set_text_formatting_to_vec,
     "set_text_formatting"
+);
+
+macro_rules! execute_table_mutation {
+    ($name:ident, $operation:ty, $apply:ident, $id:literal, $target:expr) => {
+        pub fn $name(input_artifact: Vec<u8>, operation: &$operation) -> DocxExecutionResult {
+            let package = match Package::from_bytes(input_artifact) {
+                Ok(value) => value,
+                Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+            };
+            let (main, source) = match open_main_source(&package) {
+                Ok(value) => value,
+                Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+            };
+            match $apply(&package, &main, &source, operation) {
+                Ok(output_artifact) => DocxExecutionResult {
+                    operation: OperationResult::applied(String::new(), String::new()),
+                    output_artifact: Some(output_artifact),
+                },
+                Err(error) => {
+                    let target = $target(operation);
+                    DocxExecutionResult {
+                        operation: structured_failure(error, $id, target.as_deref()),
+                        output_artifact: None,
+                    }
+                }
+            }
+        }
+    };
+}
+execute_table_mutation!(
+    execute_docx_create_table,
+    CreateTable,
+    create_table_to_vec,
+    "create_table",
+    |operation: &CreateTable| placement_handle(&operation.placement).map(str::to_owned)
+);
+execute_table_mutation!(
+    execute_docx_delete_table,
+    DeleteTable,
+    delete_table_to_vec,
+    "delete_table",
+    |operation: &DeleteTable| operation.table.handle.clone()
+);
+execute_table_mutation!(
+    execute_docx_delete_table_row,
+    DeleteTableRow,
+    delete_table_row_to_vec,
+    "delete_table_row",
+    |operation: &DeleteTableRow| operation
+        .row
+        .handle
+        .clone()
+        .or(operation.table.handle.clone())
+);
+execute_table_mutation!(
+    execute_docx_delete_table_column,
+    DeleteTableColumn,
+    delete_table_column_to_vec,
+    "delete_table_column",
+    |operation: &DeleteTableColumn| operation
+        .column_handle
+        .clone()
+        .or(operation.table.handle.clone())
 );
 
 /// Executes `ReplaceText` against owned DOCX bytes and returns verified output bytes on success.

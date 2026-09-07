@@ -117,6 +117,10 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "insert_table_rows",
     "set_table_cells_text",
     "insert_table_column",
+    "create_table",
+    "delete_table",
+    "delete_table_row",
+    "delete_table_column",
     "find_text",
     "inspect_context",
 ];
@@ -258,6 +262,38 @@ pub struct InsertTableColumnAfter {
     pub after_column_handle: Option<String>,
     pub header: String,
     pub cells: Vec<String>,
+    pub base_revision: Option<String>,
+}
+
+/// Creates one rectangular table at a direct body placement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateTable {
+    pub rows: Vec<Vec<String>>,
+    pub placement: ParagraphPlacement,
+    pub base_revision: Option<String>,
+}
+
+/// Deletes one safely resolved direct body table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeleteTable {
+    pub table: TableTarget,
+    pub base_revision: Option<String>,
+}
+
+/// Deletes one row from a table with at least two rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeleteTableRow {
+    pub table: TableTarget,
+    pub row: TableRowTarget,
+    pub base_revision: Option<String>,
+}
+
+/// Deletes one column from a table with at least two columns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeleteTableColumn {
+    pub table: TableTarget,
+    pub column_header: String,
+    pub column_handle: Option<String>,
     pub base_revision: Option<String>,
 }
 
@@ -620,6 +656,8 @@ pub enum AffordanceReason {
     NestedTableStructure,
     RevisionWrapper,
     InvalidTableGrid,
+    LastTableRow,
+    LastTableColumn,
 }
 
 impl AffordanceReason {
@@ -633,6 +671,8 @@ impl AffordanceReason {
             Self::NestedTableStructure => "NESTED_TABLE_STRUCTURE",
             Self::RevisionWrapper => "REVISION_WRAPPER",
             Self::InvalidTableGrid => "INVALID_TABLE_GRID",
+            Self::LastTableRow => "LAST_TABLE_ROW",
+            Self::LastTableColumn => "LAST_TABLE_COLUMN",
         }
     }
 }
@@ -1023,7 +1063,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

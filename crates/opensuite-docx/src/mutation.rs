@@ -4,12 +4,13 @@ use quick_xml::escape::escape;
 
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
-    AffordanceReason, ContentControlTarget, DeleteParagraph, InsertParagraph, InsertParagraphAfter,
-    InsertParagraphs, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
-    OperationResult, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture,
-    ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
-    SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget, TableRowTarget,
-    TableTarget, TextFormattingPatch, TextTarget,
+    AffordanceReason, ContentControlTarget, CreateTable, DeleteParagraph, DeleteTable,
+    DeleteTableColumn, DeleteTableRow, InsertParagraph, InsertParagraphAfter, InsertParagraphs,
+    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, OperationResult,
+    ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture, ReplaceText,
+    SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
+    SetTableCellsText, SetTextFormatting, TableCellTarget, TableRowTarget, TableTarget,
+    TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -566,6 +567,227 @@ pub fn insert_table_column_after_to_vec(
             .insert(column + 1, operation.header.clone());
     }
     verify_table_column_output_bytes(&output, &output_target, &expected)?;
+    Ok(output)
+}
+
+/// Creates a minimal, rectangular, immediately editable table.
+pub fn create_table_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &CreateTable,
+) -> Result<Vec<u8>, OperationResult> {
+    let width = operation.rows.first().map_or(0, Vec::len);
+    if operation.rows.is_empty()
+        || width == 0
+        || operation.rows.iter().any(|row| row.len() != width)
+    {
+        return Err(OperationResult::failed(
+            "INVALID_OPERATION",
+            "create_table requires a non-empty rectangular cell matrix",
+        )
+        .with_reason_code("INVALID_TABLE_DIMENSIONS"));
+    }
+    let placement = resolve_paragraph_placement(source, &operation.placement)?;
+    let (body, blocks) = direct_body_blocks(source)?;
+    let index = placement_index(&blocks, placement)?;
+    let insertion = body_insertion(source, body, &blocks, index)?;
+    let fragment = table_fragment_for_body(source, body, &operation.rows)?;
+    let patched = apply_patches(
+        source,
+        vec![Patch {
+            span: SourceSpan {
+                start: insertion,
+                end: insertion,
+            },
+            replacement: fragment,
+        }],
+    )?;
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_table_row_output_bytes(
+        &output,
+        &expected_table_insert(source, &blocks, index, &operation.rows)?,
+    )?;
+    Ok(output)
+}
+
+pub fn delete_table_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeleteTable,
+) -> Result<Vec<u8>, OperationResult> {
+    let (table_index, table, _, _) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(
+            unsupported("delete_table supports only simple direct body tables")
+                .with_reason_code(reason.as_str()),
+        );
+    }
+    let mut expected = all_table_rows(source)?;
+    expected.remove(table_index);
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span: source.node(table).expect("table exists").span(),
+            replacement: Vec::new(),
+        }],
+    )
+    .and_then(|output| {
+        verify_table_row_output_bytes(&output, &expected)?;
+        Ok(output)
+    })
+}
+
+pub fn delete_table_row_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeleteTableRow,
+) -> Result<Vec<u8>, OperationResult> {
+    let (table_index, table, rows, _) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(
+            unsupported("delete_table_row supports only simple rectangular tables")
+                .with_reason_code(reason.as_str()),
+        );
+    }
+    if rows.len() == 1 {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "deleting the final table row requires delete_table",
+        )
+        .with_reason_code("LAST_TABLE_ROW"));
+    }
+    let (handle_table, row_index) = operation
+        .row
+        .handle
+        .as_deref()
+        .map(parse_row_handle)
+        .transpose()?
+        .ok_or_else(|| {
+            OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "delete_table_row requires a row handle",
+            )
+        })?;
+    if handle_table != table_index || row_index >= rows.len() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table row handle was not found",
+        ));
+    }
+    let mut expected = all_table_rows(source)?;
+    expected[table_index].remove(row_index);
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span: source
+                .node(rows[row_index].source_id())
+                .expect("row exists")
+                .span(),
+            replacement: Vec::new(),
+        }],
+    )
+    .and_then(|output| {
+        verify_table_row_output_bytes(&output, &expected)?;
+        Ok(output)
+    })
+}
+
+pub fn delete_table_column_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeleteTableColumn,
+) -> Result<Vec<u8>, OperationResult> {
+    let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(
+            unsupported("delete_table_column supports only simple rectangular tables")
+                .with_reason_code(reason.as_str()),
+        );
+    }
+    if headers.len() == 1 {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "deleting the final table column requires delete_table",
+        )
+        .with_reason_code("LAST_TABLE_COLUMN"));
+    }
+    let column = if let Some(handle) = &operation.column_handle {
+        let (t, c) = parse_column_handle(handle)?;
+        if t != table_index {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "column handle does not belong to the selected table",
+            ));
+        }
+        c
+    } else {
+        let found = headers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, text)| label_matches(text, &operation.column_header).then_some(i))
+            .collect::<Vec<_>>();
+        if found.len() != 1 {
+            return Err(OperationResult::failed(
+                if found.is_empty() {
+                    "TARGET_NOT_FOUND"
+                } else {
+                    "TARGET_AMBIGUOUS"
+                },
+                "column header does not resolve to one current table column",
+            ));
+        }
+        found[0]
+    };
+    if column >= headers.len() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table column handle was not found",
+        ));
+    }
+    let grid = explicit_table_grid(source, table, headers.len())?;
+    let mut patches = vec![Patch {
+        span: source
+            .node(grid.columns[column])
+            .expect("grid exists")
+            .span(),
+        replacement: Vec::new(),
+    }];
+    for row in &rows {
+        let cell = row
+            .cells()
+            .nth(column)
+            .expect("rectangular table")
+            .source_id();
+        patches.push(Patch {
+            span: source.node(cell).expect("cell exists").span(),
+            replacement: Vec::new(),
+        });
+    }
+    let mut expected = all_table_rows(source)?;
+    for row in &mut expected[table_index] {
+        row.remove(column);
+    }
+    let output = write_patches_to_vec(package, main, source, patches)?;
+    verify_table_row_output_bytes(&output, &expected)?;
+    let target = TableTarget {
+        header_cells: expected[table_index][0].clone(),
+        occurrence: None,
+        handle: Some(format!("t{table_index}")),
+    };
+    let output_package = Package::from_bytes(output.clone()).map_err(document_invalid)?;
+    let (_, output_source) = crate::open_main_source(&output_package).map_err(document_invalid)?;
+    let (_, output_table, _, output_headers) = resolve_table(&output_source, &target)?;
+    explicit_table_grid(&output_source, output_table, output_headers.len())?;
     Ok(output)
 }
 
@@ -3070,8 +3292,8 @@ pub(crate) fn table_structure_reason(
         .children(*first)
         .filter(|id| word(source, *id, "tc"))
         .count();
-    (width > 1
-        && rows.len() > 1
+    (width > 0
+        && !rows.is_empty()
         && rows.iter().all(|row| {
             source
                 .children(*row)
@@ -3522,6 +3744,106 @@ fn insert_paragraph_bytes(
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
     verify_inserted_body_bytes(&output, index, texts)?;
     Ok(output)
+}
+
+fn placement_index(
+    blocks: &[NodeId],
+    placement: ResolvedParagraphPlacement,
+) -> Result<usize, OperationResult> {
+    match placement {
+        ResolvedParagraphPlacement::Start => Ok(0),
+        ResolvedParagraphPlacement::End => Ok(blocks.len()),
+        ResolvedParagraphPlacement::Before(anchor) => {
+            blocks.iter().position(|id| *id == anchor).ok_or_else(|| {
+                OperationResult::failed("TARGET_NOT_FOUND", "body block handle was not found")
+            })
+        }
+        ResolvedParagraphPlacement::After(anchor) => blocks
+            .iter()
+            .position(|id| *id == anchor)
+            .map(|index| index + 1)
+            .ok_or_else(|| {
+                OperationResult::failed("TARGET_NOT_FOUND", "body block handle was not found")
+            }),
+    }
+}
+
+fn body_insertion(
+    source: &SourceDocument,
+    body: NodeId,
+    blocks: &[NodeId],
+    index: usize,
+) -> Result<usize, OperationResult> {
+    if index < blocks.len() {
+        Ok(source
+            .node(blocks[index])
+            .expect("body block exists")
+            .span()
+            .start)
+    } else if let Some(section) = terminal_section_properties(source, body)? {
+        Ok(source
+            .node(section)
+            .expect("section properties exist")
+            .span()
+            .start)
+    } else {
+        body_closing_start(source, body)
+    }
+}
+
+fn table_fragment_for_body(
+    source: &SourceDocument,
+    body: NodeId,
+    rows: &[Vec<String>],
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_prefix_for(source, body, "body")?;
+    let name = |local: &str| qualify(&prefix, local);
+    let mut value = format!("<{}><{}>", name("tbl"), name("tblGrid"));
+    for _ in &rows[0] {
+        value.push_str(&format!("<{} {}:w=\"0\"/>", name("gridCol"), prefix));
+    }
+    value.push_str(&format!("</{}>", name("tblGrid")));
+    for row in rows {
+        value.push_str(&format!("<{}>", name("tr")));
+        for text in row {
+            let space = if requires_space_preservation(text) {
+                " xml:space=\"preserve\""
+            } else {
+                ""
+            };
+            value.push_str(&format!(
+                "<{}><{}><{}><{}{}>{}</{}></{}></{}></{}>",
+                name("tc"),
+                name("p"),
+                name("r"),
+                name("t"),
+                space,
+                escape(text),
+                name("t"),
+                name("r"),
+                name("p"),
+                name("tc")
+            ));
+        }
+        value.push_str(&format!("</{}>", name("tr")));
+    }
+    value.push_str(&format!("</{}>", name("tbl")));
+    Ok(value.into_bytes())
+}
+
+fn expected_table_insert(
+    source: &SourceDocument,
+    blocks: &[NodeId],
+    index: usize,
+    rows: &[Vec<String>],
+) -> Result<Vec<Vec<Vec<String>>>, OperationResult> {
+    let mut expected = all_table_rows(source)?;
+    let table_index = blocks[..index]
+        .iter()
+        .filter(|id| word(source, **id, "tbl"))
+        .count();
+    expected.insert(table_index, rows.to_vec());
+    Ok(expected)
 }
 
 fn resolve_paragraph_placement(

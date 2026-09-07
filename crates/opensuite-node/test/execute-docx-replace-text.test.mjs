@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import binding from '../index.js'
 
-const { createBlankDocx, executeDocxInsertParagraph, executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetTableCellsText, findDocxText, getDocxCapabilities, inspectDocx } = binding
+const { createBlankDocx, executeDocxCreateTable, executeDocxDeleteParagraph, executeDocxDeleteTable, executeDocxDeleteTableColumn, executeDocxDeleteTableRow, executeDocxInsertParagraph, executeDocxInsertParagraphs, executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetParagraphFormatting, executeDocxSetParagraphStyle, executeDocxSetTableCellsText, executeDocxSetTextFormatting, findDocxText, getDocxCapabilities, inspectDocx } = binding
 const office = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
 const word = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
@@ -93,6 +93,59 @@ test('creates and authors a blank DOCX entirely as Buffers', async () => {
   assert.equal(second.result.ok, true)
   const body = await inspectDocx(second.output, { focus: { kind: 'body_blocks', offset: 0, limit: 20 } })
   assert.deepEqual(body.bodyBlocks.items.map((block) => block.text), ['Hello', 'World'])
+})
+
+test('creates, edits, and deletes a table through native bindings', async () => {
+  let result = await executeDocxCreateTable(createBlankDocx(), {
+    rows: [['Task', 'Owner'], ['Prepare report', 'J. Smith']], placement: { kind: 'end' },
+  })
+  assert.equal(result.result.ok, true)
+  let tables = await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 10 } })
+  let table = tables.tables.items[0]
+  result = await executeDocxDeleteTableColumn(result.output, { table: { handle: table.handle }, columnHandle: table.columns[1].handle })
+  assert.equal(result.result.ok, true)
+  tables = await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 10 } })
+  table = tables.tables.items[0]
+  result = await executeDocxDeleteTableRow(result.output, { table: { handle: table.handle }, row: { handle: table.rows[1].handle } })
+  assert.equal(result.result.ok, true)
+  result = await executeDocxDeleteTable(result.output, { table: { handle: 't0' } })
+  assert.equal(result.result.ok, true)
+  tables = await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 10 } })
+  assert.equal(tables.tables.items.length, 0)
+})
+
+test('authors and edits a complete paragraph lifecycle through native bindings', async () => {
+  let result = await executeDocxInsertParagraphs(createBlankDocx(), {
+    texts: ['Title', 'Introduction', 'Body', 'Conclusion'], placement: { kind: 'end' },
+  })
+  assert.equal(result.result.ok, true)
+  assert.ok(Buffer.isBuffer(result.output))
+  result = await executeDocxSetParagraphStyle(result.output, { target: { text: 'Title' }, style: 'Heading 1' })
+  assert.equal(result.result.ok, true)
+  result = await executeDocxSetParagraphFormatting(result.output, { target: { text: 'Body' }, alignment: 'center', spacingAfterTwips: 120 })
+  assert.equal(result.result.ok, true)
+  result = await executeDocxSetTextFormatting(result.output, { target: { text: 'Body' }, bold: true })
+  assert.equal(result.result.ok, true)
+  result = await executeDocxDeleteParagraph(result.output, { target: { text: 'Conclusion' } })
+  assert.equal(result.result.ok, true)
+  const paragraphs = await inspectDocx(result.output, { focus: { kind: 'paragraphs', offset: 0, limit: 20 } })
+  assert.deepEqual(paragraphs.paragraphs.items.map((item) => item.text), ['Title', 'Introduction', 'Body'])
+  const headings = await inspectDocx(result.output, { focus: { kind: 'headings', offset: 0, limit: 20 } })
+  assert.deepEqual(headings.headings.items.map((item) => [item.text, item.styleName]), [['Title', 'Heading 1']])
+  assert.equal((await findDocxText(result.output, { text: 'Conclusion' })).matchCount, 0)
+})
+
+test('places paragraph batches around body blocks and preserves text exactly', async () => {
+  let bytes = await executeDocxInsertParagraphs(createBlankDocx(), { texts: ['end', '', '  ünicode  '], placement: { kind: 'end' } }).then((value) => value.output)
+  bytes = (await executeDocxInsertParagraphs(bytes, { texts: ['start'], placement: { kind: 'start' } })).output
+  bytes = (await executeDocxInsertParagraphs(bytes, { texts: ['before'], placement: { kind: 'before', handle: 'b1' } })).output
+  bytes = (await executeDocxInsertParagraphs(bytes, { texts: ['after'], placement: { kind: 'after', handle: 'b2' } })).output
+  const body = await inspectDocx(bytes, { focus: { kind: 'body_blocks', offset: 0, limit: 20 } })
+  assert.deepEqual(body.bodyBlocks.items.map((item) => item.text), ['start', 'before', 'end', 'after', '', '  ünicode  '])
+  const empty = await executeDocxInsertParagraphs(bytes, { texts: [], placement: { kind: 'end' } })
+  assert.equal(empty.result.ok, false)
+  const stale = await executeDocxInsertParagraphs(bytes, { texts: ['nope'], placement: { kind: 'before', handle: 'b99' } })
+  assert.equal(stale.result.diagnostics[0].code, 'TARGET_NOT_FOUND')
 })
 
 test('returns structured failures without output buffers', async () => {

@@ -297,6 +297,18 @@ fn tables(
             row_count: rows.len(),
             is_rectangular,
             affordances: vec![
+                affordance("delete_table", table_reason),
+                affordance(
+                    "delete_table_row",
+                    table_reason
+                        .or_else(|| (rows.len() == 1).then_some(AffordanceReason::LastTableRow)),
+                ),
+                affordance(
+                    "delete_table_column",
+                    table_reason
+                        .or_else(|| (width == 1).then_some(AffordanceReason::LastTableColumn))
+                        .or_else(|| crate::mutation::table_grid_reason(source, table_id, width)),
+                ),
                 affordance("insert_table_rows", table_reason),
                 affordance(
                     "insert_table_column",
