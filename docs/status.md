@@ -90,6 +90,10 @@ and XML source bytes.
 - Preservation-safe `InsertParagraphAfter` for a semantic text anchor in an ordinary,
   direct main-document body paragraph. It inserts a plain unformatted paragraph,
   verifies the output package, reopens it, and proves the paragraph follows its anchor.
+- Deterministic blank DOCX creation with main-document, relationships, basic styles (Normal and
+  Heading 1–3), and terminal section properties. Ordered direct body-block inspection exposes
+  version-local `bN` handles, and `InsertParagraph` places a plain paragraph at start/end or
+  before/after a paragraph or table handle while preserving terminal section properties.
 - Preservation-safe `DeleteParagraph` for an ordinary direct body paragraph selected
   through semantic text. It removes only that source span, checks ranges and wrappers,
   preserves existing relationships, and verifies the reopened body structure.

@@ -10,9 +10,9 @@ rust-version.workspace = true
 opensuite-opc = { path = "../opensuite-opc" }
 opensuite-protocol = { path = "../opensuite-protocol" }
 quick-xml = "0.37"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

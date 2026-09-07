@@ -101,6 +101,9 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "comments",
     "revision_views",
     "replace_text",
+    "create_blank_docx",
+    "body_blocks",
+    "insert_paragraph",
     "insert_paragraph_after",
     "delete_paragraph",
     "set_table_cell_text",
@@ -140,6 +143,22 @@ pub struct InsertParagraphAfter {
     pub anchor: TextTarget,
     pub text: String,
     pub base_revision: Option<String>,
+}
+
+/// Places a new paragraph in the direct, Current-view document body sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertParagraph {
+    pub text: String,
+    pub placement: ParagraphPlacement,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ParagraphPlacement {
+    Start,
+    End,
+    Before { handle: String },
+    After { handle: String },
 }
 
 /// Deletes the ordinary body paragraph containing `target`.
@@ -471,6 +490,7 @@ pub struct InspectDocx {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InspectDocxFocus {
     Overview,
+    BodyBlocks { offset: usize, limit: usize },
     Headings { offset: usize, limit: usize },
     Paragraphs { offset: usize, limit: usize },
     Tables { offset: usize, limit: usize },
@@ -506,8 +526,33 @@ pub struct DocxHeading {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocxParagraph {
     pub occurrence: usize,
+    pub handle: Option<String>,
     pub text: String,
     pub style_name: Option<String>,
+}
+
+/// One ordinary direct child of the document body in source order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxBodyBlock {
+    pub handle: String,
+    pub kind: DocxBodyBlockKind,
+    pub text: Option<String>,
+    pub table_handle: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocxBodyBlockKind {
+    Paragraph,
+    Table,
+}
+
+impl DocxBodyBlockKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Paragraph => "paragraph",
+            Self::Table => "table",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -593,6 +638,7 @@ pub struct DocxTableColumn {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InspectDocxContent {
     Overview(DocxOverview),
+    BodyBlocks(InspectionPage<DocxBodyBlock>),
     Headings(InspectionPage<DocxHeading>),
     Paragraphs(InspectionPage<DocxParagraph>),
     Tables(InspectionPage<DocxTable>),
@@ -968,7 +1014,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

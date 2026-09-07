@@ -1,8 +1,8 @@
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
-    Affordance, AffordanceReason, DocxHeading, DocxOverview, DocxParagraph, DocxTable,
-    DocxTableColumn, DocxTableRow, InspectDocx, InspectDocxContent, InspectDocxFocus,
-    InspectDocxResult, InspectionPage,
+    Affordance, AffordanceReason, DocxBodyBlock, DocxBodyBlockKind, DocxHeading, DocxOverview,
+    DocxParagraph, DocxTable, DocxTableColumn, DocxTableRow, InspectDocx, InspectDocxContent,
+    InspectDocxFocus, InspectDocxResult, InspectionPage,
 };
 
 use crate::{BodyBlock, DocxDocument, RevisionView, SourceDocument, StyleSheet, load_styles};
@@ -24,6 +24,9 @@ pub fn inspect_docx_document(
     };
     match &request.focus {
         InspectDocxFocus::Overview => overview(document),
+        InspectDocxFocus::BodyBlocks { offset, limit } => {
+            body_blocks(source, document, *offset, *limit)
+        }
         InspectDocxFocus::Headings { offset, limit } => {
             let styles = match load_styles(package, main) {
                 Ok(styles) => styles,
@@ -46,7 +49,7 @@ pub fn inspect_docx_document(
                     );
                 }
             };
-            paragraphs(document, styles.as_ref(), *offset, *limit)
+            paragraphs(source, document, styles.as_ref(), *offset, *limit)
         }
         InspectDocxFocus::Tables { offset, limit } => tables(source, document, *offset, *limit),
         InspectDocxFocus::Context(request) => {
@@ -128,6 +131,7 @@ fn headings(
 }
 
 fn paragraphs(
+    source: &SourceDocument,
     document: DocxDocument<'_>,
     styles: Option<&StyleSheet>,
     offset: usize,
@@ -152,6 +156,8 @@ fn paragraphs(
         };
         items.push(DocxParagraph {
             occurrence,
+            handle: direct_body_block_index(source, document.body_id(), paragraph.source_id())
+                .map(|index| format!("b{index}")),
             text,
             style_name: paragraph_style_name(&paragraph, styles),
         });
@@ -159,6 +165,70 @@ fn paragraphs(
     InspectDocxResult::success(InspectDocxContent::Paragraphs(page_result(
         total, page, items,
     )))
+}
+
+fn body_blocks(
+    source: &SourceDocument,
+    document: DocxDocument<'_>,
+    offset: usize,
+    limit: usize,
+) -> InspectDocxResult {
+    let Some(page) = page(offset, limit) else {
+        return invalid_bounds();
+    };
+    let body = document.body_id();
+    let mut total = 0;
+    let mut items = Vec::new();
+    let mut table_index = 0;
+    for id in source.children(body) {
+        let (kind, text, table_handle) = if is_word(source, id, "p") {
+            let text = match crate::tracked_change::text_for_view(source, id, RevisionView::Current)
+            {
+                Ok(text) => text,
+                Err(error) => {
+                    return InspectDocxResult::failed(
+                        error.code(),
+                        "could not inspect DOCX artifact",
+                    );
+                }
+            };
+            (DocxBodyBlockKind::Paragraph, Some(text), None)
+        } else if is_word(source, id, "tbl") {
+            let handle = format!("t{table_index}");
+            table_index += 1;
+            (DocxBodyBlockKind::Table, None, Some(handle))
+        } else {
+            continue;
+        };
+        let index = total;
+        total += 1;
+        if index >= page.0 && items.len() < page.1 {
+            items.push(DocxBodyBlock {
+                handle: format!("b{index}"),
+                kind,
+                text,
+                table_handle,
+            });
+        }
+    }
+    InspectDocxResult::success(InspectDocxContent::BodyBlocks(page_result(
+        total, page, items,
+    )))
+}
+
+fn direct_body_block_index(
+    source: &SourceDocument,
+    body: crate::NodeId,
+    target: crate::NodeId,
+) -> Option<usize> {
+    source
+        .children(body)
+        .filter(|id| is_word(source, *id, "p") || is_word(source, *id, "tbl"))
+        .position(|id| id == target)
+}
+
+fn is_word(source: &SourceDocument, id: crate::NodeId, local: &str) -> bool {
+    matches!(source.node(id).map(|node| node.kind()), Some(crate::SourceNodeKind::Element { name, .. }) if name.local_name() == local && name.namespace_uri().is_some_and(|uri| matches!(uri, "http://schemas.openxmlformats.org/wordprocessingml/2006/main" | "http://purl.oclc.org/ooxml/wordprocessingml/main")))
 }
 
 fn tables(
@@ -356,7 +426,13 @@ mod tests {
         assert_eq!(headings.items[0].style_name, "Heading 1");
         assert_eq!(headings.items[0].level, Some(1));
 
-        let paragraphs = paragraphs(DocxDocument::new(&source).unwrap(), Some(&styles), 0, 2);
+        let paragraphs = paragraphs(
+            &source,
+            DocxDocument::new(&source).unwrap(),
+            Some(&styles),
+            0,
+            2,
+        );
         let Some(InspectDocxContent::Paragraphs(paragraphs)) = paragraphs.content else {
             panic!("expected paragraphs")
         };
@@ -388,7 +464,7 @@ mod tests {
     #[test]
     fn rejects_invalid_bounds_without_source_details() {
         let source = source("<w:p><w:r><w:t>text</w:t></w:r></w:p>");
-        let result = paragraphs(DocxDocument::new(&source).unwrap(), None, 0, 0);
+        let result = paragraphs(&source, DocxDocument::new(&source).unwrap(), None, 0, 0);
         assert_eq!(result.diagnostics[0].code, "INVALID_INSPECTION_BOUNDS");
         let text = format!("{result:?}");
         assert!(!text.contains("NodeId"));

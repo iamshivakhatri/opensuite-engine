@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import binding from '../index.js'
 
-const { executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetTableCellsText, findDocxText, getDocxCapabilities, inspectDocx } = binding
+const { createBlankDocx, executeDocxInsertParagraph, executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetTableCellsText, findDocxText, getDocxCapabilities, inspectDocx } = binding
 const office = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
 const word = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
@@ -82,6 +82,17 @@ test('returns verified Buffer output for a valid replacement', async () => {
   const second = await executeDocxReplaceText(result.output, operation('OpenSuite replacement', 'Second replacement'))
   assert.equal(second.result.ok, true)
   assert.ok(Buffer.isBuffer(second.output))
+})
+
+test('creates and authors a blank DOCX entirely as Buffers', async () => {
+  const blank = createBlankDocx()
+  assert.ok(Buffer.isBuffer(blank))
+  const heading = await executeDocxInsertParagraph(blank, { text: 'Hello', placement: { kind: 'end' } })
+  assert.equal(heading.result.ok, true)
+  const second = await executeDocxInsertParagraph(heading.output, { text: 'World', placement: { kind: 'after', handle: 'b0' } })
+  assert.equal(second.result.ok, true)
+  const body = await inspectDocx(second.output, { focus: { kind: 'body_blocks', offset: 0, limit: 20 } })
+  assert.deepEqual(body.bodyBlocks.items.map((block) => block.text), ['Hello', 'World'])
 })
 
 test('returns structured failures without output buffers', async () => {

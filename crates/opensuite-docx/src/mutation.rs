@@ -4,12 +4,12 @@ use quick_xml::escape::escape;
 
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
-    AffordanceReason, ContentControlTarget, DeleteParagraph, InsertParagraphAfter,
+    AffordanceReason, ContentControlTarget, DeleteParagraph, InsertParagraph, InsertParagraphAfter,
     InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, OperationResult,
-    ParagraphFormattingPatch, PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText,
-    SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTableCellsText,
-    SetTextFormatting, TableCellTarget, TableRowTarget, TableTarget, TextFormattingPatch,
-    TextTarget,
+    ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture, ReplaceText,
+    SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
+    SetTableCellsText, SetTextFormatting, TableCellTarget, TableRowTarget, TableTarget,
+    TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -20,6 +20,13 @@ const NS: [&str; 2] = [
 ];
 const MAX_TABLE_ROWS_PER_OPERATION: usize = 100;
 const MAX_TABLE_CELL_UPDATES: usize = 100;
+
+enum ResolvedParagraphPlacement {
+    Start,
+    End,
+    Before(NodeId),
+    After(NodeId),
+}
 
 /// Applies one preservation-safe replacement across compatible `w:t` source regions.
 pub fn replace_text(
@@ -118,26 +125,14 @@ pub fn insert_paragraph_after(
         Ok(value) => value,
         Err(result) => return result,
     };
-    let fragment = match paragraph_fragment(source, paragraph, &operation.text) {
-        Ok(fragment) => fragment,
-        Err(result) => return result,
-    };
-    let insertion = source
-        .node(paragraph)
-        .expect("anchor paragraph exists")
-        .span()
-        .end;
-    let patched = match apply_patches(
+    let output_bytes = match insert_paragraph_bytes(
+        package,
+        main,
         source,
-        vec![Patch {
-            span: SourceSpan {
-                start: insertion,
-                end: insertion,
-            },
-            replacement: fragment,
-        }],
+        &operation.text,
+        ResolvedParagraphPlacement::After(paragraph),
     ) {
-        Ok(patched) => patched,
+        Ok(bytes) => bytes,
         Err(result) => return result,
     };
     let temporary = output.with_file_name(format!(
@@ -148,8 +143,8 @@ pub fn insert_paragraph_after(
             .unwrap_or_default()
             .as_nanos()
     ));
-    if let Err(error) = package.write_replaced_part(main, &patched, &temporary) {
-        return OperationResult::failed(error.code(), error.to_string());
+    if let Err(error) = std::fs::write(&temporary, output_bytes) {
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
     }
     if let Err(result) =
         verify_inserted_output(&temporary, &operation.anchor, &anchor, &operation.text)
@@ -162,6 +157,17 @@ pub fn insert_paragraph_after(
         return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
     }
     OperationResult::paragraph_inserted(anchor, operation.text.clone())
+}
+
+/// Inserts one plain paragraph at a direct-body placement and returns verified DOCX bytes.
+pub fn insert_paragraph_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertParagraph,
+) -> Result<Vec<u8>, OperationResult> {
+    let placement = resolve_paragraph_placement(source, &operation.placement)?;
+    insert_paragraph_bytes(package, main, source, &operation.text, placement)
 }
 
 /// Deletes one safe, direct main-body paragraph selected by Current-view text.
@@ -3354,12 +3360,154 @@ fn body_texts(source: &SourceDocument) -> Result<Vec<(NodeId, String)>, Operatio
         .collect()
 }
 
+fn insert_paragraph_bytes(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    text: &str,
+    placement: ResolvedParagraphPlacement,
+) -> Result<Vec<u8>, OperationResult> {
+    let (body, blocks) = direct_body_blocks(source)?;
+    let index = match placement {
+        ResolvedParagraphPlacement::Start => 0,
+        ResolvedParagraphPlacement::End => blocks.len(),
+        ResolvedParagraphPlacement::Before(anchor) => {
+            blocks.iter().position(|id| *id == anchor).ok_or_else(|| {
+                OperationResult::failed("TARGET_NOT_FOUND", "body block handle was not found")
+            })?
+        }
+        ResolvedParagraphPlacement::After(anchor) => blocks
+            .iter()
+            .position(|id| *id == anchor)
+            .map(|index| index + 1)
+            .ok_or_else(|| {
+                OperationResult::failed("TARGET_NOT_FOUND", "body block handle was not found")
+            })?,
+    };
+    let section = terminal_section_properties(source, body)?;
+    let insertion = if index < blocks.len() {
+        source
+            .node(blocks[index])
+            .expect("body block exists")
+            .span()
+            .start
+    } else if let Some(section) = section {
+        source
+            .node(section)
+            .expect("section properties exist")
+            .span()
+            .start
+    } else {
+        body_closing_start(source, body)?
+    };
+    let fragment = paragraph_fragment_for_body(source, body, text)?;
+    let patched = apply_patches(
+        source,
+        vec![Patch {
+            span: SourceSpan {
+                start: insertion,
+                end: insertion,
+            },
+            replacement: fragment,
+        }],
+    )?;
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_inserted_body_bytes(&output, index, text)?;
+    Ok(output)
+}
+
+fn resolve_paragraph_placement(
+    source: &SourceDocument,
+    placement: &ParagraphPlacement,
+) -> Result<ResolvedParagraphPlacement, OperationResult> {
+    match placement {
+        ParagraphPlacement::Start => Ok(ResolvedParagraphPlacement::Start),
+        ParagraphPlacement::End => Ok(ResolvedParagraphPlacement::End),
+        ParagraphPlacement::Before { handle } => Ok(ResolvedParagraphPlacement::Before(
+            resolve_body_block_handle(source, handle)?,
+        )),
+        ParagraphPlacement::After { handle } => Ok(ResolvedParagraphPlacement::After(
+            resolve_body_block_handle(source, handle)?,
+        )),
+    }
+}
+
+fn resolve_body_block_handle(
+    source: &SourceDocument,
+    handle: &str,
+) -> Result<NodeId, OperationResult> {
+    let index = handle
+        .strip_prefix('b')
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or_else(|| {
+            OperationResult::failed("PRECONDITION_FAILED", "body block handle is malformed")
+        })?;
+    let (_, blocks) = direct_body_blocks(source)?;
+    blocks.get(index).copied().ok_or_else(|| {
+        OperationResult::failed("TARGET_NOT_FOUND", "body block handle was not found")
+    })
+}
+
+fn direct_body_blocks(source: &SourceDocument) -> Result<(NodeId, Vec<NodeId>), OperationResult> {
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    let body = document.body_id();
+    Ok((
+        body,
+        source
+            .children(body)
+            .filter(|id| word(source, *id, "p") || word(source, *id, "tbl"))
+            .collect(),
+    ))
+}
+
+fn terminal_section_properties(
+    source: &SourceDocument,
+    body: NodeId,
+) -> Result<Option<NodeId>, OperationResult> {
+    let children = source.children(body).collect::<Vec<_>>();
+    let Some(section) = children
+        .iter()
+        .copied()
+        .find(|id| word(source, *id, "sectPr"))
+    else {
+        return Ok(None);
+    };
+    (children.last() == Some(&section))
+        .then_some(Some(section))
+        .ok_or_else(|| unsupported("insert_paragraph requires terminal body section properties"))
+}
+
+fn body_closing_start(source: &SourceDocument, body: NodeId) -> Result<usize, OperationResult> {
+    let span = source.node(body).expect("body exists").span();
+    source.original_bytes()[span.start..span.end]
+        .iter()
+        .rposition(|byte| *byte == b'<')
+        .map(|offset| span.start + offset)
+        .ok_or_else(|| unsupported("document body has no closing tag"))
+}
+
+fn paragraph_fragment_for_body(
+    source: &SourceDocument,
+    body: NodeId,
+    text: &str,
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_prefix_for(source, body, "body")?;
+    paragraph_fragment_with_prefix(&prefix, text)
+}
+
+#[cfg(test)]
 fn paragraph_fragment(
     source: &SourceDocument,
     paragraph: NodeId,
     text: &str,
 ) -> Result<Vec<u8>, OperationResult> {
     let prefix = word_prefix(source, paragraph)?;
+    paragraph_fragment_with_prefix(prefix, text)
+}
+
+fn paragraph_fragment_with_prefix(prefix: &str, text: &str) -> Result<Vec<u8>, OperationResult> {
     let name = |local: &str| {
         if prefix.is_empty() {
             local.to_owned()
@@ -3387,6 +3535,36 @@ fn paragraph_fragment(
         name("p")
     )
     .into_bytes())
+}
+
+fn word_prefix_for(
+    source: &SourceDocument,
+    id: NodeId,
+    expected_local: &str,
+) -> Result<String, OperationResult> {
+    let SourceNodeKind::Element { start_tag, .. } =
+        source.node(id).expect("source node exists").kind()
+    else {
+        return Err(unsupported("anchor paragraph has no source tag"));
+    };
+    let tag = std::str::from_utf8(&source.original_bytes()[start_tag.start..start_tag.end])
+        .map_err(|_| unsupported("anchor paragraph tag is not UTF-8"))?;
+    let name = tag
+        .strip_prefix('<')
+        .and_then(|value| {
+            value
+                .split(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+                .next()
+        })
+        .ok_or_else(|| unsupported("anchor paragraph tag is invalid"))?;
+    let prefix = name
+        .strip_suffix(expected_local)
+        .and_then(|value| value.strip_suffix(':'))
+        .unwrap_or("");
+    if name != expected_local && !name.ends_with(&format!(":{expected_local}")) {
+        return Err(unsupported("source tag is invalid"));
+    }
+    Ok(prefix.to_owned())
 }
 
 fn word_prefix(source: &SourceDocument, id: NodeId) -> Result<&str, OperationResult> {
@@ -3610,6 +3788,34 @@ fn verify_output_bytes(output: &[u8], replacement: &str) -> Result<(), Operation
                 "output package {0} does not contain the replacement",
                 main.name
             ),
+        )
+    })
+}
+
+fn verify_inserted_body_bytes(
+    output: &[u8],
+    expected_index: usize,
+    inserted_text: &str,
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let (_, blocks) = direct_body_blocks(&source)?;
+    let paragraph = blocks.get(expected_index).ok_or_else(|| {
+        OperationResult::failed("DOCUMENT_INVALID", "inserted paragraph was not found")
+    })?;
+    if !word(&source, *paragraph, "p") {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "inserted paragraph is not at the requested body position",
+        ));
+    }
+    let text = crate::tracked_change::text_for_view(&source, *paragraph, RevisionView::Current)
+        .map_err(document_invalid)?;
+    (text == inserted_text).then_some(()).ok_or_else(|| {
+        OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "inserted paragraph text does not match request",
         )
     })
 }

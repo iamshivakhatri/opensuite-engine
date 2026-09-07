@@ -1,12 +1,13 @@
 use opensuite_opc::Package;
 use opensuite_protocol::{
-    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertTableColumnAfter,
-    InsertTableRowAfter, InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
-    InspectTextContextResult, OperationResult, ReplaceText, SetTableCellsText,
+    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertParagraph,
+    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
+    InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult, ReplaceText,
+    SetTableCellsText,
 };
 
 use crate::{
-    insert_table_column_after_to_vec, insert_table_row_after_to_vec,
+    insert_paragraph_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
     insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
     set_table_cells_text_to_vec,
 };
@@ -16,6 +17,44 @@ use crate::{
 pub struct DocxExecutionResult {
     pub operation: OperationResult,
     pub output_artifact: Option<Vec<u8>>,
+}
+
+/// Executes `InsertParagraph` against owned DOCX bytes and returns verified output bytes.
+pub fn execute_docx_insert_paragraph(
+    input_artifact: Vec<u8>,
+    operation: &InsertParagraph,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    match insert_paragraph_to_vec(&package, &main, &source, operation) {
+        Ok(output_artifact) => DocxExecutionResult {
+            operation: OperationResult::paragraph_inserted(String::new(), operation.text.clone()),
+            output_artifact: Some(output_artifact),
+        },
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "insert_paragraph",
+                placement_handle(&operation.placement),
+            ),
+            output_artifact: None,
+        },
+    }
+}
+
+fn placement_handle(placement: &opensuite_protocol::ParagraphPlacement) -> Option<&str> {
+    match placement {
+        opensuite_protocol::ParagraphPlacement::Before { handle }
+        | opensuite_protocol::ParagraphPlacement::After { handle } => Some(handle),
+        opensuite_protocol::ParagraphPlacement::Start
+        | opensuite_protocol::ParagraphPlacement::End => None,
+    }
 }
 
 /// Executes `ReplaceText` against owned DOCX bytes and returns verified output bytes on success.
@@ -297,7 +336,9 @@ fn structured_failure(
 mod tests {
     use std::io::{Cursor, Read, Write};
 
-    use opensuite_protocol::{OperationStatus, TextTarget};
+    use opensuite_protocol::{
+        InspectDocxContent, InspectDocxFocus, OperationStatus, ParagraphPlacement, TextTarget,
+    };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
     use super::*;
@@ -321,6 +362,22 @@ mod tests {
         writer.write_all(format!("<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>duplicate</w:t></w:r><w:r><w:t>duplicate</w:t></w:r></w:p></w:body></w:document>").as_bytes()).unwrap();
         writer.start_file("word/media/image.bin", options).unwrap();
         writer.write_all(b"unchanged image").unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn table_fixture() -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        writer.start_file("[Content_Types].xml", options).unwrap();
+        writer
+            .write_all(
+                b"<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/></Types>",
+            )
+            .unwrap();
+        writer.start_file("_rels/.rels", options).unwrap();
+        writer.write_all(format!("<Relationships><Relationship Id=\"rId1\" Type=\"{OFFICE}\" Target=\"word/document.xml\"/></Relationships>").as_bytes()).unwrap();
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(format!("<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/></w:body></w:document>").as_bytes()).unwrap();
         writer.finish().unwrap().into_inner()
     }
 
@@ -392,5 +449,97 @@ mod tests {
         let stale = execute_docx_replace_text(fixture(), &operation("old text", "wrong text"));
         assert_eq!(stale.operation.diagnostics[0].code, "PRECONDITION_FAILED");
         assert!(stale.output_artifact.is_none());
+    }
+
+    #[test]
+    fn blank_document_supports_ordered_paragraph_authoring() {
+        let mut artifact = crate::create_blank_docx();
+        for (text, placement) in [
+            ("Heading", ParagraphPlacement::End),
+            (
+                "First",
+                ParagraphPlacement::After {
+                    handle: "b0".to_owned(),
+                },
+            ),
+            (
+                "Middle",
+                ParagraphPlacement::Before {
+                    handle: "b1".to_owned(),
+                },
+            ),
+            ("Start", ParagraphPlacement::Start),
+        ] {
+            let result = execute_docx_insert_paragraph(
+                artifact,
+                &InsertParagraph {
+                    text: text.to_owned(),
+                    placement,
+                    base_revision: None,
+                },
+            );
+            assert_eq!(result.operation.status, OperationStatus::Applied);
+            artifact = result.output_artifact.unwrap();
+        }
+        let result = inspect_docx(
+            artifact.clone(),
+            &InspectDocx {
+                focus: InspectDocxFocus::BodyBlocks {
+                    offset: 0,
+                    limit: 20,
+                },
+            },
+        );
+        let Some(InspectDocxContent::BodyBlocks(page)) = result.content else {
+            panic!("expected body blocks")
+        };
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|item| item.text.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                Some("Start"),
+                Some("Heading"),
+                Some("Middle"),
+                Some("First")
+            ]
+        );
+        Package::from_bytes(artifact).unwrap().verify().unwrap();
+    }
+
+    #[test]
+    fn inserts_a_paragraph_before_a_table_without_rewriting_it() {
+        let input = table_fixture();
+        let result = execute_docx_insert_paragraph(
+            input.clone(),
+            &InsertParagraph {
+                text: "Above table".to_owned(),
+                placement: ParagraphPlacement::Before {
+                    handle: "b0".to_owned(),
+                },
+                base_revision: None,
+            },
+        );
+        let output = result.output_artifact.unwrap();
+        let inspected = inspect_docx(
+            output,
+            &InspectDocx {
+                focus: InspectDocxFocus::BodyBlocks {
+                    offset: 0,
+                    limit: 20,
+                },
+            },
+        );
+        let Some(InspectDocxContent::BodyBlocks(page)) = inspected.content else {
+            panic!("expected body blocks")
+        };
+        assert_eq!(page.items[0].text.as_deref(), Some("Above table"));
+        assert_eq!(page.items[1].table_handle.as_deref(), Some("t0"));
+        assert!(
+            entry(&input, "word/document.xml")
+                .windows(b"<w:tbl>".len())
+                .any(|value| value == b"<w:tbl>")
+        );
     }
 }
