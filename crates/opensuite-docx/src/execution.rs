@@ -4,7 +4,8 @@ use opensuite_protocol::{
     DiagnosticSeverity, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
     InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
     InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult, ReplaceText,
-    SetParagraphFormatting, SetParagraphStyle, SetTableCellsText, SetTextFormatting,
+    SetParagraphFormatting, SetParagraphStyle, SetTableCellsText, SetTableFormatting,
+    SetTextFormatting,
 };
 
 use crate::{
@@ -13,7 +14,7 @@ use crate::{
     insert_paragraphs_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
     insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
     set_paragraph_formatting_to_vec, set_paragraph_style_to_vec, set_table_cells_text_to_vec,
-    set_text_formatting_to_vec,
+    set_table_formatting_to_vec, set_text_formatting_to_vec,
 };
 
 /// The result of executing one DOCX operation against an immutable artifact.
@@ -203,6 +204,13 @@ execute_table_mutation!(
         .column_handle
         .clone()
         .or(operation.table.handle.clone())
+);
+execute_table_mutation!(
+    execute_docx_set_table_formatting,
+    SetTableFormatting,
+    set_table_formatting_to_vec,
+    "set_table_formatting",
+    |operation: &SetTableFormatting| operation.table.handle.clone()
 );
 
 /// Executes `ReplaceText` against owned DOCX bytes and returns verified output bytes on success.

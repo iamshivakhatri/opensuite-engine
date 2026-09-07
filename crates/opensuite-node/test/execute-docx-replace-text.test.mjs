@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import binding from '../index.js'
 
-const { createBlankDocx, executeDocxCreateTable, executeDocxDeleteParagraph, executeDocxDeleteTable, executeDocxDeleteTableColumn, executeDocxDeleteTableRow, executeDocxInsertParagraph, executeDocxInsertParagraphs, executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetParagraphFormatting, executeDocxSetParagraphStyle, executeDocxSetTableCellsText, executeDocxSetTextFormatting, findDocxText, getDocxCapabilities, inspectDocx } = binding
+const { createBlankDocx, executeDocxCreateTable, executeDocxDeleteParagraph, executeDocxDeleteTable, executeDocxDeleteTableColumn, executeDocxDeleteTableRow, executeDocxInsertParagraph, executeDocxInsertParagraphs, executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetParagraphFormatting, executeDocxSetParagraphStyle, executeDocxSetTableCellsText, executeDocxSetTableFormatting, executeDocxSetTextFormatting, findDocxText, getDocxCapabilities, inspectDocx } = binding
 const office = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
 const word = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
@@ -112,6 +112,20 @@ test('creates, edits, and deletes a table through native bindings', async () => 
   assert.equal(result.result.ok, true)
   tables = await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 10 } })
   assert.equal(tables.tables.items.length, 0)
+})
+
+test('sets basic generated-table formatting through native bindings', async () => {
+  let result = await executeDocxCreateTable(createBlankDocx(), {
+    rows: [['Name', 'Role'], ['Avery', 'Owner']], placement: { kind: 'end' },
+  })
+  const table = (await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 10 } })).tables.items[0]
+  result = await executeDocxSetTableFormatting(result.output, {
+    table: { handle: table.handle }, alignment: 'center', borders: 'grid',
+    cellMarginTopTwips: 100, cellMarginRightTwips: 140,
+    cellMarginBottomTwips: 100, cellMarginLeftTwips: 140,
+  })
+  assert.equal(result.result.ok, true)
+  assert.equal((await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 10 } })).tables.items[0].rows[1].cells[0], 'Avery')
 })
 
 test('authors and edits a complete paragraph lifecycle through native bindings', async () => {

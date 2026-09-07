@@ -8,8 +8,8 @@ use opensuite_docx::{
     execute_docx_insert_table_column, execute_docx_insert_table_row,
     execute_docx_insert_table_rows, execute_docx_replace_text,
     execute_docx_set_paragraph_formatting, execute_docx_set_paragraph_style,
-    execute_docx_set_table_cells_text, execute_docx_set_text_formatting, find_docx_text,
-    inspect_docx,
+    execute_docx_set_table_cells_text, execute_docx_set_table_formatting,
+    execute_docx_set_text_formatting, find_docx_text, inspect_docx,
 };
 use opensuite_protocol::{
     Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, Diagnostic,
@@ -18,8 +18,9 @@ use opensuite_protocol::{
     InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectTextContext,
     InspectTextContextResult, InspectionPage, OperationResult, ParagraphAlignment,
     ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplaceText, RuntimeCapabilities,
-    SetParagraphFormatting, SetParagraphStyle, SetTextFormatting, TableCellTarget,
-    TableCellTextUpdate, TableRowTarget, TableTarget, TextContainer, TextFormattingPatch,
+    SetParagraphFormatting, SetParagraphStyle, SetTableFormatting, SetTextFormatting,
+    TableAlignment, TableBorders, TableCellMargins, TableCellTarget, TableCellTextUpdate,
+    TableFormattingPatch, TableRowTarget, TableTarget, TextContainer, TextFormattingPatch,
     TextTarget,
 };
 
@@ -200,6 +201,17 @@ pub struct DeleteTableColumnInput {
     pub table: TableTargetInput,
     pub column_header: Option<String>,
     pub column_handle: Option<String>,
+    pub base_revision: Option<String>,
+}
+#[napi(object)]
+pub struct SetTableFormattingInput {
+    pub table: TableTargetInput,
+    pub alignment: Option<String>,
+    pub cell_margin_top_twips: Option<u32>,
+    pub cell_margin_right_twips: Option<u32>,
+    pub cell_margin_bottom_twips: Option<u32>,
+    pub cell_margin_left_twips: Option<u32>,
+    pub borders: Option<String>,
     pub base_revision: Option<String>,
 }
 
@@ -727,6 +739,49 @@ pub fn execute_docx_set_table_cells_text_node(
     })
 }
 
+#[napi(js_name = "executeDocxSetTableFormatting")]
+pub fn execute_docx_set_table_formatting_node(
+    input: Buffer,
+    operation: SetTableFormattingInput,
+) -> AsyncTask<SetTableFormattingTask> {
+    let margins = [
+        operation.cell_margin_top_twips,
+        operation.cell_margin_right_twips,
+        operation.cell_margin_bottom_twips,
+        operation.cell_margin_left_twips,
+    ];
+    AsyncTask::new(SetTableFormattingTask {
+        input: input.to_vec(),
+        operation: SetTableFormatting {
+            table: table_target(operation.table),
+            formatting: TableFormattingPatch {
+                alignment: operation.alignment.and_then(|value| match value.as_str() {
+                    "left" => Some(PropertyPatch::Set(TableAlignment::Left)),
+                    "center" => Some(PropertyPatch::Set(TableAlignment::Center)),
+                    "right" => Some(PropertyPatch::Set(TableAlignment::Right)),
+                    "clear" => Some(PropertyPatch::Clear),
+                    _ => None,
+                }),
+                cell_margins: (margins.iter().all(Option::is_some)).then(|| {
+                    PropertyPatch::Set(TableCellMargins {
+                        top_twips: margins[0].unwrap() as u16,
+                        right_twips: margins[1].unwrap() as u16,
+                        bottom_twips: margins[2].unwrap() as u16,
+                        left_twips: margins[3].unwrap() as u16,
+                    })
+                }),
+                borders: operation.borders.and_then(|value| match value.as_str() {
+                    "grid" => Some(PropertyPatch::Set(TableBorders::Grid)),
+                    "none" => Some(PropertyPatch::Set(TableBorders::None)),
+                    "clear" => Some(PropertyPatch::Clear),
+                    _ => None,
+                }),
+            },
+            base_revision: operation.base_revision,
+        },
+    })
+}
+
 #[napi(js_name = "executeDocxCreateTable")]
 pub fn execute_docx_create_table_node(
     input: Buffer,
@@ -903,6 +958,11 @@ table_task!(
     DeleteTableColumnTask,
     DeleteTableColumn,
     execute_docx_delete_table_column
+);
+table_task!(
+    SetTableFormattingTask,
+    SetTableFormatting,
+    execute_docx_set_table_formatting
 );
 
 impl Task for SetTableCellsTextTask {

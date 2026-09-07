@@ -297,6 +297,7 @@ fn tables(
             row_count: rows.len(),
             is_rectangular,
             affordances: vec![
+                affordance("set_table_formatting", table_reason),
                 affordance("delete_table", table_reason),
                 affordance(
                     "delete_table_row",

@@ -9,7 +9,8 @@ use opensuite_protocol::{
     InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, OperationResult,
     ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture, ReplaceText,
     SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
-    SetTableCellsText, SetTextFormatting, TableCellTarget, TableRowTarget, TableTarget,
+    SetTableCellsText, SetTableFormatting, SetTextFormatting, TableAlignment, TableBorders,
+    TableCellMargins, TableCellTarget, TableFormattingPatch, TableRowTarget, TableTarget,
     TextFormattingPatch, TextTarget,
 };
 
@@ -449,6 +450,34 @@ pub fn set_table_cells_text_to_vec(
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
     verify_table_row_output_bytes(&output, &expected)?;
     Ok(output)
+}
+
+/// Patches basic direct table properties without touching rows, cells, or the grid.
+pub fn set_table_formatting_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetTableFormatting,
+) -> Result<Vec<u8>, OperationResult> {
+    let (_, table, _, _) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(
+            unsupported("set_table_formatting supports only simple rectangular tables")
+                .with_reason_code(reason.as_str()),
+        );
+    }
+    if operation.formatting == TableFormattingPatch::default() {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "table formatting patch is empty",
+        ));
+    }
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        table_formatting_patches(source, table, &operation.formatting)?,
+    )
 }
 
 /// Inserts one grid-aware column into a simple semantic table.
@@ -3798,9 +3827,68 @@ fn table_fragment_for_body(
 ) -> Result<Vec<u8>, OperationResult> {
     let prefix = word_prefix_for(source, body, "body")?;
     let name = |local: &str| qualify(&prefix, local);
-    let mut value = format!("<{}><{}>", name("tbl"), name("tblGrid"));
-    for _ in &rows[0] {
-        value.push_str(&format!("<{} {}:w=\"0\"/>", name("gridCol"), prefix));
+    let width_attribute = qualify(&prefix, "w");
+    let column_width = 9360 / rows[0].len();
+    let remainder = 9360 % rows[0].len();
+    let mut value = format!(
+        "<{}><{}><{} {}:w=\"9360\" {}:type=\"dxa\"/><{}><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/><{} {}:val=\"single\" {}:sz=\"4\" {}:space=\"0\" {}:color=\"auto\"/></{}><{}><{} {}:w=\"100\" {}:type=\"dxa\"/><{} {}:w=\"140\" {}:type=\"dxa\"/><{} {}:w=\"100\" {}:type=\"dxa\"/><{} {}:w=\"140\" {}:type=\"dxa\"/></{}></{}><{}>",
+        name("tbl"),
+        name("tblPr"),
+        name("tblW"),
+        width_attribute,
+        width_attribute,
+        name("tblBorders"),
+        name("top"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("bottom"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("left"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("right"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("insideH"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("insideV"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("tblBorders"),
+        name("tblCellMar"),
+        name("top"),
+        width_attribute,
+        width_attribute,
+        name("left"),
+        width_attribute,
+        width_attribute,
+        name("bottom"),
+        width_attribute,
+        width_attribute,
+        name("right"),
+        width_attribute,
+        width_attribute,
+        name("tblCellMar"),
+        name("tblPr"),
+        name("tblGrid")
+    );
+    for index in 0..rows[0].len() {
+        let width = column_width + usize::from(index < remainder);
+        value.push_str(&format!("<{} {}:w=\"{width}\"/>", name("gridCol"), prefix));
     }
     value.push_str(&format!("</{}>", name("tblGrid")));
     for row in rows {
@@ -3812,9 +3900,14 @@ fn table_fragment_for_body(
                 ""
             };
             value.push_str(&format!(
-                "<{}><{}><{}><{}{}>{}</{}></{}></{}></{}>",
+                "<{}><{}><{}><{} {}before=\"0\" {}after=\"0\"/></{}><{}><{}{}>{}</{}></{}></{}></{}>",
                 name("tc"),
                 name("p"),
+                name("pPr"),
+                name("spacing"),
+                width_attribute,
+                width_attribute,
+                name("pPr"),
                 name("r"),
                 name("t"),
                 space,
@@ -3829,6 +3922,181 @@ fn table_fragment_for_body(
     }
     value.push_str(&format!("</{}>", name("tbl")));
     Ok(value.into_bytes())
+}
+
+fn table_formatting_patches(
+    source: &SourceDocument,
+    table: NodeId,
+    patch: &TableFormattingPatch,
+) -> Result<Vec<Patch>, OperationResult> {
+    let prefix = word_element_prefix(source, table, "tbl")?;
+    let name = |local: &str| qualify(prefix, local);
+    let properties = source.children(table).find(|id| word(source, *id, "tblPr"));
+    let mut changes = Vec::new();
+    table_property_change(
+        source,
+        properties,
+        "jc",
+        patch.alignment.as_ref().map(|value| match value {
+            PropertyPatch::Set(value) => format!(
+                "<{} {}val=\"{}\"/>",
+                name("jc"),
+                attr_prefix(prefix),
+                match value {
+                    TableAlignment::Left => "left",
+                    TableAlignment::Center => "center",
+                    TableAlignment::Right => "right",
+                }
+            ),
+            PropertyPatch::Clear => String::new(),
+        }),
+        &mut changes,
+    )?;
+    table_property_change(
+        source,
+        properties,
+        "tblCellMar",
+        patch.cell_margins.as_ref().map(|value| match value {
+            PropertyPatch::Set(value) => table_cell_margins_xml(&name, prefix, value),
+            PropertyPatch::Clear => String::new(),
+        }),
+        &mut changes,
+    )?;
+    table_property_change(
+        source,
+        properties,
+        "tblBorders",
+        patch.borders.as_ref().map(|value| match value {
+            PropertyPatch::Set(TableBorders::Grid) => table_borders_xml(&name, prefix, "single"),
+            PropertyPatch::Set(TableBorders::None) => table_borders_xml(&name, prefix, "nil"),
+            PropertyPatch::Clear => String::new(),
+        }),
+        &mut changes,
+    )?;
+    if properties.is_some() {
+        return Ok(changes);
+    }
+    if changes.is_empty() {
+        return Ok(changes);
+    }
+    let at = source
+        .children(table)
+        .next()
+        .and_then(|id| source.node(id))
+        .map(|node| node.span().start)
+        .ok_or_else(|| unsupported("table has no property insertion boundary"))?;
+    Ok(vec![Patch {
+        span: SourceSpan { start: at, end: at },
+        replacement: format!(
+            "<{}>{}</{}>",
+            name("tblPr"),
+            String::from_utf8(
+                changes
+                    .into_iter()
+                    .flat_map(|patch| patch.replacement)
+                    .collect()
+            )
+            .expect("generated XML is UTF-8"),
+            name("tblPr")
+        )
+        .into_bytes(),
+    }])
+}
+
+fn table_property_change(
+    source: &SourceDocument,
+    properties: Option<NodeId>,
+    local: &str,
+    replacement: Option<String>,
+    changes: &mut Vec<Patch>,
+) -> Result<(), OperationResult> {
+    let Some(replacement) = replacement else {
+        return Ok(());
+    };
+    let Some(properties) = properties else {
+        if !replacement.is_empty() {
+            changes.push(Patch {
+                span: SourceSpan { start: 0, end: 0 },
+                replacement: replacement.into_bytes(),
+            });
+        }
+        return Ok(());
+    };
+    if let Some(existing) = source
+        .children(properties)
+        .find(|id| word(source, *id, local))
+    {
+        changes.push(Patch {
+            span: source.node(existing).expect("property exists").span(),
+            replacement: replacement.into_bytes(),
+        });
+    } else if !replacement.is_empty() {
+        let at = source
+            .node(properties)
+            .expect("properties exist")
+            .span()
+            .end
+            - format!(
+                "</{}>",
+                qualify(word_element_prefix(source, properties, "tblPr")?, "tblPr")
+            )
+            .len();
+        changes.push(Patch {
+            span: SourceSpan { start: at, end: at },
+            replacement: replacement.into_bytes(),
+        });
+    }
+    Ok(())
+}
+
+fn table_borders_xml(name: &impl Fn(&str) -> String, prefix: &str, value: &str) -> String {
+    let attribute = attr_prefix(prefix);
+    let edge = |edge: &str| {
+        format!(
+            "<{} {}val=\"{value}\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/>",
+            name(edge),
+            attribute,
+            attribute,
+            attribute,
+            attribute
+        )
+    };
+    format!(
+        "<{}>{}{}{}{}{}{}</{}>",
+        name("tblBorders"),
+        edge("top"),
+        edge("bottom"),
+        edge("left"),
+        edge("right"),
+        edge("insideH"),
+        edge("insideV"),
+        name("tblBorders")
+    )
+}
+
+fn table_cell_margins_xml(
+    name: &impl Fn(&str) -> String,
+    prefix: &str,
+    margins: &TableCellMargins,
+) -> String {
+    let attribute = attr_prefix(prefix);
+    let edge = |edge: &str, width: u16| {
+        format!(
+            "<{} {}w=\"{width}\" {}type=\"dxa\"/>",
+            name(edge),
+            attribute,
+            attribute
+        )
+    };
+    format!(
+        "<{}>{}{}{}{}</{}>",
+        name("tblCellMar"),
+        edge("top", margins.top_twips),
+        edge("left", margins.left_twips),
+        edge("bottom", margins.bottom_twips),
+        edge("right", margins.right_twips),
+        name("tblCellMar")
+    )
 }
 
 fn expected_table_insert(
@@ -4697,12 +4965,13 @@ mod tests {
     };
 
     use opensuite_protocol::{
-        ContentControlTarget, DeleteParagraph, InsertParagraphAfter, InsertTableColumnAfter,
-        InsertTableRowAfter, InsertTableRowsAfter, InspectDocx, InspectDocxContent,
-        InspectDocxFocus, ParagraphAlignment, ParagraphFormattingPatch, PropertyPatch, ReplaceText,
-        SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
-        SetTableCellsText, SetTextFormatting, TableCellTarget, TableCellTextUpdate, TableRowTarget,
-        TableTarget, TextFormattingPatch, TextTarget,
+        ContentControlTarget, CreateTable, DeleteParagraph, InsertParagraphAfter,
+        InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
+        InspectDocxContent, InspectDocxFocus, ParagraphAlignment, ParagraphFormattingPatch,
+        ParagraphPlacement, PropertyPatch, ReplaceText, SetContentControlText,
+        SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTableCellsText,
+        SetTextFormatting, TableCellTarget, TableCellTextUpdate, TableRowTarget, TableTarget,
+        TextFormattingPatch, TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -4846,6 +5115,40 @@ mod tests {
         zip.write_all(&[1, 2, 3]).unwrap();
         zip.finish().unwrap();
         path
+    }
+
+    #[test]
+    fn creates_a_readable_table_with_positive_grid_widths() {
+        let input = crate::create_blank_docx();
+        let package = Package::from_bytes(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let output = create_table_to_vec(
+            &package,
+            &main,
+            &source,
+            &CreateTable {
+                rows: vec![
+                    vec!["A".to_owned(), "B".to_owned()],
+                    vec!["1".to_owned(), "2".to_owned()],
+                ],
+                placement: ParagraphPlacement::End,
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(output).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        let xml = String::from_utf8(source.original_bytes().to_vec()).unwrap();
+        assert!(xml.contains("<w:tblBorders>"));
+        assert!(xml.contains("<w:tblCellMar>"));
+        assert!(!xml.contains("w:gridCol w:w=\"0\""));
+        assert_eq!(
+            all_table_rows(&source).unwrap(),
+            vec![vec![
+                vec!["A".to_owned(), "B".to_owned()],
+                vec!["1".to_owned(), "2".to_owned()]
+            ]]
+        );
     }
 
     fn styled_fixture(document: &str) -> std::path::PathBuf {

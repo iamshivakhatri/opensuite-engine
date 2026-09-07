@@ -26,8 +26,8 @@ pub use execution::{
     execute_docx_insert_table_column, execute_docx_insert_table_row,
     execute_docx_insert_table_rows, execute_docx_replace_text,
     execute_docx_set_paragraph_formatting, execute_docx_set_paragraph_style,
-    execute_docx_set_table_cells_text, execute_docx_set_text_formatting, find_docx_text,
-    inspect_docx, inspect_docx_context,
+    execute_docx_set_table_cells_text, execute_docx_set_table_formatting,
+    execute_docx_set_text_formatting, find_docx_text, inspect_docx, inspect_docx_context,
 };
 pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
 pub use header_footer::{
@@ -42,7 +42,8 @@ pub use mutation::{
     insert_table_rows_after_to_vec, replace_picture, replace_text, replace_text_to_vec,
     set_content_control_text, set_paragraph_formatting, set_paragraph_formatting_to_vec,
     set_paragraph_style, set_paragraph_style_to_vec, set_table_cell_text,
-    set_table_cells_text_to_vec, set_text_formatting, set_text_formatting_to_vec,
+    set_table_cells_text_to_vec, set_table_formatting_to_vec, set_text_formatting,
+    set_text_formatting_to_vec,
 };
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
