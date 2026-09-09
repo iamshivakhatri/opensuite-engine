@@ -36,6 +36,8 @@ fn main() {
         replace_picture(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("delete-picture")) {
         delete_picture(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-picture-size")) {
+        set_picture_size(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-picture")) {
         insert_picture(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
@@ -648,6 +650,69 @@ fn delete_picture(
                 description: None,
                 occurrence: None,
             },
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn set_picture_size(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(handle), Some(option), Some(value), None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite set-picture-size <input.docx> <output.docx> <picture-handle> <--width-emu|--height-emu> <value>".to_owned()));
+    };
+    let handle = handle.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "picture handle must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let option = option.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "size option must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let value = value
+        .into_string()
+        .map_err(|_| ("INVALID_ARGUMENTS", "size must be valid UTF-8".to_owned()))?
+        .parse::<i64>()
+        .map_err(|_| ("INVALID_ARGUMENTS", "size must be an integer".to_owned()))?;
+    let size = match option.as_str() {
+        "--width-emu" => opensuite_protocol::PictureSizeChange::WidthEmu(value),
+        "--height-emu" => opensuite_protocol::PictureSizeChange::HeightEmu(value),
+        _ => {
+            return Err((
+                "INVALID_ARGUMENTS",
+                "use exactly one of --width-emu or --height-emu".to_owned(),
+            ));
+        }
+    };
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_picture_size(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetPictureSize {
+            target: opensuite_protocol::PictureTarget {
+                handle: Some(handle),
+                name: None,
+                description: None,
+                occurrence: None,
+            },
+            size,
             base_revision: None,
         },
         output,

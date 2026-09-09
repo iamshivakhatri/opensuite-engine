@@ -455,7 +455,10 @@ pub struct DeletePicture {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PictureSizeChange { WidthEmu(i64), HeightEmu(i64) }
+pub enum PictureSizeChange {
+    WidthEmu(i64),
+    HeightEmu(i64),
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SetPictureSize {
@@ -1037,6 +1040,18 @@ impl OperationResult {
         }
     }
 
+    pub fn picture_resized() -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "picture_resized".to_owned(),
+                before: "inline picture".to_owned(),
+                after: "size updated".to_owned(),
+            }],
+        }
+    }
+
     fn formatting_set(kind: &str, text: String) -> Self {
         Self {
             status: OperationStatus::Applied,
@@ -1184,7 +1199,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","delete_picture","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

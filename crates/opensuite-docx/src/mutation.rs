@@ -9,9 +9,9 @@ use opensuite_protocol::{
     InsertParagraphs, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
     InsertTableRowsAfter, OperationResult, ParagraphFormattingPatch, ParagraphPlacement,
     PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText, SetParagraphFormatting,
-    SetParagraphStyle, SetTableCellText, SetTableCellsText, SetTableFormatting, SetTextFormatting,
-    TableAlignment, TableBorders, TableCellMargins, TableCellTarget, TableFormattingPatch,
-    TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
+    SetParagraphStyle, SetPictureSize, SetTableCellText, SetTableCellsText, SetTableFormatting,
+    SetTextFormatting, TableAlignment, TableBorders, TableCellMargins, TableCellTarget,
+    TableFormattingPatch, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -44,6 +44,17 @@ struct InsertedPictureVerification<'a> {
     width_emu: i64,
     height_emu: i64,
     image_bytes: &'a [u8],
+}
+
+struct PictureResizeVerification {
+    handle: String,
+    width_emu: i64,
+    height_emu: i64,
+    relationship: Option<String>,
+    metadata: Option<crate::PictureMetadata>,
+    image_name: PartName,
+    image_bytes: Vec<u8>,
+    body: Vec<String>,
 }
 
 /// Applies one preservation-safe replacement across compatible `w:t` source regions.
@@ -621,6 +632,232 @@ fn verify_deleted_picture_bytes(output: &[u8], expected: &[String]) -> Result<()
     (actual == expected)
         .then_some(())
         .ok_or_else(|| OperationResult::failed("DOCUMENT_INVALID", "output body ordering changed"))
+}
+
+pub fn set_picture_size_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetPictureSize,
+) -> Result<Vec<u8>, OperationResult> {
+    let handle = operation.target.handle.as_deref().ok_or_else(|| {
+        OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "set_picture_size requires a picture handle",
+        )
+    })?;
+    let drawing = crate::inspection::picture_source_for_handle(package, main, source, handle)
+        .ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "picture handle was not found")
+        })?;
+    let picture = crate::DocxDocument::new(source)
+        .map_err(document_invalid)?
+        .pictures()
+        .find(|p| p.source_id() == drawing)
+        .ok_or_else(|| OperationResult::failed("TARGET_NOT_FOUND", "picture was not found"))?;
+    let old = picture
+        .extent()
+        .map_err(|e| unsupported(e.to_string()))?
+        .ok_or_else(|| unsupported("picture extent is missing"))?;
+    let relationship = picture
+        .relationship_id()
+        .map_err(|e| unsupported(e.to_string()))?
+        .map(str::to_owned);
+    let metadata = picture.metadata();
+    let crate::ImageReference::Embedded(image) = picture
+        .image_reference(package, main)
+        .map_err(|e| unsupported(e.to_string()))?
+    else {
+        return Err(unsupported("set_picture_size requires an embedded image"));
+    };
+    let image_name = image.part.name.clone();
+    let image_bytes = package.read_part(&image.part).map_err(document_invalid)?;
+    let body = body_texts(source)?
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>();
+    let (cx, cy) = match operation.size {
+        opensuite_protocol::PictureSizeChange::WidthEmu(cx) => (
+            cx,
+            old.height_emu
+                .checked_mul(cx)
+                .and_then(|v| v.checked_div(old.width_emu))
+                .unwrap_or(0),
+        ),
+        opensuite_protocol::PictureSizeChange::HeightEmu(cy) => (
+            old.width_emu
+                .checked_mul(cy)
+                .and_then(|v| v.checked_div(old.height_emu))
+                .unwrap_or(0),
+            cy,
+        ),
+    };
+    if cx <= 0 || cy <= 0 {
+        return Err(OperationResult::failed(
+            "INVALID_OPERATION",
+            "picture dimensions must be positive and not overflow",
+        ));
+    }
+    let extents = picture_extent_nodes(source, drawing)?;
+    for id in extents {
+        let node = source.node(id).expect("picture extent exists");
+        if node.attribute("cx") != Some(old.width_emu.to_string().as_str())
+            || node.attribute("cy") != Some(old.height_emu.to_string().as_str())
+        {
+            return Err(unsupported("picture extents disagree"));
+        }
+    }
+    let mut patches = Vec::new();
+    for id in extents {
+        for (name, value) in [("cx", cx), ("cy", cy)] {
+            let node = source.node(id).unwrap();
+            let old = node
+                .attribute(name)
+                .ok_or_else(|| unsupported("picture extent is missing a dimension"))?;
+            let SourceNodeKind::Element { start_tag, .. } = node.kind() else {
+                unreachable!()
+            };
+            let tag = &source.original_bytes()[start_tag.start..start_tag.end];
+            let needle = format!("{name}=\"{old}\"");
+            let offset = tag
+                .windows(needle.len())
+                .position(|x| x == needle.as_bytes())
+                .ok_or_else(|| unsupported("picture extent is not patchable"))?;
+            let start = start_tag.start + offset + name.len() + 2;
+            patches.push(Patch {
+                span: SourceSpan {
+                    start,
+                    end: start + old.len(),
+                },
+                replacement: value.to_string().into_bytes(),
+            });
+        }
+    }
+    let output = write_patches_to_vec(package, main, source, patches)?;
+    verify_resized_picture_bytes(
+        &output,
+        &PictureResizeVerification {
+            handle: handle.to_owned(),
+            width_emu: cx,
+            height_emu: cy,
+            relationship,
+            metadata,
+            image_name,
+            image_bytes,
+            body,
+        },
+    )?;
+    Ok(output)
+}
+
+pub fn set_picture_size(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetPictureSize,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output_matches_input(package, output) {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let bytes = match set_picture_size_to_vec(package, main, source, operation) {
+        Ok(bytes) => bytes,
+        Err(result) => return result,
+    };
+    if let Err(error) = std::fs::write(output, bytes) {
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    OperationResult::picture_resized()
+}
+
+fn picture_extent_nodes(
+    source: &SourceDocument,
+    drawing: NodeId,
+) -> Result<[NodeId; 2], OperationResult> {
+    let mut inline = Vec::new();
+    let mut transform = Vec::new();
+    let mut todo = vec![drawing];
+    while let Some(id) = todo.pop() {
+        todo.extend(source.children(id));
+        let Some(node) = source.node(id) else {
+            continue;
+        };
+        let SourceNodeKind::Element { name, .. } = node.kind() else {
+            continue;
+        };
+        if name.local_name() != "extent" && name.local_name() != "ext" {
+            continue;
+        }
+        let parent = node.parent().and_then(|parent| source.node(parent));
+        if name.local_name() == "extent" && parent.is_some_and(|parent| matches!(parent.kind(), SourceNodeKind::Element { name, .. } if name.local_name() == "inline")) {
+            inline.push(id);
+        }
+        if name.local_name() == "ext" && parent.is_some_and(|parent| matches!(parent.kind(), SourceNodeKind::Element { name, .. } if name.local_name() == "xfrm")) {
+            transform.push(id);
+        }
+    }
+    match (inline.as_slice(), transform.as_slice()) {
+        ([inline], [transform]) => Ok([*inline, *transform]),
+        _ => Err(unsupported(
+            "set_picture_size requires one inline extent and one transform extent",
+        )),
+    }
+}
+
+fn verify_resized_picture_bytes(
+    output: &[u8],
+    expected: &PictureResizeVerification,
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let drawing =
+        crate::inspection::picture_source_for_handle(&package, &main, &source, &expected.handle)
+            .ok_or_else(|| {
+                OperationResult::failed("DOCUMENT_INVALID", "resized picture was not found")
+            })?;
+    let picture = crate::DocxDocument::new(&source)
+        .map_err(document_invalid)?
+        .pictures()
+        .find(|picture| picture.source_id() == drawing)
+        .ok_or_else(|| OperationResult::failed("DOCUMENT_INVALID", "resized picture is invalid"))?;
+    let extent = picture.extent().map_err(document_invalid)?.ok_or_else(|| {
+        OperationResult::failed("DOCUMENT_INVALID", "resized picture extent is missing")
+    })?;
+    if (extent.width_emu, extent.height_emu) != (expected.width_emu, expected.height_emu)
+        || picture_extent_nodes(&source, drawing)?
+            .into_iter()
+            .any(|id| {
+                let node = source.node(id).expect("picture extent exists");
+                node.attribute("cx") != Some(expected.width_emu.to_string().as_str())
+                    || node.attribute("cy") != Some(expected.height_emu.to_string().as_str())
+            })
+        || picture
+            .relationship_id()
+            .map_err(document_invalid)?
+            .map(str::to_owned)
+            != expected.relationship
+        || picture.metadata() != expected.metadata
+        || package
+            .read_part_by_name(&expected.image_name)
+            .map_err(document_invalid)?
+            != expected.image_bytes
+        || body_texts(&source)?
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            != expected.body
+    {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "picture resize postcondition failed",
+        ));
+    }
+    Ok(())
 }
 
 pub fn delete_paragraph(
@@ -5494,10 +5731,11 @@ mod tests {
         ContentControlTarget, CreateTable, DeleteParagraph, DeletePicture, InsertParagraph,
         InsertParagraphAfter, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
         InsertTableRowsAfter, InspectDocx, InspectDocxContent, InspectDocxFocus,
-        ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch,
-        ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
-        SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
-        TableCellTextUpdate, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
+        ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement, PictureSizeChange,
+        PropertyPatch, ReplaceText, SetContentControlText, SetParagraphFormatting,
+        SetParagraphStyle, SetPictureSize, SetTableCellText, SetTableCellsText, SetTextFormatting,
+        TableCellTarget, TableCellTextUpdate, TableRowTarget, TableTarget, TextFormattingPatch,
+        TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -7388,6 +7626,14 @@ mod tests {
         bytes
     }
 
+    fn jpeg(width: u16, height: u16) -> Vec<u8> {
+        let mut bytes = vec![0xff, 0xd8, 0xff, 0xc0, 0, 17, 8];
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&[3, 1, 17, 0, 2, 17, 0, 3, 17, 0, 0xff, 0xd9]);
+        bytes
+    }
+
     #[test]
     fn inserts_inline_picture_with_bytes_dimensions_and_collision_safe_ids() {
         let input = crate::create_blank_docx();
@@ -7589,5 +7835,146 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn resizes_one_picture_and_preserves_the_other_picture() {
+        let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let first = insert_picture_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPicture {
+                image_bytes: png(4, 2),
+                placement: ParagraphPlacement::Start,
+                alt_text: Some("png alt".to_owned()),
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(first).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let input = insert_picture_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPicture {
+                image_bytes: jpeg(4, 2),
+                placement: ParagraphPlacement::End,
+                alt_text: Some("jpeg alt".to_owned()),
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let output = set_picture_size_to_vec(
+            &package,
+            &main,
+            &source,
+            &SetPictureSize {
+                target: opensuite_protocol::PictureTarget {
+                    handle: Some("p1".to_owned()),
+                    name: None,
+                    description: None,
+                    occurrence: None,
+                },
+                size: PictureSizeChange::HeightEmu(9_525),
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(output).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let output = set_picture_size_to_vec(
+            &package,
+            &main,
+            &source,
+            &SetPictureSize {
+                target: opensuite_protocol::PictureTarget {
+                    handle: Some("p0".to_owned()),
+                    name: None,
+                    description: None,
+                    occurrence: None,
+                },
+                size: PictureSizeChange::WidthEmu(19_050),
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(output).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let pictures = crate::DocxDocument::new(&source)
+            .unwrap()
+            .pictures()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pictures[0].extent().unwrap().unwrap(),
+            crate::PictureExtent {
+                width_emu: 19_050,
+                height_emu: 9_525
+            }
+        );
+        assert_eq!(
+            pictures[1].extent().unwrap().unwrap(),
+            crate::PictureExtent {
+                width_emu: 19_050,
+                height_emu: 9_525
+            }
+        );
+        assert_eq!(
+            pictures[1].metadata().unwrap().description.as_deref(),
+            Some("jpeg alt")
+        );
+        assert_eq!(
+            package
+                .read_part(
+                    &package
+                        .part(&PartName::parse("/word/media/image2.jpeg").unwrap())
+                        .unwrap()
+                )
+                .unwrap(),
+            jpeg(4, 2)
+        );
+        assert!(
+            set_picture_size_to_vec(
+                &package,
+                &main,
+                &source,
+                &SetPictureSize {
+                    target: opensuite_protocol::PictureTarget {
+                        handle: Some("p1".to_owned()),
+                        name: None,
+                        description: None,
+                        occurrence: None
+                    },
+                    size: PictureSizeChange::WidthEmu(0),
+                    base_revision: None,
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            set_picture_size_to_vec(
+                &package,
+                &main,
+                &source,
+                &SetPictureSize {
+                    target: opensuite_protocol::PictureTarget {
+                        handle: Some("p9".to_owned()),
+                        name: None,
+                        description: None,
+                        occurrence: None
+                    },
+                    size: PictureSizeChange::WidthEmu(1),
+                    base_revision: None,
+                }
+            )
+            .is_err()
+        );
+        let xml = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
+        assert!(xml.contains("<wp:extent cx=\"19050\" cy=\"9525\""));
+        assert!(xml.contains("<a:ext cx=\"19050\" cy=\"9525\""));
     }
 }

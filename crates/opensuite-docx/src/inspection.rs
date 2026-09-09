@@ -269,6 +269,7 @@ fn body_picture(
         affordances: vec![
             Affordance::supported("replace_picture"),
             Affordance::supported("delete_picture"),
+            Affordance::supported("set_picture_size"),
         ],
     })
 }
@@ -531,8 +532,12 @@ mod tests {
         assert_eq!((picture.width_emu, picture.height_emu), (9525, 19050));
         assert_eq!(picture.alt_text.as_deref(), Some("diagram"));
         assert_eq!(
-            picture.affordances[0].capability.as_str(),
-            "replace_picture"
+            picture
+                .affordances
+                .iter()
+                .map(|affordance| affordance.capability.as_str())
+                .collect::<Vec<_>>(),
+            ["replace_picture", "delete_picture", "set_picture_size"]
         );
     }
 

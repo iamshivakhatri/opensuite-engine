@@ -134,10 +134,13 @@ and XML source bytes.
   96 DPI capped at 6.5 inches wide.
 - Body-block inspection recognizes a direct-body paragraph containing exactly one ordinary inline,
   embedded PNG/JPEG picture. It reports an opaque `pN` picture handle, EMU dimensions, optional
-  alt text, and the currently executable `replace_picture` affordance. Floating, linked, mixed,
+  alt text, and `replace_picture`, `delete_picture`, and `set_picture_size` affordances. Floating, linked, mixed,
   table, header/footer, and other DrawingML forms remain ordinary preserved content.
 - `DeletePicture` removes only the dedicated main-body picture paragraph selected by its `pN`
   handle. Its relationship and media part are intentionally retained, even when unused.
+- `SetPictureSize` changes exactly one requested EMU dimension of a supported `pN` picture while
+  preserving its displayed ratio and synchronizing the inline and transform extents.
+  Arbitrary distortion, crop, and floating-picture layout remain deferred.
 
 ## Current Repository Target
 
