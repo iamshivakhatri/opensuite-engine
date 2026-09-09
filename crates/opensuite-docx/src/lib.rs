@@ -5,6 +5,7 @@ mod content_control;
 mod execution;
 mod field;
 mod header_footer;
+mod image_dimensions;
 mod inspection;
 mod mutation;
 mod numbering;
@@ -22,7 +23,7 @@ pub use blank::create_blank_docx;
 pub use execution::{
     DocxExecutionResult, execute_docx_create_table, execute_docx_delete_paragraph,
     execute_docx_delete_table, execute_docx_delete_table_column, execute_docx_delete_table_row,
-    execute_docx_insert_paragraph, execute_docx_insert_paragraphs,
+    execute_docx_insert_paragraph, execute_docx_insert_paragraphs, execute_docx_insert_picture,
     execute_docx_insert_table_column, execute_docx_insert_table_row,
     execute_docx_insert_table_rows, execute_docx_replace_text,
     execute_docx_set_paragraph_formatting, execute_docx_set_paragraph_style,
@@ -34,11 +35,16 @@ pub use header_footer::{
     HeaderFooter, HeaderFooterError, HeaderFooterKind, HeaderFooterReference, HeaderFooterType,
     load_footer, load_header,
 };
+pub use image_dimensions::{
+    ImageDimensionError, ImageDimensions, ImageFormat, ImageInfo, read_image_info,
+    read_jpeg_dimensions, read_png_dimensions,
+};
 pub use inspection::inspect_docx_document;
 pub use mutation::{
     create_table_to_vec, delete_paragraph, delete_paragraph_to_vec, delete_table_column_to_vec,
     delete_table_row_to_vec, delete_table_to_vec, insert_paragraph_after, insert_paragraph_to_vec,
-    insert_paragraphs_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
+    insert_paragraphs_to_vec, insert_picture, insert_picture_to_vec,
+    insert_table_column_after_to_vec, insert_table_row_after_to_vec,
     insert_table_rows_after_to_vec, replace_picture, replace_text, replace_text_to_vec,
     set_content_control_text, set_paragraph_formatting, set_paragraph_formatting_to_vec,
     set_paragraph_style, set_paragraph_style_to_vec, set_table_cell_text,

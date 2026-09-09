@@ -1,7 +1,7 @@
 use opensuite_opc::Package;
 use opensuite_protocol::{
     CreateTable, DeleteParagraph, DeleteTable, DeleteTableColumn, DeleteTableRow, Diagnostic,
-    DiagnosticSeverity, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
+    DiagnosticSeverity, FindText, FindTextResult, InsertParagraph, InsertParagraphs, InsertPicture,
     InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
     InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult, ReplaceText,
     SetParagraphFormatting, SetParagraphStyle, SetTableCellsText, SetTableFormatting,
@@ -11,10 +11,10 @@ use opensuite_protocol::{
 use crate::{
     create_table_to_vec, delete_paragraph_to_vec, delete_table_column_to_vec,
     delete_table_row_to_vec, delete_table_to_vec, insert_paragraph_to_vec,
-    insert_paragraphs_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
-    insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
-    set_paragraph_formatting_to_vec, set_paragraph_style_to_vec, set_table_cells_text_to_vec,
-    set_table_formatting_to_vec, set_text_formatting_to_vec,
+    insert_paragraphs_to_vec, insert_picture_to_vec, insert_table_column_after_to_vec,
+    insert_table_row_after_to_vec, insert_table_rows_after_to_vec, open_main_source,
+    replace_text_to_vec, set_paragraph_formatting_to_vec, set_paragraph_style_to_vec,
+    set_table_cells_text_to_vec, set_table_formatting_to_vec, set_text_formatting_to_vec,
 };
 
 /// The result of executing one DOCX operation against an immutable artifact.
@@ -78,6 +78,35 @@ pub fn execute_docx_insert_paragraphs(
             operation: structured_failure(
                 error,
                 "insert_paragraphs",
+                placement_handle(&operation.placement),
+            ),
+            output_artifact: None,
+        },
+    }
+}
+
+/// Executes `InsertPicture` against owned DOCX bytes and returns verified output bytes.
+pub fn execute_docx_insert_picture(
+    input_artifact: Vec<u8>,
+    operation: &InsertPicture,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    match insert_picture_to_vec(&package, &main, &source, operation) {
+        Ok(output_artifact) => DocxExecutionResult {
+            operation: OperationResult::picture_inserted(),
+            output_artifact: Some(output_artifact),
+        },
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "insert_picture",
                 placement_handle(&operation.placement),
             ),
             output_artifact: None,

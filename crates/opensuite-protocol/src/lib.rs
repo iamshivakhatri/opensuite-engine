@@ -113,6 +113,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_text_formatting",
     "set_paragraph_style",
     "replace_picture",
+    "insert_picture",
     "insert_table_row",
     "insert_table_rows",
     "set_table_cells_text",
@@ -440,6 +441,16 @@ pub struct ImagePayload {
 pub struct ReplacePicture {
     pub target: PictureTarget,
     pub replacement: ImagePayload,
+    pub base_revision: Option<String>,
+}
+
+/// Inserts one inline PNG or JPEG picture in the direct main-document body.
+/// The engine determines the format and dimensions from the supplied bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertPicture {
+    pub image_bytes: Vec<u8>,
+    pub placement: ParagraphPlacement,
+    pub alt_text: Option<String>,
     pub base_revision: Option<String>,
 }
 
@@ -953,6 +964,18 @@ impl OperationResult {
         }
     }
 
+    pub fn picture_inserted() -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "picture_inserted".to_owned(),
+                before: "body".to_owned(),
+                after: "inline picture added".to_owned(),
+            }],
+        }
+    }
+
     fn formatting_set(kind: &str, text: String) -> Self {
         Self {
             status: OperationStatus::Applied,
@@ -1100,7 +1123,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

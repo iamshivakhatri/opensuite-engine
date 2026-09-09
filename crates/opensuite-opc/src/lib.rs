@@ -489,6 +489,73 @@ impl Package {
         Ok(cursor.into_inner())
     }
 
+    /// Copies this package to ZIP bytes while replacing entries identified by
+    /// name. Unlike `Part`, this also supports OPC metadata entries such as
+    /// per-part relationship files.
+    pub fn write_package_with_named_changes_to_vec(
+        &self,
+        replaced: &[(PartName, &[u8])],
+        added: &[(PartName, &[u8])],
+    ) -> Result<Vec<u8>, PackageError> {
+        let mut archive = self.archive()?;
+        let existing = (0..archive.len())
+            .map(|index| archive.by_index(index).map(|entry| entry.name().to_owned()))
+            .collect::<Result<HashSet<_>, _>>()
+            .map_err(PackageError::InvalidZip)?;
+        let mut changed = HashSet::new();
+        for (name, _) in replaced {
+            if !existing.contains(name.as_str().trim_start_matches('/')) || !changed.insert(name) {
+                return Err(PackageError::MissingTargetPart(name.clone()));
+            }
+        }
+        for (name, _) in added {
+            if existing.contains(name.as_str().trim_start_matches('/')) || !changed.insert(name) {
+                return Err(PackageError::PartAlreadyExists(name.clone()));
+            }
+        }
+        drop(archive);
+        let mut archive = self.archive()?;
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(PackageError::InvalidZip)?;
+            let name = entry.name().to_owned();
+            if entry.is_dir() {
+                writer
+                    .add_directory(name, SimpleFileOptions::default())
+                    .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+                continue;
+            }
+            writer
+                .start_file(name.clone(), SimpleFileOptions::default())
+                .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+            if let Some((_, bytes)) = replaced
+                .iter()
+                .find(|(part, _)| part.as_str().trim_start_matches('/') == name)
+            {
+                writer
+                    .write_all(bytes)
+                    .map_err(PackageError::Serialization)?;
+            } else {
+                io::copy(&mut entry, &mut writer).map_err(PackageError::Serialization)?;
+            }
+        }
+        for (name, bytes) in added {
+            writer
+                .start_file(
+                    name.as_str().trim_start_matches('/'),
+                    SimpleFileOptions::default(),
+                )
+                .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+            writer
+                .write_all(bytes)
+                .map_err(PackageError::Serialization)?;
+        }
+        writer
+            .finish()
+            .map_err(|error| PackageError::Serialization(io::Error::other(error)))
+            .map(|cursor| cursor.into_inner())
+    }
+
     fn write_package_with_changes_to<W: Write + Seek>(
         &self,
         replaced: &[(&Part, &[u8])],
@@ -615,6 +682,21 @@ impl Package {
         }
         let mut archive = self.archive()?;
         read_entry(&mut archive, part.name.as_str().trim_start_matches('/'))
+    }
+
+    /// Reads a package entry by name, including relationship metadata parts.
+    pub fn read_part_by_name(&self, name: &PartName) -> Result<Vec<u8>, PackageError> {
+        let mut archive = self.archive()?;
+        read_entry(&mut archive, name.as_str().trim_start_matches('/')).map_err(|error| match error
+        {
+            PackageError::MissingPackageRelationships if name.as_str() != "/_rels/.rels" => {
+                PackageError::MissingTargetPart(name.clone())
+            }
+            PackageError::InvalidZip(zip::result::ZipError::FileNotFound) => {
+                PackageError::MissingTargetPart(name.clone())
+            }
+            other => other,
+        })
     }
 
     /// Returns a part's uncompressed ZIP entry size without reading its contents.

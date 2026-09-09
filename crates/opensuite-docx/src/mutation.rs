@@ -2,16 +2,16 @@ use std::{collections::HashSet, path::Path};
 
 use quick_xml::escape::escape;
 
-use opensuite_opc::{Package, Part};
+use opensuite_opc::{Package, PackageError, Part, PartName};
 use opensuite_protocol::{
     AffordanceReason, ContentControlTarget, CreateTable, DeleteParagraph, DeleteTable,
     DeleteTableColumn, DeleteTableRow, InsertParagraph, InsertParagraphAfter, InsertParagraphs,
-    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, OperationResult,
-    ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture, ReplaceText,
-    SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
-    SetTableCellsText, SetTableFormatting, SetTextFormatting, TableAlignment, TableBorders,
-    TableCellMargins, TableCellTarget, TableFormattingPatch, TableRowTarget, TableTarget,
-    TextFormattingPatch, TextTarget,
+    InsertPicture, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
+    OperationResult, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture,
+    ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
+    SetTableCellText, SetTableCellsText, SetTableFormatting, SetTextFormatting, TableAlignment,
+    TableBorders, TableCellMargins, TableCellTarget, TableFormattingPatch, TableRowTarget,
+    TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -23,12 +23,27 @@ const NS: [&str; 2] = [
 const MAX_TABLE_ROWS_PER_OPERATION: usize = 100;
 const MAX_TABLE_CELL_UPDATES: usize = 100;
 const MAX_PARAGRAPHS_PER_OPERATION: usize = 100;
+const EMU_PER_PIXEL_AT_96_DPI: i64 = 9_525;
+// ponytail: fixed 6.5in width; use section layout when explicit sizing is added.
+const MAX_INLINE_PICTURE_WIDTH_EMU: i64 = 5_943_600;
+const IMAGE_RELATIONSHIP_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const PNG_CONTENT_TYPE: &str = "image/png";
+const JPEG_CONTENT_TYPE: &str = "image/jpeg";
 
 enum ResolvedParagraphPlacement {
     Start,
     End,
     Before(NodeId),
     After(NodeId),
+}
+
+struct InsertedPictureVerification<'a> {
+    index: usize,
+    picture_id: u32,
+    width_emu: i64,
+    height_emu: i64,
+    image_bytes: &'a [u8],
 }
 
 /// Applies one preservation-safe replacement across compatible `w:t` source regions.
@@ -196,6 +211,310 @@ pub fn insert_paragraphs_to_vec(
     }
     let placement = resolve_paragraph_placement(source, &operation.placement)?;
     insert_paragraph_bytes(package, main, source, &operation.texts, placement)
+}
+
+/// Inserts one inline PNG or JPEG picture and returns verified DOCX bytes.
+pub fn insert_picture_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertPicture,
+) -> Result<Vec<u8>, OperationResult> {
+    let image = crate::read_image_info(&operation.image_bytes).map_err(image_info_error)?;
+    let (extension, content_type) = match image.format {
+        crate::ImageFormat::Png => ("png", PNG_CONTENT_TYPE),
+        crate::ImageFormat::Jpeg => ("jpeg", JPEG_CONTENT_TYPE),
+    };
+    let (width_emu, height_emu) = picture_dimensions(image.dimensions);
+    let placement = resolve_paragraph_placement(source, &operation.placement)?;
+    let (body, blocks) = direct_body_blocks(source)?;
+    let index = placement_index(&blocks, placement)?;
+    let insertion = body_insertion(source, body, &blocks, index)?;
+    let media_name = next_media_part_name(package, extension)?;
+    let (relationships_name, relationships_exist, relationships, relationship_id) =
+        picture_relationships(package, main)?;
+    let picture_id = next_picture_id(source)?;
+    let fragment = picture_fragment_for_body(
+        source,
+        body,
+        width_emu,
+        height_emu,
+        picture_id,
+        &relationship_id,
+        operation.alt_text.as_deref(),
+    )?;
+    let document = apply_patches(
+        source,
+        vec![Patch {
+            span: SourceSpan {
+                start: insertion,
+                end: insertion,
+            },
+            replacement: fragment,
+        }],
+    )?;
+    let mut replaced = vec![(main.name.clone(), document.as_slice())];
+    let mut added = vec![(media_name.clone(), operation.image_bytes.as_slice())];
+    let relationship_xml = append_xml_element(
+        &relationships,
+        &format!(
+            r#"<Relationship Id="{relationship_id}" Type="{IMAGE_RELATIONSHIP_TYPE}" Target="media/{}"/>"#,
+            media_name
+                .as_str()
+                .rsplit('/')
+                .next()
+                .expect("media file name")
+        ),
+    )?;
+    if relationships_exist {
+        replaced.push((relationships_name, relationship_xml.as_slice()));
+    } else {
+        added.push((relationships_name, relationship_xml.as_slice()));
+    }
+    let content_types_part = PartName::parse("/[Content_Types].xml")
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    if let Some(existing) = package.content_type_default(extension) {
+        if existing.as_str() != content_type {
+            return Err(OperationResult::failed(
+                "PACKAGE_CONFLICT",
+                "image file extension has a conflicting content type",
+            ));
+        }
+    }
+    if package.content_type_default(extension).is_none()
+        || package.content_type_default("rels").is_none()
+    {
+        let bytes = package
+            .read_part_by_name(&content_types_part)
+            .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+        let defaults = [
+            package
+                .content_type_default(extension)
+                .is_none()
+                .then(|| format!(r#"<Default Extension="{extension}" ContentType="{content_type}"/>"#)),
+            (!bytes
+                .windows(b"Extension=\"rels\"".len())
+                .any(|value| value == b"Extension=\"rels\""))
+            .then(|| {
+                r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#.to_owned()
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<String>();
+        let content_types = append_xml_element(&bytes, &defaults)?;
+        replaced.push((content_types_part, content_types.as_slice()));
+        // Keep the bytes alive until the package writer consumes the references.
+        return write_inserted_picture(
+            package,
+            replaced,
+            added,
+            &content_types,
+            InsertedPictureVerification {
+                index,
+                picture_id,
+                width_emu,
+                height_emu,
+                image_bytes: &operation.image_bytes,
+            },
+        );
+    }
+    write_inserted_picture(
+        package,
+        replaced,
+        added,
+        &[],
+        InsertedPictureVerification {
+            index,
+            picture_id,
+            width_emu,
+            height_emu,
+            image_bytes: &operation.image_bytes,
+        },
+    )
+}
+
+/// Inserts one inline PNG or JPEG picture into a new DOCX artifact.
+pub fn insert_picture(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertPicture,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output_matches_input(package, output) {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let bytes = match insert_picture_to_vec(package, main, source, operation) {
+        Ok(bytes) => bytes,
+        Err(result) => return result,
+    };
+    let temporary = output.with_file_name(format!(
+        ".opensuite-{}-{}.docx",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    if let Err(error) = std::fs::write(&temporary, bytes) {
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    if let Err(error) = std::fs::rename(&temporary, output) {
+        let _ = std::fs::remove_file(&temporary);
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    OperationResult::picture_inserted()
+}
+
+fn write_inserted_picture(
+    package: &Package,
+    replaced: Vec<(PartName, &[u8])>,
+    added: Vec<(PartName, &[u8])>,
+    _content_types: &[u8],
+    expected: InsertedPictureVerification<'_>,
+) -> Result<Vec<u8>, OperationResult> {
+    let output = package
+        .write_package_with_named_changes_to_vec(&replaced, &added)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_inserted_picture_bytes(
+        &output,
+        expected.index,
+        expected.picture_id,
+        expected.width_emu,
+        expected.height_emu,
+        expected.image_bytes,
+    )?;
+    Ok(output)
+}
+
+fn image_info_error(error: crate::ImageDimensionError) -> OperationResult {
+    let code = match error {
+        crate::ImageDimensionError::UnsupportedFormat => "UNSUPPORTED_IMAGE_FORMAT",
+        crate::ImageDimensionError::InvalidPng | crate::ImageDimensionError::InvalidJpeg => {
+            "MALFORMED_IMAGE"
+        }
+    };
+    OperationResult::failed(code, error.to_string())
+}
+
+fn picture_dimensions(dimensions: crate::ImageDimensions) -> (i64, i64) {
+    let mut width = i64::from(dimensions.width_px) * EMU_PER_PIXEL_AT_96_DPI;
+    let mut height = i64::from(dimensions.height_px) * EMU_PER_PIXEL_AT_96_DPI;
+    if width > MAX_INLINE_PICTURE_WIDTH_EMU {
+        height = height * MAX_INLINE_PICTURE_WIDTH_EMU / width;
+        width = MAX_INLINE_PICTURE_WIDTH_EMU;
+    }
+    (width, height)
+}
+
+fn next_media_part_name(package: &Package, extension: &str) -> Result<PartName, OperationResult> {
+    let next = package
+        .part_names_with_prefix("/word/media/")
+        .filter_map(|name| {
+            name.as_str()
+                .strip_prefix("/word/media/image")?
+                .rsplit_once('.')
+                .and_then(|(number, _)| number.parse::<u32>().ok())
+        })
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| {
+            OperationResult::failed("PACKAGE_CONFLICT", "cannot allocate media part name")
+        })?;
+    PartName::parse(format!("/word/media/image{next}.{extension}"))
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))
+}
+
+fn relationship_part_name(main: &Part) -> Result<PartName, OperationResult> {
+    let name = main.name.as_str();
+    let (directory, file) = name.rsplit_once('/').ok_or_else(|| {
+        OperationResult::failed("PACKAGE_CONFLICT", "main document part has no file name")
+    })?;
+    PartName::parse(format!("{directory}/_rels/{file}.rels"))
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))
+}
+
+fn picture_relationships(
+    package: &Package,
+    main: &Part,
+) -> Result<(PartName, bool, Vec<u8>, String), OperationResult> {
+    let relationships_part_name = relationship_part_name(main)?;
+    let (relationships_exist, relationships) =
+        match package.read_part_by_name(&relationships_part_name) {
+            Ok(bytes) => (true, bytes),
+            Err(PackageError::MissingTargetPart(_)) => (false, Vec::new()),
+            Err(error) => return Err(OperationResult::failed(error.code(), error.to_string())),
+        };
+    let relationships = if relationships_exist {
+        relationships
+    } else {
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#.to_vec()
+    };
+    let next = match package.part_relationships(main) {
+        Ok(values) => values
+            .iter()
+            .filter_map(|relationship| {
+                relationship
+                    .id
+                    .as_str()
+                    .strip_prefix("rId")?
+                    .parse::<u32>()
+                    .ok()
+            })
+            .max()
+            .unwrap_or(0),
+        Err(PackageError::MissingPartRelationships(_)) => 0,
+        Err(error) => return Err(OperationResult::failed(error.code(), error.to_string())),
+    }
+    .checked_add(1)
+    .ok_or_else(|| {
+        OperationResult::failed("PACKAGE_CONFLICT", "cannot allocate image relationship")
+    })?;
+    Ok((
+        relationships_part_name,
+        relationships_exist,
+        relationships,
+        format!("rId{next}"),
+    ))
+}
+
+fn next_picture_id(source: &SourceDocument) -> Result<u32, OperationResult> {
+    crate::DocxDocument::new(source)
+        .map_err(document_invalid)?
+        .pictures()
+        .filter_map(|picture| picture.metadata()?.id?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| {
+            OperationResult::failed("PACKAGE_CONFLICT", "cannot allocate picture identifier")
+        })
+}
+
+fn append_xml_element(bytes: &[u8], element: &str) -> Result<Vec<u8>, OperationResult> {
+    let close = bytes
+        .iter()
+        .rposition(|byte| *byte == b'<')
+        .ok_or_else(|| {
+            OperationResult::failed("DOCUMENT_INVALID", "XML part has no closing element")
+        })?;
+    if !bytes[close..].starts_with(b"</") {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "XML part has no closing element",
+        ));
+    }
+    let mut output = Vec::with_capacity(bytes.len() + element.len());
+    output.extend_from_slice(&bytes[..close]);
+    output.extend_from_slice(element.as_bytes());
+    output.extend_from_slice(&bytes[close..]);
+    Ok(output)
 }
 
 /// Deletes one safe, direct main-body paragraph selected by Current-view text.
@@ -4197,6 +4516,28 @@ fn paragraph_fragment_for_body(
     paragraph_fragment_with_prefix(&prefix, text)
 }
 
+fn picture_fragment_for_body(
+    source: &SourceDocument,
+    body: NodeId,
+    width_emu: i64,
+    height_emu: i64,
+    picture_id: u32,
+    relationship_id: &str,
+    alt_text: Option<&str>,
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_prefix_for(source, body, "body")?;
+    let name = |local: &str| qualify(&prefix, local);
+    let description = alt_text
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(r#" descr="{}""#, escape(value)))
+        .unwrap_or_default();
+    let picture_name = format!("Picture {picture_id}");
+    Ok(format!(
+        r#"<{}><{}><{}><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{width_emu}" cy="{height_emu}"/><wp:docPr id="{picture_id}" name="{picture_name}"{description}/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{picture_id}" name="{picture_name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{relationship_id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{width_emu}" cy="{height_emu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></{}></{}></{}>"#,
+        name("p"), name("r"), name("drawing"), name("drawing"), name("r"), name("p")
+    ).into_bytes())
+}
+
 #[cfg(test)]
 fn paragraph_fragment(
     source: &SourceDocument,
@@ -4535,6 +4876,75 @@ fn verify_inserted_body_bytes(
                 "inserted paragraph text does not match request",
             ));
         }
+    }
+    Ok(())
+}
+
+fn verify_inserted_picture_bytes(
+    output: &[u8],
+    expected_index: usize,
+    picture_id: u32,
+    width_emu: i64,
+    height_emu: i64,
+    image_bytes: &[u8],
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let (_, blocks) = direct_body_blocks(&source)?;
+    let paragraph = blocks.get(expected_index).ok_or_else(|| {
+        OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "inserted picture paragraph was not found",
+        )
+    })?;
+    if !word(&source, *paragraph, "p") {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "picture is not at the requested body position",
+        ));
+    }
+    let picture = crate::DocxDocument::new(&source)
+        .map_err(document_invalid)?
+        .pictures()
+        .find(|picture| {
+            picture.metadata().and_then(|metadata| metadata.id) == Some(picture_id.to_string())
+        })
+        .ok_or_else(|| {
+            OperationResult::failed("DOCUMENT_INVALID", "inserted picture was not found")
+        })?;
+    if picture.kind() != crate::PictureKind::Inline
+        || picture
+            .extent()
+            .map_err(|error| unsupported(error.to_string()))?
+            != Some(crate::PictureExtent {
+                width_emu,
+                height_emu,
+            })
+    {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "inserted picture dimensions changed",
+        ));
+    }
+    let crate::ImageReference::Embedded(image) = picture
+        .image_reference(&package, &main)
+        .map_err(|error| unsupported(error.to_string()))?
+    else {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "inserted picture has no embedded image",
+        ));
+    };
+    if !matches!(
+        image.part.content_type.as_str(),
+        PNG_CONTENT_TYPE | JPEG_CONTENT_TYPE
+    ) || package.read_part(&image.part).map_err(document_invalid)? != image_bytes
+    {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "inserted image payload does not match request",
+        ));
     }
     Ok(())
 }
@@ -4969,13 +5379,13 @@ mod tests {
     };
 
     use opensuite_protocol::{
-        ContentControlTarget, CreateTable, DeleteParagraph, InsertParagraphAfter,
-        InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
-        InspectDocxContent, InspectDocxFocus, ParagraphAlignment, ParagraphFormattingPatch,
-        ParagraphPlacement, PropertyPatch, ReplaceText, SetContentControlText,
-        SetParagraphFormatting, SetParagraphStyle, SetTableCellText, SetTableCellsText,
-        SetTextFormatting, TableCellTarget, TableCellTextUpdate, TableRowTarget, TableTarget,
-        TextFormattingPatch, TextTarget,
+        ContentControlTarget, CreateTable, DeleteParagraph, InsertParagraph, InsertParagraphAfter,
+        InsertPicture, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
+        InspectDocx, InspectDocxContent, InspectDocxFocus, ParagraphAlignment,
+        ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplaceText,
+        SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
+        SetTableCellsText, SetTextFormatting, TableCellTarget, TableCellTextUpdate, TableRowTarget,
+        TableTarget, TextFormattingPatch, TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -6851,5 +7261,145 @@ mod tests {
             "UNSUPPORTED_OPERATION"
         );
         fs::remove_file(shared).unwrap();
+    }
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+        bytes
+    }
+
+    #[test]
+    fn inserts_inline_picture_with_bytes_dimensions_and_collision_safe_ids() {
+        let input = crate::create_blank_docx();
+        let package = Package::from_bytes(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let first = insert_picture_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPicture {
+                image_bytes: png(640, 480),
+                placement: ParagraphPlacement::Start,
+                alt_text: Some("chart".to_owned()),
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(first).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let second = insert_picture_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPicture {
+                image_bytes: png(1600, 800),
+                placement: ParagraphPlacement::End,
+                alt_text: None,
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(second).unwrap();
+        package.verify().unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let document = crate::DocxDocument::new(&source).unwrap();
+        let pictures = document.pictures().collect::<Vec<_>>();
+        assert_eq!(pictures.len(), 2);
+        assert_eq!(pictures[0].metadata().unwrap().id.as_deref(), Some("1"));
+        assert_eq!(pictures[1].metadata().unwrap().id.as_deref(), Some("2"));
+        assert_eq!(
+            pictures[1].extent().unwrap().unwrap().width_emu,
+            MAX_INLINE_PICTURE_WIDTH_EMU
+        );
+        let crate::ImageReference::Embedded(image) =
+            pictures[1].image_reference(&package, &main).unwrap()
+        else {
+            panic!("embedded image expected")
+        };
+        assert_eq!(package.read_part(&image.part).unwrap(), png(1600, 800));
+        assert_eq!(
+            package.content_type_default("png").unwrap().as_str(),
+            PNG_CONTENT_TYPE
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_and_unsupported_picture_bytes_without_output() {
+        let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        for image_bytes in [b"not an image".to_vec(), b"\x89PNG\r\n\x1a\n".to_vec()] {
+            assert!(
+                insert_picture_to_vec(
+                    &package,
+                    &main,
+                    &source,
+                    &InsertPicture {
+                        image_bytes,
+                        placement: ParagraphPlacement::End,
+                        alt_text: None,
+                        base_revision: None,
+                    }
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn inserts_pictures_before_and_after_body_handles() {
+        let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let first = insert_paragraph_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertParagraph {
+                text: "First".to_owned(),
+                placement: ParagraphPlacement::Start,
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(first).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let body = insert_paragraph_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertParagraph {
+                text: "Second".to_owned(),
+                placement: ParagraphPlacement::End,
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        for placement in [
+            ParagraphPlacement::Before {
+                handle: "b1".to_owned(),
+            },
+            ParagraphPlacement::After {
+                handle: "b0".to_owned(),
+            },
+        ] {
+            let package = Package::from_bytes(body.clone()).unwrap();
+            let (main, source) = crate::open_main_source(&package).unwrap();
+            assert!(
+                insert_picture_to_vec(
+                    &package,
+                    &main,
+                    &source,
+                    &InsertPicture {
+                        image_bytes: png(1, 1),
+                        placement,
+                        alt_text: None,
+                        base_revision: None,
+                    },
+                )
+                .is_ok()
+            );
+        }
     }
 }

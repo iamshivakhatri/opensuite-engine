@@ -34,6 +34,8 @@ fn main() {
         set_paragraph_style(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("replace-picture")) {
         replace_picture(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-picture")) {
+        insert_picture(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
         inspect_context(arguments)
     } else {
@@ -59,7 +61,7 @@ fn main() {
         }
         _ => Err((
             "INVALID_ARGUMENTS",
-            "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text> | opensuite inspect-context <input.docx> <text> [occurrence] [before] [after] | opensuite insert-paragraph-after <input.docx> <output.docx> <anchor-text> <new-paragraph-text> [occurrence] | opensuite delete-paragraph <input.docx> <output.docx> <target-text> [occurrence] | opensuite set-table-cell-text <input.docx> <output.docx> <row-label> <column-header> <expected-current-text> <replacement> [occurrence] | opensuite set-content-control-text <input.docx> <output.docx> <tag> <expected-current-text> <replacement> [occurrence] | opensuite set-paragraph-formatting <input.docx> <output.docx> <target-text> [--alignment value|--clear-alignment|--space-before twips|--clear-space-before|--space-after twips|--clear-space-after|--line value [--line-rule auto|exact|atLeast]|--clear-line|--left-indent twips|--right-indent twips|--first-line-indent twips|--hanging-indent twips|--keep-next true|false|--keep-lines true|false|--occurrence n]"
+                "usage: opensuite <capabilities|inspect|inspect-source|inspect-docx|inspect-styles|inspect-paragraphs|inspect-numbering|inspect-sections|inspect-headers-footers|inspect-references|inspect-images|inspect-fields|inspect-content-controls|inspect-tracked-changes|inspect-comments> [path-to-office-file] | opensuite <inspect-revision-view|find-text> <path-to-office-file> <current|original|text> | opensuite insert-picture <input.docx> <output.docx> <image> <start|end|before|after> [body-handle] [alt-text]"
                 .to_owned(),
         )),
         }
@@ -817,6 +819,79 @@ fn insert_paragraph_after(
                 occurrence,
             },
             text,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn insert_picture(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(image), Some(position), rest) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.collect::<Vec<_>>(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite insert-picture <input.docx> <output.docx> <image> <start|end|before|after> [body-handle] [alt-text]".to_owned()));
+    };
+    let position = position.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "position must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let text = |value: &std::ffi::OsString, name| {
+        value
+            .clone()
+            .into_string()
+            .map_err(|_| ("INVALID_ARGUMENTS", format!("{name} must be valid UTF-8")))
+    };
+    let (placement, alt_text) = match position.as_str() {
+        "start" if rest.len() <= 1 => (
+            opensuite_protocol::ParagraphPlacement::Start,
+            rest.first()
+                .map(|value| text(value, "alt text"))
+                .transpose()?,
+        ),
+        "end" if rest.len() <= 1 => (
+            opensuite_protocol::ParagraphPlacement::End,
+            rest.first()
+                .map(|value| text(value, "alt text"))
+                .transpose()?,
+        ),
+        "before" | "after" if rest.len() == 1 || rest.len() == 2 => {
+            let handle = text(&rest[0], "body handle")?;
+            let placement = if position == "before" {
+                opensuite_protocol::ParagraphPlacement::Before { handle }
+            } else {
+                opensuite_protocol::ParagraphPlacement::After { handle }
+            };
+            (
+                placement,
+                rest.get(1)
+                    .map(|value| text(value, "alt text"))
+                    .transpose()?,
+            )
+        }
+        _ => return Err(("INVALID_ARGUMENTS", "invalid picture placement".to_owned())),
+    };
+    let image_bytes = std::fs::read(image).map_err(|error| ("IO_ERROR", error.to_string()))?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::insert_picture(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::InsertPicture {
+            image_bytes,
+            placement,
+            alt_text,
             base_revision: None,
         },
         output,

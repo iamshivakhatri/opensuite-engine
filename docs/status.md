@@ -58,6 +58,8 @@ and XML source bytes.
 - `opensuite inspect <path-to-office-file>` JSON package metadata output.
 - Source-aware DOCX semantic views for document text, tables, styles,
   numbering, sections, headers/footers, references, pictures, and fields.
+- Intrinsic PNG and JPEG pixel-dimension parsing from image bytes, without
+  image decoding or DOCX/package dependencies.
 - Read-only `fldSimple` and nested complex-field inspection, including source
   boundaries, instruction text, and cached result text when declared.
 - Read-only WordprocessingML content-control (`w:sdt`) inspection, including
@@ -127,6 +129,9 @@ and XML source bytes.
   the direct `w:pStyle` reference.
 - Preservation-safe `ReplacePicture` for a uniquely referenced, internal main-document PNG or
   JPEG selected by exact picture metadata. It replaces only the same-type media payload.
+- Preservation-safe `InsertPicture` for inline PNG/JPEG images in the direct main document body.
+  It adds one media part and relationship, preserves unrelated parts, and sizes intrinsic pixels at
+  96 DPI capped at 6.5 inches wide.
 
 ## Current Repository Target
 
@@ -152,7 +157,7 @@ and XML source bytes.
   formatting outside ordinary direct main-body paragraphs
 - table/header/footer, tracked, wrapped, or general character formatting
 - style creation, definition editing, non-paragraph style assignment, or style cleanup
-- image insertion, deletion, resizing, relationship rewiring, or shared-image cloning
+- picture deletion, resizing, relationship rewiring, or shared-image cloning
 - mutation batches or transactions
 - rendering
 - server
