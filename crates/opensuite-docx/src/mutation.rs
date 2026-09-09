@@ -4,14 +4,14 @@ use quick_xml::escape::escape;
 
 use opensuite_opc::{Package, PackageError, Part, PartName};
 use opensuite_protocol::{
-    AffordanceReason, ContentControlTarget, CreateTable, DeleteParagraph, DeleteTable,
-    DeleteTableColumn, DeleteTableRow, InsertParagraph, InsertParagraphAfter, InsertParagraphs,
-    InsertPicture, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
-    OperationResult, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplacePicture,
-    ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
-    SetTableCellText, SetTableCellsText, SetTableFormatting, SetTextFormatting, TableAlignment,
-    TableBorders, TableCellMargins, TableCellTarget, TableFormattingPatch, TableRowTarget,
-    TableTarget, TextFormattingPatch, TextTarget,
+    AffordanceReason, ContentControlTarget, CreateTable, DeleteParagraph, DeletePicture,
+    DeleteTable, DeleteTableColumn, DeleteTableRow, InsertParagraph, InsertParagraphAfter,
+    InsertParagraphs, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
+    InsertTableRowsAfter, OperationResult, ParagraphFormattingPatch, ParagraphPlacement,
+    PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText, SetParagraphFormatting,
+    SetParagraphStyle, SetTableCellText, SetTableCellsText, SetTableFormatting, SetTextFormatting,
+    TableAlignment, TableBorders, TableCellMargins, TableCellTarget, TableFormattingPatch,
+    TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -518,6 +518,111 @@ fn append_xml_element(bytes: &[u8], element: &str) -> Result<Vec<u8>, OperationR
 }
 
 /// Deletes one safe, direct main-body paragraph selected by Current-view text.
+/// Deletes only the source paragraph holding one supported picture. Media and
+/// relationships are deliberately preserved, even when they become unused.
+pub fn delete_picture_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeletePicture,
+) -> Result<Vec<u8>, OperationResult> {
+    let handle = operation.target.handle.as_deref().ok_or_else(|| {
+        OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "delete_picture requires a picture handle",
+        )
+    })?;
+    let drawing = crate::inspection::picture_source_for_handle(package, main, source, handle)
+        .ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "picture handle was not found")
+        })?;
+    let run = source
+        .node(drawing)
+        .and_then(|node| node.parent())
+        .ok_or_else(|| OperationResult::failed("DOCUMENT_INVALID", "picture drawing has no run"))?;
+    let paragraph = source
+        .node(run)
+        .and_then(|node| node.parent())
+        .ok_or_else(|| {
+            OperationResult::failed("DOCUMENT_INVALID", "picture run has no paragraph")
+        })?;
+    if !word(source, run, "r") || !word(source, paragraph, "p") {
+        return Err(unsupported(
+            "delete_picture supports only a direct picture run",
+        ));
+    }
+    let run_children = source.children(run).collect::<Vec<_>>();
+    let paragraph_children = source
+        .children(paragraph)
+        .filter(|id| !word(source, *id, "pPr"))
+        .collect::<Vec<_>>();
+    if run_children != [drawing] || paragraph_children != [run] {
+        return Err(unsupported(
+            "delete_picture supports only a dedicated picture paragraph",
+        ));
+    }
+    let before = body_texts(source)?;
+    let index = before
+        .iter()
+        .position(|(id, _)| *id == paragraph)
+        .ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "picture paragraph was not found")
+        })?;
+    let mut expected = before.into_iter().map(|(_, text)| text).collect::<Vec<_>>();
+    expected.remove(index);
+    let output = write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span: source
+                .node(paragraph)
+                .expect("picture paragraph exists")
+                .span(),
+            replacement: Vec::new(),
+        }],
+    )?;
+    verify_deleted_picture_bytes(&output, &expected)?;
+    Ok(output)
+}
+
+pub fn delete_picture(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeletePicture,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output_matches_input(package, output) {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let bytes = match delete_picture_to_vec(package, main, source, operation) {
+        Ok(bytes) => bytes,
+        Err(result) => return result,
+    };
+    if let Err(error) = std::fs::write(output, bytes) {
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    OperationResult::picture_deleted()
+}
+
+fn verify_deleted_picture_bytes(output: &[u8], expected: &[String]) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let actual = body_texts(&source)?
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>();
+    (actual == expected)
+        .then_some(())
+        .ok_or_else(|| OperationResult::failed("DOCUMENT_INVALID", "output body ordering changed"))
+}
+
 pub fn delete_paragraph(
     package: &Package,
     main: &Part,
@@ -1501,7 +1606,10 @@ pub fn replace_picture(
     output: impl AsRef<Path>,
 ) -> OperationResult {
     let output = output.as_ref();
-    if operation.target.name.is_none() && operation.target.description.is_none() {
+    if operation.target.handle.is_none()
+        && operation.target.name.is_none()
+        && operation.target.description.is_none()
+    {
         return OperationResult::failed(
             "TARGET_NOT_FOUND",
             "picture target requires name or description",
@@ -1514,6 +1622,10 @@ pub fn replace_picture(
     let mut pictures = document
         .pictures()
         .filter(|picture| {
+            if let Some(handle) = &operation.target.handle {
+                return crate::inspection::picture_source_for_handle(package, main, source, handle)
+                    == Some(picture.source_id());
+            }
             picture.metadata().is_some_and(|meta| {
                 operation
                     .target
@@ -5379,13 +5491,13 @@ mod tests {
     };
 
     use opensuite_protocol::{
-        ContentControlTarget, CreateTable, DeleteParagraph, InsertParagraph, InsertParagraphAfter,
-        InsertPicture, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
-        InspectDocx, InspectDocxContent, InspectDocxFocus, ParagraphAlignment,
-        ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplaceText,
-        SetContentControlText, SetParagraphFormatting, SetParagraphStyle, SetTableCellText,
-        SetTableCellsText, SetTextFormatting, TableCellTarget, TableCellTextUpdate, TableRowTarget,
-        TableTarget, TextFormattingPatch, TextTarget,
+        ContentControlTarget, CreateTable, DeleteParagraph, DeletePicture, InsertParagraph,
+        InsertParagraphAfter, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
+        InsertTableRowsAfter, InspectDocx, InspectDocxContent, InspectDocxFocus,
+        ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch,
+        ReplaceText, SetContentControlText, SetParagraphFormatting, SetParagraphStyle,
+        SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
+        TableCellTextUpdate, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -7057,6 +7169,7 @@ mod tests {
             &source,
             &ReplacePicture {
                 target: opensuite_protocol::PictureTarget {
+                    handle: None,
                     name: None,
                     description: Some("Company logo".to_owned()),
                     occurrence: None,
@@ -7119,6 +7232,7 @@ mod tests {
                 &source,
                 &ReplacePicture {
                     target: opensuite_protocol::PictureTarget {
+                        handle: None,
                         name: name.map(str::to_owned),
                         description: None,
                         occurrence: None,
@@ -7165,6 +7279,7 @@ mod tests {
             &source,
             &ReplacePicture {
                 target: opensuite_protocol::PictureTarget {
+                    handle: None,
                     name: Some("Photo".to_owned()),
                     description: None,
                     occurrence: None,
@@ -7202,6 +7317,7 @@ mod tests {
         let (main, source) = crate::open_main_source(&package).unwrap();
         let operation = |occurrence| ReplacePicture {
             target: opensuite_protocol::PictureTarget {
+                handle: None,
                 name: Some("Duplicate".to_owned()),
                 description: None,
                 occurrence,
@@ -7242,6 +7358,7 @@ mod tests {
         let (main, source) = crate::open_main_source(&package).unwrap();
         let shared_operation = ReplacePicture {
             target: opensuite_protocol::PictureTarget {
+                handle: None,
                 name: Some("First".to_owned()),
                 description: None,
                 occurrence: None,
@@ -7401,5 +7518,76 @@ mod tests {
                 .is_ok()
             );
         }
+    }
+
+    #[test]
+    fn deletes_a_supported_picture_and_preserves_its_media_part() {
+        let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let inserted = insert_picture_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPicture {
+                image_bytes: png(2, 1),
+                placement: ParagraphPlacement::Start,
+                alt_text: None,
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(inserted).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let output = delete_picture_to_vec(
+            &package,
+            &main,
+            &source,
+            &DeletePicture {
+                target: opensuite_protocol::PictureTarget {
+                    handle: Some("p0".to_owned()),
+                    name: None,
+                    description: None,
+                    occurrence: None,
+                },
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let reopened = Package::from_bytes(output).unwrap();
+        let (main, source) = crate::open_main_source(&reopened).unwrap();
+        assert_eq!(
+            crate::DocxDocument::new(&source)
+                .unwrap()
+                .pictures()
+                .count(),
+            0
+        );
+        assert_eq!(
+            reopened
+                .read_part(
+                    &reopened
+                        .part(&PartName::parse("/word/media/image1.png").unwrap())
+                        .unwrap()
+                )
+                .unwrap(),
+            png(2, 1)
+        );
+        assert!(
+            delete_picture_to_vec(
+                &reopened,
+                &main,
+                &source,
+                &DeletePicture {
+                    target: opensuite_protocol::PictureTarget {
+                        handle: Some("p0".to_owned()),
+                        name: None,
+                        description: None,
+                        occurrence: None
+                    },
+                    base_revision: None,
+                }
+            )
+            .is_err()
+        );
     }
 }

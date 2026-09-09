@@ -1,8 +1,8 @@
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
     Affordance, AffordanceReason, DocxBodyBlock, DocxBodyBlockKind, DocxHeading, DocxOverview,
-    DocxParagraph, DocxTable, DocxTableColumn, DocxTableRow, InspectDocx, InspectDocxContent,
-    InspectDocxFocus, InspectDocxResult, InspectionPage,
+    DocxParagraph, DocxPicture, DocxPictureFormat, DocxTable, DocxTableColumn, DocxTableRow,
+    InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectionPage,
 };
 
 use crate::{BodyBlock, DocxDocument, RevisionView, SourceDocument, StyleSheet, load_styles};
@@ -25,7 +25,7 @@ pub fn inspect_docx_document(
     match &request.focus {
         InspectDocxFocus::Overview => overview(document),
         InspectDocxFocus::BodyBlocks { offset, limit } => {
-            body_blocks(source, document, *offset, *limit)
+            body_blocks(package, main, source, document, *offset, *limit)
         }
         InspectDocxFocus::Headings { offset, limit } => {
             let styles = match load_styles(package, main) {
@@ -168,6 +168,8 @@ fn paragraphs(
 }
 
 fn body_blocks(
+    package: &Package,
+    main: &Part,
     source: &SourceDocument,
     document: DocxDocument<'_>,
     offset: usize,
@@ -180,23 +182,29 @@ fn body_blocks(
     let mut total = 0;
     let mut items = Vec::new();
     let mut table_index = 0;
+    let mut picture_index = 0;
     for id in source.children(body) {
-        let (kind, text, table_handle) = if is_word(source, id, "p") {
-            let text = match crate::tracked_change::text_for_view(source, id, RevisionView::Current)
-            {
-                Ok(text) => text,
-                Err(error) => {
-                    return InspectDocxResult::failed(
-                        error.code(),
-                        "could not inspect DOCX artifact",
-                    );
-                }
-            };
-            (DocxBodyBlockKind::Paragraph, Some(text), None)
+        let (kind, text, table_handle, picture) = if is_word(source, id, "p") {
+            if let Some(picture) = body_picture(package, main, source, id, picture_index) {
+                picture_index += 1;
+                (DocxBodyBlockKind::Picture, None, None, Some(picture))
+            } else {
+                let text =
+                    match crate::tracked_change::text_for_view(source, id, RevisionView::Current) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            return InspectDocxResult::failed(
+                                error.code(),
+                                "could not inspect DOCX artifact",
+                            );
+                        }
+                    };
+                (DocxBodyBlockKind::Paragraph, Some(text), None, None)
+            }
         } else if is_word(source, id, "tbl") {
             let handle = format!("t{table_index}");
             table_index += 1;
-            (DocxBodyBlockKind::Table, None, Some(handle))
+            (DocxBodyBlockKind::Table, None, Some(handle), None)
         } else {
             continue;
         };
@@ -208,12 +216,88 @@ fn body_blocks(
                 kind,
                 text,
                 table_handle,
+                picture,
             });
         }
     }
     InspectDocxResult::success(InspectDocxContent::BodyBlocks(page_result(
         total, page, items,
     )))
+}
+
+fn body_picture(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    paragraph: crate::NodeId,
+    occurrence: usize,
+) -> Option<DocxPicture> {
+    let runs = source
+        .children(paragraph)
+        .filter(|id| !is_word(source, *id, "pPr"))
+        .collect::<Vec<_>>();
+    if runs.len() != 1 || !is_word(source, runs[0], "r") {
+        return None;
+    }
+    let drawing = source.children(runs[0]).collect::<Vec<_>>();
+    if drawing.len() != 1 || !is_word(source, drawing[0], "drawing") {
+        return None;
+    }
+    let picture = DocxDocument::new(source)
+        .ok()?
+        .pictures()
+        .find(|item| item.source_id() == drawing[0])?;
+    if picture.kind() != crate::PictureKind::Inline {
+        return None;
+    }
+    let extent = picture.extent().ok()??;
+    let crate::ImageReference::Embedded(image) = picture.image_reference(package, main).ok()?
+    else {
+        return None;
+    };
+    let format = match image.part.content_type.as_str() {
+        "image/png" => DocxPictureFormat::Png,
+        "image/jpeg" => DocxPictureFormat::Jpeg,
+        _ => return None,
+    };
+    Some(DocxPicture {
+        handle: format!("p{occurrence}"),
+        format,
+        width_emu: extent.width_emu,
+        height_emu: extent.height_emu,
+        alt_text: picture.metadata().and_then(|meta| meta.description),
+        affordances: vec![
+            Affordance::supported("replace_picture"),
+            Affordance::supported("delete_picture"),
+        ],
+    })
+}
+
+pub(crate) fn picture_source_for_handle(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    handle: &str,
+) -> Option<crate::NodeId> {
+    let index = handle.strip_prefix('p')?.parse::<usize>().ok()?;
+    let document = DocxDocument::new(source).ok()?;
+    source
+        .children(document.body_id())
+        .filter(|id| is_word(source, *id, "p"))
+        .filter_map(|paragraph| {
+            let picture = body_picture(package, main, source, paragraph, 0)?;
+            let drawing = source
+                .children(paragraph)
+                .find(|id| is_word(source, *id, "r"))
+                .and_then(|run| {
+                    source
+                        .children(run)
+                        .find(|id| is_word(source, *id, "drawing"))
+                })?;
+            Some((picture, drawing))
+        })
+        .nth(index)
+        .map(|(_, drawing)| drawing)
 }
 
 fn direct_body_block_index(
@@ -398,6 +482,58 @@ mod tests {
                 .into_bytes(),
         )
         .unwrap()
+    }
+
+    fn png() -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        bytes.extend_from_slice(&1u32.to_be_bytes());
+        bytes.extend_from_slice(&2u32.to_be_bytes());
+        bytes.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+        bytes
+    }
+
+    #[test]
+    fn exposes_an_inserted_inline_picture_as_a_body_block() {
+        let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let bytes = crate::insert_picture_to_vec(
+            &package,
+            &main,
+            &source,
+            &opensuite_protocol::InsertPicture {
+                image_bytes: png(),
+                placement: opensuite_protocol::ParagraphPlacement::Start,
+                alt_text: Some("diagram".to_owned()),
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let result = inspect_docx_document(
+            &package,
+            &main,
+            &source,
+            &InspectDocx {
+                focus: InspectDocxFocus::BodyBlocks {
+                    offset: 0,
+                    limit: 10,
+                },
+            },
+        );
+        let Some(InspectDocxContent::BodyBlocks(page)) = result.content else {
+            panic!("body blocks expected")
+        };
+        let picture = page.items[0].picture.as_ref().unwrap();
+        assert_eq!(page.items[0].kind, DocxBodyBlockKind::Picture);
+        assert_eq!(picture.handle, "p0");
+        assert_eq!(picture.format, DocxPictureFormat::Png);
+        assert_eq!((picture.width_emu, picture.height_emu), (9525, 19050));
+        assert_eq!(picture.alt_text.as_deref(), Some("diagram"));
+        assert_eq!(
+            picture.affordances[0].capability.as_str(),
+            "replace_picture"
+        );
     }
 
     fn styles() -> StyleSheet {

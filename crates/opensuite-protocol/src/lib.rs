@@ -113,6 +113,8 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_text_formatting",
     "set_paragraph_style",
     "replace_picture",
+    "delete_picture",
+    "set_picture_size",
     "insert_picture",
     "insert_table_row",
     "insert_table_rows",
@@ -428,6 +430,7 @@ pub struct SetParagraphStyle {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PictureTarget {
+    pub handle: Option<String>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub occurrence: Option<usize>,
@@ -441,6 +444,23 @@ pub struct ImagePayload {
 pub struct ReplacePicture {
     pub target: PictureTarget,
     pub replacement: ImagePayload,
+    pub base_revision: Option<String>,
+}
+
+/// Deletes one supported inline picture selected through an opaque picture handle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeletePicture {
+    pub target: PictureTarget,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PictureSizeChange { WidthEmu(i64), HeightEmu(i64) }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetPictureSize {
+    pub target: PictureTarget,
+    pub size: PictureSizeChange,
     pub base_revision: Option<String>,
 }
 
@@ -631,12 +651,14 @@ pub struct DocxBodyBlock {
     pub kind: DocxBodyBlockKind,
     pub text: Option<String>,
     pub table_handle: Option<String>,
+    pub picture: Option<DocxPicture>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DocxBodyBlockKind {
     Paragraph,
     Table,
+    Picture,
 }
 
 impl DocxBodyBlockKind {
@@ -644,6 +666,33 @@ impl DocxBodyBlockKind {
         match self {
             Self::Paragraph => "paragraph",
             Self::Table => "table",
+            Self::Picture => "picture",
+        }
+    }
+}
+
+/// A supported, inline PNG/JPEG picture in the direct document body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxPicture {
+    pub handle: String,
+    pub format: DocxPictureFormat,
+    pub width_emu: i64,
+    pub height_emu: i64,
+    pub alt_text: Option<String>,
+    pub affordances: Vec<Affordance>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocxPictureFormat {
+    Png,
+    Jpeg,
+}
+
+impl DocxPictureFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpeg",
         }
     }
 }
@@ -976,6 +1025,18 @@ impl OperationResult {
         }
     }
 
+    pub fn picture_deleted() -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "picture_deleted".to_owned(),
+                before: "inline picture".to_owned(),
+                after: String::new(),
+            }],
+        }
+    }
+
     fn formatting_set(kind: &str, text: String) -> Self {
         Self {
             status: OperationStatus::Applied,
@@ -1123,7 +1184,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","delete_picture","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

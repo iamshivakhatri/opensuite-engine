@@ -34,6 +34,8 @@ fn main() {
         set_paragraph_style(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("replace-picture")) {
         replace_picture(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("delete-picture")) {
+        delete_picture(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-picture")) {
         insert_picture(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("inspect-context")) {
@@ -610,6 +612,49 @@ fn set_paragraph_style(
     .to_json())
 }
 
+fn delete_picture(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(handle), None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "usage: opensuite delete-picture <input.docx> <output.docx> <picture-handle>"
+                .to_owned(),
+        ));
+    };
+    let handle = handle.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "picture handle must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::delete_picture(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::DeletePicture {
+            target: opensuite_protocol::PictureTarget {
+                handle: Some(handle),
+                name: None,
+                description: None,
+                occurrence: None,
+            },
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
 fn replace_picture(
     mut arguments: impl Iterator<Item = std::ffi::OsString>,
 ) -> Result<serde_json::Value, (&'static str, String)> {
@@ -699,6 +744,7 @@ fn replace_picture(
         &source,
         &opensuite_protocol::ReplacePicture {
             target: opensuite_protocol::PictureTarget {
+                handle: None,
                 name,
                 description,
                 occurrence,

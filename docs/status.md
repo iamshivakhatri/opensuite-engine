@@ -132,6 +132,12 @@ and XML source bytes.
 - Preservation-safe `InsertPicture` for inline PNG/JPEG images in the direct main document body.
   It adds one media part and relationship, preserves unrelated parts, and sizes intrinsic pixels at
   96 DPI capped at 6.5 inches wide.
+- Body-block inspection recognizes a direct-body paragraph containing exactly one ordinary inline,
+  embedded PNG/JPEG picture. It reports an opaque `pN` picture handle, EMU dimensions, optional
+  alt text, and the currently executable `replace_picture` affordance. Floating, linked, mixed,
+  table, header/footer, and other DrawingML forms remain ordinary preserved content.
+- `DeletePicture` removes only the dedicated main-body picture paragraph selected by its `pN`
+  handle. Its relationship and media part are intentionally retained, even when unused.
 
 ## Current Repository Target
 
