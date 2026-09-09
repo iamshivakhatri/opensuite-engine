@@ -103,6 +103,8 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "replace_text",
     "create_blank_docx",
     "body_blocks",
+    "insert_page_break",
+    "delete_page_break",
     "insert_paragraph",
     "insert_paragraphs",
     "insert_paragraph_after",
@@ -111,6 +113,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_content_control_text",
     "set_paragraph_formatting",
     "set_text_formatting",
+    "set_hyperlink",
     "set_paragraph_style",
     "set_paragraphs_list",
     "replace_picture",
@@ -177,6 +180,26 @@ pub enum ParagraphPlacement {
     End,
     Before { handle: String },
     After { handle: String },
+}
+
+/// Inserts one explicit page break at a direct body placement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertPageBreak {
+    pub placement: ParagraphPlacement,
+    pub base_revision: Option<String>,
+}
+
+/// Opaque handle for one supported explicit page break.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PageBreakTarget {
+    pub handle: String,
+}
+
+/// Deletes one supported explicit page break.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeletePageBreak {
+    pub target: PageBreakTarget,
+    pub base_revision: Option<String>,
 }
 
 /// Deletes the ordinary body paragraph containing `target`.
@@ -418,6 +441,14 @@ pub struct TextFormattingPatch {
 pub struct SetTextFormatting {
     pub target: TextTarget,
     pub formatting: TextFormattingPatch,
+    pub base_revision: Option<String>,
+}
+
+/// Applies an external hyperlink to existing text, or clears one supported hyperlink.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetHyperlink {
+    pub target: TextTarget,
+    pub url: Option<String>,
     pub base_revision: Option<String>,
 }
 
@@ -672,6 +703,7 @@ pub struct DocxBodyBlock {
     pub text: Option<String>,
     pub table_handle: Option<String>,
     pub picture: Option<DocxPicture>,
+    pub affordances: Vec<Affordance>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -679,6 +711,7 @@ pub enum DocxBodyBlockKind {
     Paragraph,
     Table,
     Picture,
+    PageBreak,
 }
 
 impl DocxBodyBlockKind {
@@ -687,6 +720,7 @@ impl DocxBodyBlockKind {
             Self::Paragraph => "paragraph",
             Self::Table => "table",
             Self::Picture => "picture",
+            Self::PageBreak => "page_break",
         }
     }
 }
@@ -1216,7 +1250,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

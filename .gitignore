@@ -10,3 +10,4 @@ crates/opensuite-node/*.node
 *.txt
 tests
 docs/roadmap
+docs/docx-engine.md

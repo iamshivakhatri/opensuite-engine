@@ -30,6 +30,8 @@ fn main() {
         set_paragraph_formatting(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-text-formatting")) {
         set_text_formatting(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-hyperlink")) {
+        set_hyperlink(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-paragraph-style")) {
         set_paragraph_style(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-paragraphs-list")) {
@@ -38,6 +40,10 @@ fn main() {
         replace_picture(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("delete-picture")) {
         delete_picture(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-page-break")) {
+        insert_page_break(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("delete-page-break")) {
+        delete_page_break(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-picture-size")) {
         set_picture_size(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-picture")) {
@@ -576,6 +582,56 @@ fn set_text_formatting(
     .to_json())
 }
 
+fn set_hyperlink(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(target), value, None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "usage: opensuite set-hyperlink <input.docx> <output.docx> <target> <url|--clear>"
+                .to_owned(),
+        ));
+    };
+    let target = target.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "target text must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let value = value
+        .ok_or(("INVALID_ARGUMENTS", "URL must be valid UTF-8".to_owned()))?
+        .into_string()
+        .map_err(|_| ("INVALID_ARGUMENTS", "URL must be valid UTF-8".to_owned()))?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    opensuite_docx::set_hyperlink_to_vec(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetHyperlink {
+            target: opensuite_protocol::TextTarget {
+                text: target,
+                occurrence: None,
+            },
+            url: (value != "--clear").then_some(value),
+            base_revision: None,
+        },
+    )
+    .map_err(|_| ("DOCUMENT_INVALID", "could not set hyperlink".to_owned()))
+    .and_then(|bytes| {
+        std::fs::write(output, bytes).map_err(|error| ("SERIALIZATION_FAILED", error.to_string()))
+    })
+    .map(|_| serde_json::json!({"ok": true}))
+}
+
 fn set_paragraph_style(
     mut arguments: impl Iterator<Item = std::ffi::OsString>,
 ) -> Result<serde_json::Value, (&'static str, String)> {
@@ -709,6 +765,101 @@ fn delete_picture(
                 description: None,
                 occurrence: None,
             },
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn insert_page_break(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(position), handle, None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite insert-page-break <input.docx> <output.docx> <start|end|before|after> [body-handle]".to_owned()));
+    };
+    let position = position.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "position must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let handle = handle
+        .map(|value| {
+            value.into_string().map_err(|_| {
+                (
+                    "INVALID_ARGUMENTS",
+                    "body handle must be valid UTF-8".to_owned(),
+                )
+            })
+        })
+        .transpose()?;
+    let placement = match (position.as_str(), handle) {
+        ("start", None) => opensuite_protocol::ParagraphPlacement::Start,
+        ("end", None) => opensuite_protocol::ParagraphPlacement::End,
+        ("before", Some(handle)) => opensuite_protocol::ParagraphPlacement::Before { handle },
+        ("after", Some(handle)) => opensuite_protocol::ParagraphPlacement::After { handle },
+        _ => {
+            return Err((
+                "INVALID_ARGUMENTS",
+                "invalid page-break placement".to_owned(),
+            ));
+        }
+    };
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::insert_page_break(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::InsertPageBreak {
+            placement,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn delete_page_break(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(handle), None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "usage: opensuite delete-page-break <input.docx> <output.docx> <body-handle>"
+                .to_owned(),
+        ));
+    };
+    let handle = handle.into_string().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "body handle must be valid UTF-8".to_owned(),
+        )
+    })?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::delete_page_break(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::DeletePageBreak {
+            target: opensuite_protocol::PageBreakTarget { handle },
             base_revision: None,
         },
         output,

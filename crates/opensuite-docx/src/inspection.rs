@@ -184,10 +184,24 @@ fn body_blocks(
     let mut table_index = 0;
     let mut picture_index = 0;
     for id in source.children(body) {
-        let (kind, text, table_handle, picture) = if is_word(source, id, "p") {
-            if let Some(picture) = body_picture(package, main, source, id, picture_index) {
+        let (kind, text, table_handle, picture, affordances) = if is_word(source, id, "p") {
+            if page_break_paragraph(source, id) {
+                (
+                    DocxBodyBlockKind::PageBreak,
+                    None,
+                    None,
+                    None,
+                    vec![Affordance::supported("delete_page_break")],
+                )
+            } else if let Some(picture) = body_picture(package, main, source, id, picture_index) {
                 picture_index += 1;
-                (DocxBodyBlockKind::Picture, None, None, Some(picture))
+                (
+                    DocxBodyBlockKind::Picture,
+                    None,
+                    None,
+                    Some(picture),
+                    Vec::new(),
+                )
             } else {
                 let text =
                     match crate::tracked_change::text_for_view(source, id, RevisionView::Current) {
@@ -199,12 +213,24 @@ fn body_blocks(
                             );
                         }
                     };
-                (DocxBodyBlockKind::Paragraph, Some(text), None, None)
+                (
+                    DocxBodyBlockKind::Paragraph,
+                    Some(text),
+                    None,
+                    None,
+                    Vec::new(),
+                )
             }
         } else if is_word(source, id, "tbl") {
             let handle = format!("t{table_index}");
             table_index += 1;
-            (DocxBodyBlockKind::Table, None, Some(handle), None)
+            (
+                DocxBodyBlockKind::Table,
+                None,
+                Some(handle),
+                None,
+                Vec::new(),
+            )
         } else {
             continue;
         };
@@ -217,12 +243,37 @@ fn body_blocks(
                 text,
                 table_handle,
                 picture,
+                affordances,
             });
         }
     }
     InspectDocxResult::success(InspectDocxContent::BodyBlocks(page_result(
         total, page, items,
     )))
+}
+
+/// Recognizes only the canonical dedicated paragraph used for editable page breaks.
+pub(crate) fn page_break_paragraph(source: &SourceDocument, paragraph: crate::NodeId) -> bool {
+    let Some(body) = source.node(paragraph).and_then(|node| node.parent()) else {
+        return false;
+    };
+    if !is_word(source, paragraph, "p")
+        || !is_word(source, body, "body")
+        || !source
+            .node(body)
+            .and_then(|node| node.parent())
+            .is_some_and(|document| is_word(source, document, "document"))
+    {
+        return false;
+    }
+    let runs = source.children(paragraph).collect::<Vec<_>>();
+    if runs.len() != 1 || !is_word(source, runs[0], "r") {
+        return false;
+    }
+    let breaks = source.children(runs[0]).collect::<Vec<_>>();
+    breaks.len() == 1
+        && is_word(source, breaks[0], "br")
+        && matches!(source.node(breaks[0]).map(|node| node.kind()), Some(crate::SourceNodeKind::Element { attributes, .. }) if attributes.len() == 1 && attributes[0].local_name() == "type" && attributes[0].value() == "page")
 }
 
 fn body_picture(
@@ -539,6 +590,28 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["replace_picture", "delete_picture", "set_picture_size"]
         );
+    }
+
+    #[test]
+    fn recognizes_only_the_canonical_page_break_paragraph() {
+        let canonical = source("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>");
+        let body = canonical.children(canonical.root()).next().unwrap();
+        let paragraph = canonical.children(body).next().unwrap();
+        assert!(page_break_paragraph(&canonical, paragraph));
+
+        for body in [
+            "<w:p><w:r><w:t>Text</w:t><w:br w:type=\"page\"/></w:r></w:p>",
+            "<w:p><w:r><w:br w:type=\"page\"/><w:br w:type=\"page\"/></w:r></w:p>",
+            "<w:p><w:r><w:br w:type=\"page\" w:clear=\"all\"/></w:r></w:p>",
+            "<w:p><w:r><w:br/></w:r></w:p>",
+        ] {
+            let source = source(body);
+            let body = source.children(source.root()).next().unwrap();
+            assert!(!page_break_paragraph(
+                &source,
+                source.children(body).next().unwrap()
+            ));
+        }
     }
 
     fn styles() -> StyleSheet {

@@ -1,19 +1,20 @@
 use opensuite_opc::Package;
 use opensuite_protocol::{
-    CreateTable, DeleteParagraph, DeletePicture, DeleteTable, DeleteTableColumn, DeleteTableRow,
-    Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
-    InsertPicture, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
-    InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult, ReplaceText,
-    SetParagraphFormatting, SetParagraphStyle, SetParagraphsList, SetPictureSize,
-    SetTableCellsText, SetTableFormatting, SetTextFormatting,
+    CreateTable, DeletePageBreak, DeleteParagraph, DeletePicture, DeleteTable, DeleteTableColumn,
+    DeleteTableRow, Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertPageBreak,
+    InsertParagraph, InsertParagraphs, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
+    InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
+    InspectTextContextResult, OperationResult, ReplaceText, SetHyperlink, SetParagraphFormatting,
+    SetParagraphStyle, SetParagraphsList, SetPictureSize, SetTableCellsText, SetTableFormatting,
+    SetTextFormatting,
 };
 
 use crate::{
-    create_table_to_vec, delete_paragraph_to_vec, delete_picture_to_vec,
+    create_table_to_vec, delete_page_break_to_vec, delete_paragraph_to_vec, delete_picture_to_vec,
     delete_table_column_to_vec, delete_table_row_to_vec, delete_table_to_vec,
-    insert_paragraph_to_vec, insert_paragraphs_to_vec, insert_picture_to_vec,
-    insert_table_column_after_to_vec, insert_table_row_after_to_vec,
-    insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
+    insert_page_break_to_vec, insert_paragraph_to_vec, insert_paragraphs_to_vec,
+    insert_picture_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
+    insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec, set_hyperlink_to_vec,
     set_paragraph_formatting_to_vec, set_paragraph_style_to_vec, set_paragraphs_list_to_vec,
     set_picture_size_to_vec, set_table_cells_text_to_vec, set_table_formatting_to_vec,
     set_text_formatting_to_vec,
@@ -49,6 +50,62 @@ pub fn execute_docx_insert_paragraph(
                 error,
                 "insert_paragraph",
                 placement_handle(&operation.placement),
+            ),
+            output_artifact: None,
+        },
+    }
+}
+
+pub fn execute_docx_insert_page_break(
+    input_artifact: Vec<u8>,
+    operation: &InsertPageBreak,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    match insert_page_break_to_vec(&package, &main, &source, operation) {
+        Ok(output_artifact) => DocxExecutionResult {
+            operation: OperationResult::applied(String::new(), String::new()),
+            output_artifact: Some(output_artifact),
+        },
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "insert_page_break",
+                placement_handle(&operation.placement),
+            ),
+            output_artifact: None,
+        },
+    }
+}
+
+pub fn execute_docx_delete_page_break(
+    input_artifact: Vec<u8>,
+    operation: &DeletePageBreak,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    match delete_page_break_to_vec(&package, &main, &source, operation) {
+        Ok(output_artifact) => DocxExecutionResult {
+            operation: OperationResult::applied(String::new(), String::new()),
+            output_artifact: Some(output_artifact),
+        },
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "delete_page_break",
+                Some(&operation.target.handle),
             ),
             output_artifact: None,
         },
@@ -234,6 +291,12 @@ execute_paragraph_mutation!(
     SetTextFormatting,
     set_text_formatting_to_vec,
     "set_text_formatting"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_hyperlink,
+    SetHyperlink,
+    set_hyperlink_to_vec,
+    "set_hyperlink"
 );
 
 macro_rules! execute_table_mutation {

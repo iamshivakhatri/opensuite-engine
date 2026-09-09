@@ -124,13 +124,17 @@ and XML source bytes.
 - Preservation-safe `SetTextFormatting` for a Current-view range in simple direct body runs.
   It splits only boundary runs, patches whole selected runs directly, and supports direct bold,
   italic, font-size, and font-family changes.
+- Preservation-safe `SetHyperlink` applies, replaces, or clears an external HTTP(S) hyperlink for
+  existing text in one ordinary direct-body paragraph while preserving selected run formatting and
+  leaving unused relationships intact.
 - Preservation-safe `SetParagraphStyle` for an ordinary direct body paragraph selected through
   `TextTarget`. It resolves an existing paragraph style by exact display name and changes only
   the direct `w:pStyle` reference.
 - Preservation-safe `SetParagraphsList` applies or clears one level-zero bullet or decimal list
   across 1–100 consecutive ordinary direct-body paragraphs. It appends canonical numbering
-  definitions and instances without rewriting imported numbering, and creates missing numbering
-  parts, relationships, and content-type entries only when required.
+  definitions and instances without rewriting imported numbering. Tests cover ID collision,
+  imported XML/relationship/content-type preservation, existing list replacement/clearing, and
+  creation of missing numbering parts, relationships, and content-type entries.
 - Preservation-safe `ReplacePicture` for a uniquely referenced, internal main-document PNG or
   JPEG selected by exact picture metadata. It replaces only the same-type media payload.
 - Preservation-safe `InsertPicture` for inline PNG/JPEG images in the direct main document body.
@@ -145,6 +149,9 @@ and XML source bytes.
 - `SetPictureSize` changes exactly one requested EMU dimension of a supported `pN` picture while
   preserving its displayed ratio and synchronizing the inline and transform extents.
   Arbitrary distortion, crop, and floating-picture layout remain deferred.
+- Preservation-safe explicit page breaks use one dedicated canonical main-body paragraph. Inspection
+  exposes `PageBreak` body blocks with `delete_page_break`; insert and delete use opaque body handles,
+  preserve surrounding content, and verify the reopened package and body ordering.
 
 ## Current Repository Target
 

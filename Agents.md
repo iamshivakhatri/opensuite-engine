@@ -17,6 +17,7 @@ Before making meaningful changes, read:
 - `docs/ARCHITECTURE.md` — architectural boundaries and invariants
 - `docs/ENGINEERING.md` — implementation and verification rules
 - `docs/STATUS.md` — what actually exists today
+- `docs/docx-engine.md` — DOCX product roadmap and stopping rule for DOCX work
 
 Do not infer architecture from incomplete code when these documents define it.
 

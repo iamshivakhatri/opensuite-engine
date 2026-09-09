@@ -2,17 +2,17 @@ use std::{collections::HashSet, path::Path};
 
 use quick_xml::escape::escape;
 
-use opensuite_opc::{Package, PackageError, Part, PartName};
+use opensuite_opc::{Package, PackageError, Part, PartName, RelationshipTarget};
 use opensuite_protocol::{
-    AffordanceReason, ContentControlTarget, CreateTable, DeleteParagraph, DeletePicture,
-    DeleteTable, DeleteTableColumn, DeleteTableRow, InsertParagraph, InsertParagraphAfter,
-    InsertParagraphs, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
-    InsertTableRowsAfter, OperationResult, ParagraphFormattingPatch, ParagraphListKind,
-    ParagraphPlacement, PropertyPatch, ReplacePicture, ReplaceText, SetContentControlText,
-    SetParagraphFormatting, SetParagraphStyle, SetParagraphsList, SetPictureSize, SetTableCellText,
-    SetTableCellsText, SetTableFormatting, SetTextFormatting, TableAlignment, TableBorders,
-    TableCellMargins, TableCellTarget, TableFormattingPatch, TableRowTarget, TableTarget,
-    TextFormattingPatch, TextTarget,
+    AffordanceReason, ContentControlTarget, CreateTable, DeletePageBreak, DeleteParagraph,
+    DeletePicture, DeleteTable, DeleteTableColumn, DeleteTableRow, InsertPageBreak,
+    InsertParagraph, InsertParagraphAfter, InsertParagraphs, InsertPicture, InsertTableColumnAfter,
+    InsertTableRowAfter, InsertTableRowsAfter, OperationResult, PageBreakTarget,
+    ParagraphFormattingPatch, ParagraphListKind, ParagraphPlacement, PropertyPatch, ReplacePicture,
+    ReplaceText, SetContentControlText, SetHyperlink, SetParagraphFormatting, SetParagraphStyle,
+    SetParagraphsList, SetPictureSize, SetTableCellText, SetTableCellsText, SetTableFormatting,
+    SetTextFormatting, TableAlignment, TableBorders, TableCellMargins, TableCellTarget,
+    TableFormattingPatch, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -35,6 +35,8 @@ const NUMBERING_RELATIONSHIP_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
 const NUMBERING_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
+const HYPERLINK_RELATIONSHIP_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 
 enum ResolvedParagraphPlacement {
     Start,
@@ -227,6 +229,135 @@ pub fn insert_paragraphs_to_vec(
     }
     let placement = resolve_paragraph_placement(source, &operation.placement)?;
     insert_paragraph_bytes(package, main, source, &operation.texts, placement)
+}
+
+/// Inserts one canonical explicit page-break paragraph at a direct body placement.
+pub fn insert_page_break_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertPageBreak,
+) -> Result<Vec<u8>, OperationResult> {
+    let placement = resolve_paragraph_placement(source, &operation.placement)?;
+    let (body, blocks) = direct_body_blocks(source)?;
+    let index = placement_index(&blocks, placement)?;
+    let expected = body_block_signatures(source)?;
+    let insertion = body_insertion(source, body, &blocks, index)?;
+    let prefix = word_prefix_for(source, body, "body")?;
+    let name = |local: &str| qualify(&prefix, local);
+    let fragment = format!(
+        "<{}><{}><{} {}=\"page\"/></{}></{}>",
+        name("p"),
+        name("r"),
+        name("br"),
+        name("type"),
+        name("r"),
+        name("p")
+    );
+    let output = write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span: SourceSpan {
+                start: insertion,
+                end: insertion,
+            },
+            replacement: fragment.into_bytes(),
+        }],
+    )?;
+    verify_inserted_page_break_bytes(&output, index, &expected)?;
+    Ok(output)
+}
+
+/// Deletes one supported canonical explicit page-break paragraph.
+pub fn delete_page_break_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeletePageBreak,
+) -> Result<Vec<u8>, OperationResult> {
+    let paragraph = resolve_page_break_target(source, &operation.target)?;
+    let (_, blocks) = direct_body_blocks(source)?;
+    let index = blocks
+        .iter()
+        .position(|id| *id == paragraph)
+        .ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "page break handle was not found")
+        })?;
+    let mut expected = body_block_signatures(source)?;
+    expected.remove(index);
+    let output = write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span: source.node(paragraph).expect("page break exists").span(),
+            replacement: Vec::new(),
+        }],
+    )?;
+    verify_deleted_page_break_bytes(&output, &expected)?;
+    Ok(output)
+}
+
+pub fn insert_page_break(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertPageBreak,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    write_operation_output(
+        package,
+        output.as_ref(),
+        insert_page_break_to_vec(package, main, source, operation),
+    )
+}
+
+pub fn delete_page_break(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeletePageBreak,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    write_operation_output(
+        package,
+        output.as_ref(),
+        delete_page_break_to_vec(package, main, source, operation),
+    )
+}
+
+fn write_operation_output(
+    package: &Package,
+    output: &Path,
+    result: Result<Vec<u8>, OperationResult>,
+) -> OperationResult {
+    if output_matches_input(package, output) {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let bytes = match result {
+        Ok(bytes) => bytes,
+        Err(error) => return error,
+    };
+    std::fs::write(output, bytes)
+        .map(|_| OperationResult::applied(String::new(), String::new()))
+        .unwrap_or_else(|error| OperationResult::failed("SERIALIZATION_FAILED", error.to_string()))
+}
+
+fn resolve_page_break_target(
+    source: &SourceDocument,
+    target: &PageBreakTarget,
+) -> Result<NodeId, OperationResult> {
+    let paragraph = resolve_body_block_handle(source, &target.handle)?;
+    crate::inspection::page_break_paragraph(source, paragraph)
+        .then_some(paragraph)
+        .ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "page break handle was not found")
+        })
 }
 
 /// Inserts one inline PNG or JPEG picture and returns verified DOCX bytes.
@@ -635,6 +766,60 @@ fn verify_deleted_picture_bytes(output: &[u8], expected: &[String]) -> Result<()
         .map(|(_, text)| text)
         .collect::<Vec<_>>();
     (actual == expected)
+        .then_some(())
+        .ok_or_else(|| OperationResult::failed("DOCUMENT_INVALID", "output body ordering changed"))
+}
+
+fn body_block_signatures(
+    source: &SourceDocument,
+) -> Result<Vec<(String, String)>, OperationResult> {
+    body_texts(source)?
+        .into_iter()
+        .map(|(id, text)| {
+            if crate::inspection::page_break_paragraph(source, id) {
+                Ok(("page_break".to_owned(), String::new()))
+            } else if word(source, id, "p") {
+                Ok(("paragraph".to_owned(), text))
+            } else {
+                Ok(("table".to_owned(), text))
+            }
+        })
+        .collect()
+}
+
+fn verify_inserted_page_break_bytes(
+    output: &[u8],
+    index: usize,
+    before: &[(String, String)],
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let (_, blocks) = direct_body_blocks(&source)?;
+    if !blocks
+        .get(index)
+        .is_some_and(|id| crate::inspection::page_break_paragraph(&source, *id))
+    {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "page break is not at the requested body position",
+        ));
+    }
+    let mut expected = before.to_vec();
+    expected.insert(index, ("page_break".to_owned(), String::new()));
+    (body_block_signatures(&source)? == expected)
+        .then_some(())
+        .ok_or_else(|| OperationResult::failed("DOCUMENT_INVALID", "output body ordering changed"))
+}
+
+fn verify_deleted_page_break_bytes(
+    output: &[u8],
+    expected: &[(String, String)],
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    (body_block_signatures(&source)? == expected)
         .then_some(())
         .ok_or_else(|| OperationResult::failed("DOCUMENT_INVALID", "output body ordering changed"))
 }
@@ -2633,6 +2818,350 @@ pub fn set_text_formatting_to_vec(
         source,
         range_text_formatting_patches(source, &runs, &operation.formatting)?,
     )
+}
+
+/// Applies or clears one external hyperlink without changing visible text or run properties.
+pub fn set_hyperlink_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetHyperlink,
+) -> Result<Vec<u8>, OperationResult> {
+    let matched = resolve_single_hyperlink_match(source, &operation.target)?;
+    let paragraph = matched
+        .segments
+        .first()
+        .and_then(|s| paragraph_ancestor(source, s.id))
+        .ok_or_else(|| unsupported("text range has no paragraph"))?;
+    if matched
+        .segments
+        .iter()
+        .any(|s| s.inside_tracked_change || paragraph_ancestor(source, s.id) != Some(paragraph))
+        || !safe_body_paragraph(source, paragraph)
+    {
+        return Err(unsupported(
+            "set_hyperlink supports only ordinary direct body text",
+        ));
+    }
+    let link = matched
+        .segments
+        .first()
+        .and_then(|s| source.node(s.id))
+        .and_then(|n| n.parent())
+        .and_then(|r| source.node(r))
+        .and_then(|n| n.parent())
+        .filter(|id| word(source, *id, "hyperlink"));
+    match (operation.url.as_deref(), link) {
+        (None, Some(link)) => clear_supported_hyperlink(package, main, source, &matched, link),
+        (None, None) => Err(unsupported("target is not a supported hyperlink")),
+        (Some(url), Some(link)) => {
+            replace_supported_hyperlink(package, main, source, &matched, link, url)
+        }
+        (Some(url), None) => {
+            apply_supported_hyperlink(package, main, source, &matched, paragraph, url)
+        }
+    }
+}
+
+fn resolve_single_hyperlink_match(
+    source: &SourceDocument,
+    target: &TextTarget,
+) -> Result<crate::text_search::ResolvedTextMatch, OperationResult> {
+    let matches = crate::text_search::resolve_text(source, &target.text)
+        .map_err(|e| OperationResult::failed(e.code(), e.to_string()))?;
+    if matches.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "text target was not found",
+        ));
+    }
+    if let Some(n) = target.occurrence {
+        return matches.into_iter().nth(n).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "text target occurrence was not found")
+        });
+    }
+    if matches.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "text target matches more than one current semantic range",
+        ));
+    }
+    Ok(matches.into_iter().next().expect("one match"))
+}
+
+fn valid_hyperlink_url(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    matches!(scheme, "http" | "https") && !host.is_empty() && !rest.chars().any(char::is_whitespace)
+}
+
+fn apply_supported_hyperlink(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    matched: &crate::text_search::ResolvedTextMatch,
+    paragraph: NodeId,
+    url: &str,
+) -> Result<Vec<u8>, OperationResult> {
+    if !valid_hyperlink_url(url) {
+        return Err(OperationResult::failed(
+            "INVALID_HYPERLINK_URL",
+            "URL must be an absolute http:// or https:// URL",
+        ));
+    }
+    let mut runs = Vec::new();
+    for s in &matched.segments {
+        let run = ordinary_run(source, s.id)
+            .ok_or_else(|| unsupported("set_hyperlink does not edit inline wrappers"))?;
+        if source
+            .children(run)
+            .any(|c| !word(source, c, "rPr") && !word(source, c, "t"))
+        {
+            return Err(unsupported("set_hyperlink requires simple direct runs"));
+        }
+        runs.push((
+            run,
+            matched.start.max(s.start) - s.start,
+            matched.end.min(s.end) - s.start,
+            s.source_text.as_str(),
+        ));
+    }
+    let prefix = word_prefix(source, paragraph)?;
+    let name = |local| qualify(prefix, local);
+    let mut before = String::new();
+    let mut selected = String::new();
+    let mut after = String::new();
+    for (index, (run, start, end, text)) in runs.iter().enumerate() {
+        let (a, b, c) = hyperlink_run_pieces(source, *run, text, *start, *end)?;
+        if index == 0 {
+            before = a;
+        }
+        if index + 1 == runs.len() {
+            after = c;
+        }
+        selected.push_str(&b);
+    }
+    let (rels_name, rels_exist, rels, id) = hyperlink_relationship(package, main, url)?;
+    let first = source.node(runs[0].0).unwrap().span();
+    let last = source.node(runs.last().unwrap().0).unwrap().span();
+    let patch = Patch { span: SourceSpan { start: first.start, end: last.end }, replacement: format!("{before}<{} xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"{id}\">{selected}</{}>{after}", name("hyperlink"), name("hyperlink")).into_bytes() };
+    write_hyperlink_changes(
+        package,
+        main,
+        source,
+        vec![patch],
+        rels_name,
+        rels_exist,
+        rels,
+    )
+}
+
+fn hyperlink_run_pieces(
+    source: &SourceDocument,
+    run: NodeId,
+    text: &str,
+    start: usize,
+    end: usize,
+) -> Result<(String, String, String), OperationResult> {
+    let paragraph = source
+        .node(run)
+        .and_then(|n| n.parent())
+        .expect("run parent");
+    let prefix = word_prefix(source, paragraph)?;
+    let name = |local| qualify(prefix, local);
+    let SourceNodeKind::Element { start_tag, .. } = source.node(run).unwrap().kind() else {
+        return Err(unsupported("run has no source tag"));
+    };
+    let open = std::str::from_utf8(&source.original_bytes()[start_tag.start..start_tag.end])
+        .map_err(|_| unsupported("run tag is not UTF-8"))?;
+    let rpr = String::from_utf8_lossy(&run_properties(source, run)).into_owned();
+    let make = |value: &str| {
+        format!(
+            "{open}{rpr}<{}{}>{}</{}></{}>",
+            name("t"),
+            if requires_space_preservation(value) {
+                " xml:space=\"preserve\""
+            } else {
+                ""
+            },
+            escape(value),
+            name("t"),
+            name("r")
+        )
+    };
+    Ok((
+        if start > 0 {
+            make(&text[..start])
+        } else {
+            String::new()
+        },
+        make(&text[start..end]),
+        if end < text.len() {
+            make(&text[end..])
+        } else {
+            String::new()
+        },
+    ))
+}
+
+fn exact_hyperlink(
+    source: &SourceDocument,
+    matched: &crate::text_search::ResolvedTextMatch,
+    link: NodeId,
+) -> Result<(), OperationResult> {
+    if matched.segments.iter().any(|s| {
+        source
+            .node(s.id)
+            .and_then(|n| n.parent())
+            .and_then(|r| source.node(r))
+            .and_then(|n| n.parent())
+            != Some(link)
+    }) || (crate::references::Hyperlink {
+        source,
+        source_id: link,
+    })
+    .text()
+    .map_err(document_invalid)?
+        != matched.text
+    {
+        return Err(unsupported(
+            "set_hyperlink requires an exact ordinary hyperlink",
+        ));
+    }
+    Ok(())
+}
+
+fn clear_supported_hyperlink(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    matched: &crate::text_search::ResolvedTextMatch,
+    link: NodeId,
+) -> Result<Vec<u8>, OperationResult> {
+    exact_hyperlink(source, matched, link)?;
+    let SourceNodeKind::Element {
+        start_tag,
+        end_tag: Some(end_tag),
+        ..
+    } = source.node(link).unwrap().kind()
+    else {
+        return Err(unsupported("hyperlink has no source boundaries"));
+    };
+    let span = source.node(link).unwrap().span();
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span,
+            replacement: source.original_bytes()[start_tag.end..end_tag.start].to_vec(),
+        }],
+    )
+}
+
+fn replace_supported_hyperlink(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    matched: &crate::text_search::ResolvedTextMatch,
+    link: NodeId,
+    url: &str,
+) -> Result<Vec<u8>, OperationResult> {
+    if !valid_hyperlink_url(url) {
+        return Err(OperationResult::failed(
+            "INVALID_HYPERLINK_URL",
+            "URL must be an absolute http:// or https:// URL",
+        ));
+    }
+    exact_hyperlink(source, matched, link)?;
+    let (rels_name, rels_exist, rels, id) = hyperlink_relationship(package, main, url)?;
+    let span = source.node(link).unwrap().span();
+    let SourceNodeKind::Element {
+        start_tag,
+        end_tag: Some(end_tag),
+        ..
+    } = source.node(link).unwrap().kind()
+    else {
+        return Err(unsupported("hyperlink has no source boundaries"));
+    };
+    let children = &source.original_bytes()[start_tag.end..end_tag.start];
+    let prefix = word_prefix(source, link)?;
+    let replacement = format!("<{} xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"{id}\">", qualify(prefix,"hyperlink")).into_bytes().into_iter().chain(children.iter().copied()).chain(format!("</{}>",qualify(prefix,"hyperlink")).bytes()).collect();
+    write_hyperlink_changes(
+        package,
+        main,
+        source,
+        vec![Patch { span, replacement }],
+        rels_name,
+        rels_exist,
+        rels,
+    )
+}
+
+fn hyperlink_relationship(
+    package: &Package,
+    main: &Part,
+    url: &str,
+) -> Result<(PartName, bool, Vec<u8>, String), OperationResult> {
+    let name = relationship_part_name(main)?;
+    let (exists, mut xml) = match package.read_part_by_name(&name) { Ok(v)=>(true,v), Err(PackageError::MissingTargetPart(_)) => (false, br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>"#.to_vec()), Err(e)=>return Err(OperationResult::failed(e.code(),e.to_string())) };
+    let relationships = package.part_relationships(main).unwrap_or_default();
+    if let Some(r) = relationships.iter().find(|r| {
+        r.relationship_type.as_str() == HYPERLINK_RELATIONSHIP_TYPE
+            && matches!(&r.target, RelationshipTarget::External { original } if original == url)
+    }) {
+        return Ok((name, exists, xml, r.id.as_str().to_owned()));
+    }
+    let n = relationships
+        .iter()
+        .filter_map(|r| r.id.as_str().strip_prefix("rId")?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| {
+            OperationResult::failed("PACKAGE_CONFLICT", "cannot allocate hyperlink relationship")
+        })?;
+    xml = append_xml_element(
+        &xml,
+        &format!(
+            r#"<Relationship Id="rId{n}" Type="{HYPERLINK_RELATIONSHIP_TYPE}" Target="{}" TargetMode="External"/>"#,
+            escape(url)
+        ),
+    )?;
+    Ok((name, exists, xml, format!("rId{n}")))
+}
+
+fn write_hyperlink_changes(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    patches: Vec<Patch>,
+    rels_name: PartName,
+    rels_exist: bool,
+    rels: Vec<u8>,
+) -> Result<Vec<u8>, OperationResult> {
+    let document = apply_patches(source, patches)?;
+    let replaced = if rels_exist {
+        vec![
+            (main.name.clone(), document.as_slice()),
+            (rels_name.clone(), rels.as_slice()),
+        ]
+    } else {
+        vec![(main.name.clone(), document.as_slice())]
+    };
+    let added = if rels_exist {
+        vec![]
+    } else {
+        vec![(rels_name, rels.as_slice())]
+    };
+    let output = package
+        .write_package_with_named_changes_to_vec(&replaced, &added)
+        .map_err(|e| OperationResult::failed(e.code(), e.to_string()))?;
+    let verified = Package::from_bytes(output.clone()).map_err(document_invalid)?;
+    verified.verify().map_err(document_invalid)?;
+    Ok(output)
 }
 
 type FormattingRangeRun = (NodeId, usize, usize, String);
@@ -6150,14 +6679,15 @@ mod tests {
     };
 
     use opensuite_protocol::{
-        ContentControlTarget, CreateTable, DeleteParagraph, DeletePicture, InsertParagraph,
-        InsertParagraphAfter, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
-        InsertTableRowsAfter, InspectDocx, InspectDocxContent, InspectDocxFocus,
-        ParagraphAlignment, ParagraphFormattingPatch, ParagraphListKind, ParagraphPlacement,
-        PictureSizeChange, PropertyPatch, ReplaceText, SetContentControlText,
-        SetParagraphFormatting, SetParagraphStyle, SetParagraphsList, SetPictureSize,
-        SetTableCellText, SetTableCellsText, SetTextFormatting, TableCellTarget,
-        TableCellTextUpdate, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
+        ContentControlTarget, CreateTable, DeletePageBreak, DeleteParagraph, DeletePicture,
+        InsertPageBreak, InsertParagraph, InsertParagraphAfter, InsertPicture,
+        InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
+        InspectDocxContent, InspectDocxFocus, ParagraphAlignment, ParagraphFormattingPatch,
+        ParagraphListKind, ParagraphPlacement, PictureSizeChange, PropertyPatch, ReplaceText,
+        SetContentControlText, SetHyperlink, SetParagraphFormatting, SetParagraphStyle,
+        SetParagraphsList, SetPictureSize, SetTableCellText, SetTableCellsText, SetTextFormatting,
+        TableCellTarget, TableCellTextUpdate, TableRowTarget, TableTarget, TextFormattingPatch,
+        TextTarget,
     };
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -6189,7 +6719,7 @@ mod tests {
         )
         .unwrap();
         let package = Package::from_bytes(bytes).unwrap();
-        let (main, source) = crate::open_main_source(&package).unwrap();
+        let (_main, source) = crate::open_main_source(&package).unwrap();
         let targets = ["one", "two", "three"]
             .into_iter()
             .map(|text| TextTarget {
@@ -6226,6 +6756,23 @@ mod tests {
         let (main, _source) = crate::open_main_source(&package).unwrap();
         let xml = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
         assert_eq!(xml.matches("<w:numId w:val=\"1\"/>").count(), 3);
+        let relationships = String::from_utf8(
+            package
+                .read_part_by_name(&PartName::parse("/word/_rels/document.xml.rels").unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            relationships.matches(NUMBERING_RELATIONSHIP_TYPE).count(),
+            1
+        );
+        let content_types = String::from_utf8(
+            package
+                .read_part_by_name(&PartName::parse("/[Content_Types].xml").unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(content_types.matches("/word/numbering.xml").count(), 1);
         let numbering = crate::load_numbering(&package, &main).unwrap().unwrap();
         assert_eq!(numbering.instance_count(), 1);
         assert_eq!(
@@ -6260,6 +6807,168 @@ mod tests {
                 .part(&PartName::parse("/word/numbering.xml").unwrap())
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn preserves_imported_numbering_while_allocating_and_clearing_lists() {
+        let input = imported_numbering_fixture();
+        let package = Package::from_bytes(input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let numbering_before = package
+            .read_part_by_name(&PartName::parse("/word/numbering.xml").unwrap())
+            .unwrap();
+        let relationships_before = package
+            .read_part_by_name(&PartName::parse("/word/_rels/document.xml.rels").unwrap())
+            .unwrap();
+        let content_types_before = package
+            .read_part_by_name(&PartName::parse("/[Content_Types].xml").unwrap())
+            .unwrap();
+        let list = |kind, targets: &[&str]| SetParagraphsList {
+            targets: targets
+                .iter()
+                .map(|text| TextTarget {
+                    text: (*text).to_owned(),
+                    occurrence: None,
+                })
+                .collect(),
+            kind,
+            base_revision: None,
+        };
+        let bytes = set_paragraphs_list_to_vec(
+            &package,
+            &main,
+            &source,
+            &list(ParagraphListKind::Bullet, &["First", "Second"]),
+        )
+        .unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        package.verify().unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let numbering_after = package
+            .read_part_by_name(&PartName::parse("/word/numbering.xml").unwrap())
+            .unwrap();
+        assert!(numbering_after.starts_with(&numbering_before[..numbering_before.len() - 14]));
+        let numbering = String::from_utf8(numbering_after).unwrap();
+        assert!(numbering.contains(r#"<w:abstractNum w:abstractNumId="78">"#));
+        assert!(numbering.contains(r#"<w:num w:numId="43">"#));
+        assert!(numbering.contains("<w:legacy w:legacy=\"preserve-me\"/>"));
+        assert_eq!(
+            package
+                .read_part_by_name(&PartName::parse("/word/_rels/document.xml.rels").unwrap())
+                .unwrap(),
+            relationships_before
+        );
+        assert_eq!(
+            package
+                .read_part_by_name(&PartName::parse("/[Content_Types].xml").unwrap())
+                .unwrap(),
+            content_types_before
+        );
+        let document = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
+        assert_eq!(document.matches(r#"<w:numId w:val="43"/>"#).count(), 2);
+        assert!(document.contains(r#"<w:pStyle w:val="HeadingOne"/><w:keepNext/><w:jc w:val="center"/><w:spacing w:before="120" w:after="240"/><w:ind w:left="360"/>"#));
+        let imported_numbering = crate::load_numbering(&package, &main).unwrap().unwrap();
+        let unknown = imported_numbering
+            .resolve(crate::ListReference {
+                num_id: crate::NumberingId(42),
+                level: 0,
+            })
+            .unwrap();
+        assert!(matches!(unknown.format, crate::NumberFormat::UpperRoman));
+
+        let bytes = set_paragraphs_list_to_vec(
+            &package,
+            &main,
+            &source,
+            &list(ParagraphListKind::Decimal, &["Existing"]),
+        )
+        .unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let document = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
+        assert!(document.contains(r#"<w:numId w:val="44"/>"#));
+        assert!(document.contains(r#"<w:numId w:val="43"/>"#));
+        let numbering_before_clear = package
+            .read_part_by_name(&PartName::parse("/word/numbering.xml").unwrap())
+            .unwrap();
+
+        let bytes = set_paragraphs_list_to_vec(
+            &package,
+            &main,
+            &source,
+            &list(ParagraphListKind::None, &["Existing"]),
+        )
+        .unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let document = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
+        assert!(!document.contains(r#"<w:numId w:val="42"/>"#));
+        assert!(document.contains(r#"<w:numId w:val="43"/>"#));
+        assert_eq!(
+            package
+                .read_part_by_name(&PartName::parse("/word/numbering.xml").unwrap())
+                .unwrap(),
+            numbering_before_clear
+        );
+
+        let output = path("rejected-list");
+        let result = set_paragraphs_list(
+            &package,
+            &main,
+            &source,
+            &list(ParagraphListKind::Bullet, &["First", "Existing"]),
+            &output,
+        );
+        assert_eq!(result.status, opensuite_protocol::OperationStatus::Failed);
+        assert!(!output.exists());
+    }
+
+    fn imported_numbering_fixture() -> Vec<u8> {
+        let mut zip = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        for (name, bytes) in [
+            (
+                "[Content_Types].xml",
+                format!(
+                    r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="{NUMBERING_CONTENT_TYPE}"/></Types>"#
+                ),
+            ),
+            (
+                "_rels/.rels",
+                format!(
+                    r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{OFFICE}" Target="word/document.xml"/></Relationships>"#
+                ),
+            ),
+            (
+                "word/_rels/document.xml.rels",
+                format!(
+                    r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId77" Type="{NUMBERING_RELATIONSHIP_TYPE}" Target="numbering.xml"/><Relationship Id="rId99" Type="urn:example:preserve" Target="custom.xml"/></Relationships>"#
+                ),
+            ),
+            (
+                "word/document.xml",
+                format!(
+                    r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:pPr><w:pStyle w:val="HeadingOne"/><w:keepNext/><w:jc w:val="center"/><w:spacing w:before="120" w:after="240"/><w:ind w:left="360"/></w:pPr><w:r><w:t>First</w:t></w:r></w:p><w:p><w:r><w:t>Second</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="42"/></w:numPr></w:pPr><w:r><w:t>Existing</w:t></w:r></w:p></w:body></w:document>"#
+                ),
+            ),
+            (
+                "word/styles.xml",
+                format!(
+                    r#"<w:styles xmlns:w="{WORD}"><w:style w:type="paragraph" w:styleId="HeadingOne"><w:name w:val="Heading 1"/></w:style></w:styles>"#
+                ),
+            ),
+            (
+                "word/numbering.xml",
+                format!(
+                    r#"<w:numbering xmlns:w="{WORD}"><w:abstractNum w:abstractNumId="77"><w:nsid w:val="ABCD1234"/><w:multiLevelType w:val="singleLevel"/><w:legacy w:legacy="preserve-me"/><w:lvl w:ilvl="0"><w:start w:val="5"/><w:numFmt w:val="upperRoman"/><w:lvlText w:val="%1)"/></w:lvl></w:abstractNum><w:num w:numId="42"><w:abstractNumId w:val="77"/></w:num></w:numbering>"#
+                ),
+            ),
+            ("word/custom.xml", "<custom/>".to_owned()),
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(bytes.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
     }
 
     fn path(name: &str) -> std::path::PathBuf {
@@ -8492,5 +9201,144 @@ mod tests {
         let xml = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
         assert!(xml.contains("<wp:extent cx=\"19050\" cy=\"9525\""));
         assert!(xml.contains("<a:ext cx=\"19050\" cy=\"9525\""));
+    }
+
+    #[test]
+    fn applies_and_clears_a_hyperlink_without_touching_existing_links() {
+        let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/references.docx");
+        let package = Package::open(fixture).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let operation = SetHyperlink {
+            target: TextTarget {
+                text: "Visit ".to_owned(),
+                occurrence: None,
+            },
+            url: Some("https://example.com/visit".to_owned()),
+            base_revision: None,
+        };
+        let bytes = set_hyperlink_to_vec(&package, &main, &source, &operation).unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let links = crate::DocxDocument::new(&source)
+            .unwrap()
+            .hyperlinks()
+            .collect::<Vec<_>>();
+        assert_eq!(links.len(), 3);
+        assert_eq!(links[0].text().unwrap(), "Visit ");
+        assert_eq!(
+            links[0].target(&package, &main).unwrap(),
+            Some(crate::HyperlinkTarget::External(
+                "https://example.com/visit".to_owned()
+            ))
+        );
+        assert_eq!(links[1].text().unwrap(), "OpenSuite");
+        let clear = SetHyperlink {
+            target: operation.target,
+            url: None,
+            base_revision: None,
+        };
+        let bytes = set_hyperlink_to_vec(&package, &main, &source, &clear).unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (_main, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            crate::DocxDocument::new(&source)
+                .unwrap()
+                .hyperlinks()
+                .count(),
+            2
+        );
+        assert_eq!(
+            crate::DocxDocument::new(&source)
+                .unwrap()
+                .paragraphs()
+                .next()
+                .unwrap()
+                .text()
+                .unwrap(),
+            "Visit OpenSuite and Revenue"
+        );
+    }
+
+    #[test]
+    fn inserts_and_deletes_page_breaks_at_every_body_placement() {
+        let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let bytes = insert_page_break_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPageBreak {
+                placement: ParagraphPlacement::Start,
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let bytes = insert_page_break_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPageBreak {
+                placement: ParagraphPlacement::End,
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let bytes = insert_page_break_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPageBreak {
+                placement: ParagraphPlacement::Before {
+                    handle: "b1".to_owned(),
+                },
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let bytes = insert_page_break_to_vec(
+            &package,
+            &main,
+            &source,
+            &InsertPageBreak {
+                placement: ParagraphPlacement::After {
+                    handle: "b1".to_owned(),
+                },
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            body_block_signatures(&source).unwrap(),
+            vec![
+                ("page_break".to_owned(), String::new()),
+                ("page_break".to_owned(), String::new()),
+                ("page_break".to_owned(), String::new()),
+                ("page_break".to_owned(), String::new()),
+            ]
+        );
+        let output = delete_page_break_to_vec(
+            &package,
+            &main,
+            &source,
+            &DeletePageBreak {
+                target: PageBreakTarget {
+                    handle: "b2".to_owned(),
+                },
+                base_revision: None,
+            },
+        )
+        .unwrap();
+        let package = Package::from_bytes(output).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(body_block_signatures(&source).unwrap().len(), 3);
     }
 }
