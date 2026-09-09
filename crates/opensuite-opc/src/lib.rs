@@ -161,6 +161,7 @@ pub enum PackageError {
     OutputMatchesInput,
     Serialization(io::Error),
     MalformedXmlPart(PartName),
+    PartAlreadyExists(PartName),
 }
 
 impl PackageError {
@@ -184,6 +185,7 @@ impl PackageError {
             Self::OutputMatchesInput => "OUTPUT_MATCHES_INPUT",
             Self::Serialization(_) => "SERIALIZATION_FAILED",
             Self::MalformedXmlPart(_) => "MALFORMED_XML_PART",
+            Self::PartAlreadyExists(_) => "PART_ALREADY_EXISTS",
         }
     }
 }
@@ -226,6 +228,9 @@ impl fmt::Display for PackageError {
                 write!(formatter, "could not write output package: {error}")
             }
             Self::MalformedXmlPart(part) => write!(formatter, "malformed XML part: {part}"),
+            Self::PartAlreadyExists(part) => {
+                write!(formatter, "part already exists in package: {part}")
+            }
         }
     }
 }
@@ -439,6 +444,113 @@ impl Package {
             .map_err(|error| PackageError::Serialization(io::Error::other(error)))
     }
 
+    /// Copies this package to a new ZIP, replacing zero or more existing part
+    /// payloads and appending zero or more brand-new parts that do not
+    /// already exist. Every other existing entry is copied unchanged. Every
+    /// `added` part name must not already exist in this package and must be
+    /// unique within `added` itself.
+    pub fn write_package_with_changes(
+        &self,
+        replaced: &[(&Part, &[u8])],
+        added: &[(PartName, &[u8])],
+        output: impl AsRef<Path>,
+    ) -> Result<(), PackageError> {
+        let output = output.as_ref();
+        if self.source_path().is_some_and(|input| output == input) {
+            return Err(PackageError::OutputMatchesInput);
+        }
+
+        let parent = output.parent().unwrap_or_else(|| Path::new("."));
+        let temporary = parent.join(format!(
+            ".opensuite-{}-{}.tmp",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let file = File::create_new(&temporary).map_err(PackageError::Serialization)?;
+        if let Err(error) = self.write_package_with_changes_to(replaced, added, file) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+        std::fs::rename(&temporary, output).map_err(PackageError::Serialization)
+    }
+
+    /// Copies this package to ZIP bytes, replacing and adding parts exactly
+    /// as `write_package_with_changes` does.
+    pub fn write_package_with_changes_to_vec(
+        &self,
+        replaced: &[(&Part, &[u8])],
+        added: &[(PartName, &[u8])],
+    ) -> Result<Vec<u8>, PackageError> {
+        let cursor =
+            self.write_package_with_changes_to(replaced, added, Cursor::new(Vec::new()))?;
+        Ok(cursor.into_inner())
+    }
+
+    fn write_package_with_changes_to<W: Write + Seek>(
+        &self,
+        replaced: &[(&Part, &[u8])],
+        added: &[(PartName, &[u8])],
+        output: W,
+    ) -> Result<W, PackageError> {
+        for (part, _) in replaced {
+            if !self.parts.contains(&part.name) {
+                return Err(PackageError::MissingTargetPart(part.name.clone()));
+            }
+        }
+        let mut added_names: HashSet<&PartName> = HashSet::new();
+        for (name, _) in added {
+            if self.parts.contains(name) || !added_names.insert(name) {
+                return Err(PackageError::PartAlreadyExists(name.clone()));
+            }
+        }
+
+        let mut archive = self.archive()?;
+        let mut writer = ZipWriter::new(output);
+
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).map_err(PackageError::InvalidZip)?;
+            let name = entry.name().to_owned();
+            if entry.is_dir() {
+                writer
+                    .add_directory(name, SimpleFileOptions::default())
+                    .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+                continue;
+            }
+            writer
+                .start_file(name.clone(), SimpleFileOptions::default())
+                .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+            if let Some((_, bytes)) = replaced
+                .iter()
+                .find(|(part, _)| part.name.as_str().trim_start_matches('/') == name)
+            {
+                writer
+                    .write_all(bytes)
+                    .map_err(PackageError::Serialization)?;
+            } else {
+                io::copy(&mut entry, &mut writer).map_err(PackageError::Serialization)?;
+            }
+        }
+
+        for (name, bytes) in added {
+            writer
+                .start_file(
+                    name.as_str().trim_start_matches('/').to_owned(),
+                    SimpleFileOptions::default(),
+                )
+                .map_err(|error| PackageError::Serialization(io::Error::other(error)))?;
+            writer
+                .write_all(bytes)
+                .map_err(PackageError::Serialization)?;
+        }
+
+        writer
+            .finish()
+            .map_err(|error| PackageError::Serialization(io::Error::other(error)))
+    }
+
     pub fn part_count(&self) -> usize {
         self.parts
             .iter()
@@ -472,6 +584,28 @@ impl Package {
 
     pub fn content_type(&self, part_name: &PartName) -> Result<ContentType, PackageError> {
         self.content_types.resolve(part_name)
+    }
+
+    /// Resolves `[Content_Types].xml`'s `Default` mapping for one lowercase
+    /// extension (without a leading dot), if one is declared. Does not
+    /// consider per-part `Override` entries.
+    pub fn content_type_default(&self, extension: &str) -> Option<ContentType> {
+        self.content_types
+            .defaults
+            .get(&extension.to_ascii_lowercase())
+            .cloned()
+    }
+
+    /// Lists known package part names whose name starts with `prefix`, in
+    /// unspecified order. Useful for allocating a new part name that avoids
+    /// colliding with existing parts under a shared directory.
+    pub fn part_names_with_prefix<'a>(
+        &'a self,
+        prefix: &'a str,
+    ) -> impl Iterator<Item = &'a PartName> + 'a {
+        self.parts
+            .iter()
+            .filter(move |part| part.as_str().starts_with(prefix))
     }
 
     /// Reads one known package part without reading other ZIP entries.
@@ -1031,6 +1165,261 @@ mod tests {
             Package::from_bytes(b"not a zip".to_vec()),
             Err(PackageError::InvalidZip(_))
         ));
+    }
+
+    fn content_types_with_media_defaults(override_part: &str) -> String {
+        format!(
+            "<Types><Default Extension=\"xml\" ContentType=\"application/default+xml\"/><Default Extension=\"bin\" ContentType=\"application/octet-stream\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Override PartName=\"{override_part}\" ContentType=\"application/custom-main+xml\"/></Types>"
+        )
+    }
+
+    #[test]
+    fn write_package_with_changes_replaces_and_adds_parts_in_one_pass() {
+        let input = package_file(
+            &content_types_with_media_defaults("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[
+                (
+                    "custom/main.xml",
+                    "<document><text>before</text></document>",
+                ),
+                ("media.bin", "untouched bytes"),
+            ],
+        );
+        let output = std::env::temp_dir().join(format!(
+            "opensuite-opc-changes-{}-{}.docx",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let package = Package::open(&input).unwrap();
+        let main = package.main_office_document().unwrap();
+        let new_part_name = PartName::parse("/word/media/image1.png").unwrap();
+
+        package
+            .write_package_with_changes(
+                &[(&main, b"<document><text>after</text></document>")],
+                &[(new_part_name.clone(), b"new media bytes")],
+                &output,
+            )
+            .unwrap();
+
+        // Untouched entries remain byte-identical.
+        let before = payloads(&input);
+        let after = payloads(&output);
+        assert_eq!(before.get("media.bin"), after.get("media.bin"));
+        assert_eq!(
+            before.get(CONTENT_TYPES_ENTRY),
+            after.get(CONTENT_TYPES_ENTRY)
+        );
+        assert_eq!(
+            before.get(PACKAGE_RELATIONSHIPS_ENTRY),
+            after.get(PACKAGE_RELATIONSHIPS_ENTRY)
+        );
+        // Replaced entry carries the new bytes.
+        assert_eq!(
+            after.get("custom/main.xml").unwrap(),
+            b"<document><text>after</text></document>"
+        );
+        // Added entry exists with the exact requested bytes.
+        assert_eq!(
+            after.get("word/media/image1.png").unwrap(),
+            b"new media bytes"
+        );
+
+        let reopened = Package::open(&output).unwrap();
+        reopened.verify().unwrap();
+        assert_eq!(
+            reopened
+                .read_part(&reopened.part(&new_part_name).unwrap())
+                .unwrap(),
+            b"new media bytes"
+        );
+
+        fs::remove_file(input).unwrap();
+        fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn write_package_with_changes_to_vec_replaces_and_adds_parts() {
+        let input = package_file(
+            &content_types_with_media_defaults("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[
+                (
+                    "custom/main.xml",
+                    "<document><text>before</text></document>",
+                ),
+                ("media.bin", "untouched bytes"),
+            ],
+        );
+        let input_bytes = fs::read(&input).unwrap();
+        fs::remove_file(input).unwrap();
+        let package = Package::from_bytes(input_bytes).unwrap();
+        let main = package.main_office_document().unwrap();
+        let new_part_name = PartName::parse("/word/media/image1.png").unwrap();
+
+        let output_bytes = package
+            .write_package_with_changes_to_vec(
+                &[(&main, b"<document><text>after</text></document>")],
+                &[(new_part_name.clone(), b"new media bytes")],
+            )
+            .unwrap();
+
+        let reopened = Package::from_bytes(output_bytes).unwrap();
+        reopened.verify().unwrap();
+        assert_eq!(
+            reopened
+                .read_part(&reopened.main_office_document().unwrap())
+                .unwrap(),
+            b"<document><text>after</text></document>"
+        );
+        assert_eq!(
+            reopened
+                .read_part(
+                    &reopened
+                        .part(&PartName::parse("/media.bin").unwrap())
+                        .unwrap()
+                )
+                .unwrap(),
+            b"untouched bytes"
+        );
+        assert_eq!(
+            reopened
+                .read_part(&reopened.part(&new_part_name).unwrap())
+                .unwrap(),
+            b"new media bytes"
+        );
+    }
+
+    #[test]
+    fn write_package_with_changes_supports_add_only_with_no_replacements() {
+        let input = package_file(
+            &content_types_with_media_defaults("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[("custom/main.xml", "<document/>")],
+        );
+        let package = Package::open(&input).unwrap();
+        let new_part_name = PartName::parse("/word/media/image1.png").unwrap();
+
+        let output = package
+            .write_package_with_changes_to_vec(&[], &[(new_part_name.clone(), b"bytes")])
+            .unwrap();
+        fs::remove_file(input).unwrap();
+        let reopened = Package::from_bytes(output).unwrap();
+        reopened.verify().unwrap();
+        assert_eq!(
+            reopened
+                .read_part(&reopened.part(&new_part_name).unwrap())
+                .unwrap(),
+            b"bytes"
+        );
+    }
+
+    #[test]
+    fn write_package_with_changes_rejects_adding_an_already_existing_part() {
+        let input = package_file(
+            &content_types("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[("custom/main.xml", "<document/>"), ("media.bin", "bytes")],
+        );
+        let package = Package::open(&input).unwrap();
+        fs::remove_file(input).unwrap();
+        let existing = PartName::parse("/media.bin").unwrap();
+
+        assert!(matches!(
+            package.write_package_with_changes_to_vec(&[], &[(existing, b"new bytes")]),
+            Err(PackageError::PartAlreadyExists(_))
+        ));
+    }
+
+    #[test]
+    fn write_package_with_changes_rejects_duplicate_added_part_names() {
+        let input = package_file(
+            &content_types("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[("custom/main.xml", "<document/>")],
+        );
+        let package = Package::open(&input).unwrap();
+        fs::remove_file(input).unwrap();
+        let new_part_name = PartName::parse("/word/media/image1.png").unwrap();
+
+        assert!(matches!(
+            package.write_package_with_changes_to_vec(
+                &[],
+                &[
+                    (new_part_name.clone(), b"first"),
+                    (new_part_name, b"second"),
+                ],
+            ),
+            Err(PackageError::PartAlreadyExists(_))
+        ));
+    }
+
+    #[test]
+    fn write_package_with_changes_rejects_a_missing_replaced_part() {
+        let input = package_file(
+            &content_types("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[("custom/main.xml", "<document/>")],
+        );
+        let package = Package::open(&input).unwrap();
+        fs::remove_file(input).unwrap();
+        let missing = Part {
+            name: PartName::parse("/does/not/exist.xml").unwrap(),
+            content_type: ContentType("application/xml".to_owned()),
+        };
+
+        assert!(matches!(
+            package.write_package_with_changes_to_vec(&[(&missing, b"bytes")], &[]),
+            Err(PackageError::MissingTargetPart(_))
+        ));
+    }
+
+    #[test]
+    fn content_type_default_resolves_known_extension_and_returns_none_for_unknown() {
+        let input = package_file(
+            "<Types><Default Extension=\"png\" ContentType=\"image/png\"/></Types>",
+            &relationships("custom/main.xml"),
+            &[("custom/main.xml", "<document/>")],
+        );
+        let package = Package::open(&input).unwrap();
+        fs::remove_file(input).unwrap();
+
+        assert_eq!(
+            package.content_type_default("png").unwrap().as_str(),
+            "image/png"
+        );
+        assert_eq!(
+            package.content_type_default("PNG").unwrap().as_str(),
+            "image/png"
+        );
+        assert!(package.content_type_default("jpeg").is_none());
+    }
+
+    #[test]
+    fn part_names_with_prefix_lists_only_matching_parts() {
+        let input = package_file(
+            &content_types("/custom/main.xml"),
+            &relationships("custom/main.xml"),
+            &[
+                ("custom/main.xml", "<document/>"),
+                ("word/media/image1.png", "bytes"),
+                ("word/media/image2.png", "bytes"),
+                ("word/styles.xml", "<styles/>"),
+            ],
+        );
+        let package = Package::open(&input).unwrap();
+        fs::remove_file(input).unwrap();
+
+        let mut media: Vec<&str> = package
+            .part_names_with_prefix("/word/media/")
+            .map(PartName::as_str)
+            .collect();
+        media.sort_unstable();
+        assert_eq!(
+            media,
+            vec!["/word/media/image1.png", "/word/media/image2.png"]
+        );
     }
 
     #[test]

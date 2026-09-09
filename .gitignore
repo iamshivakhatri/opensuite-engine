@@ -9,3 +9,4 @@ crates/opensuite-node/*.node
 !tests/fixtures/references.docx
 *.txt
 tests
+docs/roadmap
