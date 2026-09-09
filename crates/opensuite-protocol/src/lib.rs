@@ -112,6 +112,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_paragraph_formatting",
     "set_text_formatting",
     "set_paragraph_style",
+    "set_paragraphs_list",
     "replace_picture",
     "delete_picture",
     "set_picture_size",
@@ -425,6 +426,22 @@ pub struct SetTextFormatting {
 pub struct SetParagraphStyle {
     pub target: TextTarget,
     pub style: PropertyPatch<String>,
+    pub base_revision: Option<String>,
+}
+
+/// The supported ordinary list forms for direct body paragraphs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParagraphListKind {
+    Bullet,
+    Decimal,
+    None,
+}
+
+/// Applies or clears one level-zero list across consecutive body paragraphs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetParagraphsList {
+    pub targets: Vec<TextTarget>,
+    pub kind: ParagraphListKind,
     pub base_revision: Option<String>,
 }
 
@@ -1199,7 +1216,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_paragraph_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","insert_table_column","create_table","delete_table","delete_table_row","delete_table_column","set_table_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

@@ -32,6 +32,8 @@ fn main() {
         set_text_formatting(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-paragraph-style")) {
         set_paragraph_style(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-paragraphs-list")) {
+        set_paragraphs_list(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("replace-picture")) {
         replace_picture(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("delete-picture")) {
@@ -86,6 +88,63 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn set_paragraphs_list(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(kind), targets) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.collect::<Vec<_>>(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite set-paragraphs-list <input.docx> <output.docx> <bullet|decimal|none> <target>...".to_owned()));
+    };
+    let kind = match kind.to_str() {
+        Some("bullet") => opensuite_protocol::ParagraphListKind::Bullet,
+        Some("decimal") => opensuite_protocol::ParagraphListKind::Decimal,
+        Some("none") => opensuite_protocol::ParagraphListKind::None,
+        _ => {
+            return Err((
+                "INVALID_ARGUMENTS",
+                "list kind must be bullet, decimal, or none".to_owned(),
+            ));
+        }
+    };
+    let targets = targets
+        .into_iter()
+        .map(|target| {
+            target
+                .into_string()
+                .map(|text| opensuite_protocol::TextTarget {
+                    text,
+                    occurrence: None,
+                })
+                .map_err(|_| {
+                    (
+                        "INVALID_ARGUMENTS",
+                        "targets must be valid UTF-8".to_owned(),
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_paragraphs_list(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetParagraphsList {
+            targets,
+            kind,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
 }
 
 fn set_table_cell_text(
@@ -1631,6 +1690,8 @@ fn inspect_paragraphs(
         .map_err(|error| (error.code(), error.to_string()))?;
     let styles = opensuite_docx::load_styles(&package, &part)
         .map_err(|error| (error.code(), error.to_string()))?;
+    let numbering = opensuite_docx::load_numbering(&package, &part)
+        .map_err(|error| (error.code(), error.to_string()))?;
     let paragraphs = document
         .paragraphs()
         .enumerate()
@@ -1657,6 +1718,18 @@ fn inspect_paragraphs(
                             .map_err(|error| (error.code(), error.to_string()))?,
                     ),
                 );
+                let list = paragraph
+                    .list_reference(styles)
+                    .ok()
+                    .flatten()
+                    .and_then(|reference| numbering.as_ref()?.resolve(reference).ok())
+                    .map(|level| match level.format {
+                        opensuite_docx::NumberFormat::Bullet => "bullet",
+                        opensuite_docx::NumberFormat::Decimal => "decimal",
+                        _ => "unknown",
+                    })
+                    .unwrap_or("none");
+                item.insert("list".to_owned(), serde_json::json!(list));
             }
             Ok(serde_json::Value::Object(item))
         })

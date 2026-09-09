@@ -4,8 +4,8 @@ use opensuite_protocol::{
     Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
     InsertPicture, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
     InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult, ReplaceText,
-    SetParagraphFormatting, SetParagraphStyle, SetPictureSize, SetTableCellsText,
-    SetTableFormatting, SetTextFormatting,
+    SetParagraphFormatting, SetParagraphStyle, SetParagraphsList, SetPictureSize,
+    SetTableCellsText, SetTableFormatting, SetTextFormatting,
 };
 
 use crate::{
@@ -14,8 +14,9 @@ use crate::{
     insert_paragraph_to_vec, insert_paragraphs_to_vec, insert_picture_to_vec,
     insert_table_column_after_to_vec, insert_table_row_after_to_vec,
     insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
-    set_paragraph_formatting_to_vec, set_paragraph_style_to_vec, set_picture_size_to_vec,
-    set_table_cells_text_to_vec, set_table_formatting_to_vec, set_text_formatting_to_vec,
+    set_paragraph_formatting_to_vec, set_paragraph_style_to_vec, set_paragraphs_list_to_vec,
+    set_picture_size_to_vec, set_table_cells_text_to_vec, set_table_formatting_to_vec,
+    set_text_formatting_to_vec,
 };
 
 /// The result of executing one DOCX operation against an immutable artifact.
@@ -221,6 +222,12 @@ execute_paragraph_mutation!(
     SetParagraphStyle,
     set_paragraph_style_to_vec,
     "set_paragraph_style"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_paragraphs_list,
+    SetParagraphsList,
+    set_paragraphs_list_to_vec,
+    "set_paragraphs_list"
 );
 execute_paragraph_mutation!(
     execute_docx_set_text_formatting,

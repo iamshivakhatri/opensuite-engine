@@ -127,6 +127,10 @@ and XML source bytes.
 - Preservation-safe `SetParagraphStyle` for an ordinary direct body paragraph selected through
   `TextTarget`. It resolves an existing paragraph style by exact display name and changes only
   the direct `w:pStyle` reference.
+- Preservation-safe `SetParagraphsList` applies or clears one level-zero bullet or decimal list
+  across 1–100 consecutive ordinary direct-body paragraphs. It appends canonical numbering
+  definitions and instances without rewriting imported numbering, and creates missing numbering
+  parts, relationships, and content-type entries only when required.
 - Preservation-safe `ReplacePicture` for a uniquely referenced, internal main-document PNG or
   JPEG selected by exact picture metadata. It replaces only the same-type media payload.
 - Preservation-safe `InsertPicture` for inline PNG/JPEG images in the direct main document body.
