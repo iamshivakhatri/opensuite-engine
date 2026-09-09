@@ -44,6 +44,8 @@ fn main() {
         insert_page_break(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("delete-page-break")) {
         delete_page_break(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-page-setup")) {
+        set_page_setup(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-picture-size")) {
         set_picture_size(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-picture")) {
@@ -60,6 +62,7 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-paragraphs" => inspect_paragraphs(path),
         (Some(command), Some(path), None) if command == "inspect-numbering" => inspect_numbering(path),
         (Some(command), Some(path), None) if command == "inspect-sections" => inspect_sections(path),
+        (Some(command), Some(path), None) if command == "inspect-page-setup" => inspect_page_setup(path),
         (Some(command), Some(path), None) if command == "inspect-headers-footers" => inspect_headers_footers(path),
         (Some(command), Some(path), None) if command == "inspect-references" => inspect_references(path),
         (Some(command), Some(path), None) if command == "inspect-images" => inspect_images(path),
@@ -94,6 +97,129 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn set_page_setup(
+    arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let values = arguments
+        .map(|value| {
+            value.into_string().map_err(|_| {
+                (
+                    "INVALID_ARGUMENTS",
+                    "arguments must be valid UTF-8".to_owned(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.len() < 3 {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite set-page-setup <input.docx> <output.docx> [--paper letter|a4] [--orientation portrait|landscape] [--margin-top twips] [--margin-right twips] [--margin-bottom twips] [--margin-left twips]".to_owned()));
+    }
+    let mut paper_size = None;
+    let mut orientation = None;
+    let mut margins = opensuite_protocol::PageMargins::default();
+    let mut changed_margins = false;
+    let mut index = 2;
+    while index < values.len() {
+        let value = values.get(index + 1).ok_or_else(|| {
+            (
+                "INVALID_ARGUMENTS",
+                format!("{} requires a value", values[index]),
+            )
+        })?;
+        match values[index].as_str() {
+            "--paper" => {
+                paper_size = Some(match value.as_str() {
+                    "letter" => opensuite_protocol::PaperSize::Letter,
+                    "a4" => opensuite_protocol::PaperSize::A4,
+                    _ => {
+                        return Err(("INVALID_ARGUMENTS", "paper must be letter or a4".to_owned()));
+                    }
+                })
+            }
+            "--orientation" => {
+                orientation = Some(match value.as_str() {
+                    "portrait" => opensuite_protocol::PageOrientation::Portrait,
+                    "landscape" => opensuite_protocol::PageOrientation::Landscape,
+                    _ => {
+                        return Err((
+                            "INVALID_ARGUMENTS",
+                            "orientation must be portrait or landscape".to_owned(),
+                        ));
+                    }
+                })
+            }
+            "--margin-top" => {
+                margins.top_twips = Some(parse_twips(value)?);
+                changed_margins = true;
+            }
+            "--margin-right" => {
+                margins.right_twips = Some(parse_twips(value)?);
+                changed_margins = true;
+            }
+            "--margin-bottom" => {
+                margins.bottom_twips = Some(parse_twips(value)?);
+                changed_margins = true;
+            }
+            "--margin-left" => {
+                margins.left_twips = Some(parse_twips(value)?);
+                changed_margins = true;
+            }
+            _ => {
+                return Err((
+                    "INVALID_ARGUMENTS",
+                    format!("unknown page setup flag: {}", values[index]),
+                ));
+            }
+        }
+        index += 2;
+    }
+    if paper_size.is_none() && orientation.is_none() && !changed_margins {
+        return Err((
+            "INVALID_ARGUMENTS",
+            "set-page-setup requires at least one change".to_owned(),
+        ));
+    }
+    let package = opensuite_opc::Package::open(&values[0])
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_page_setup(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetPageSetup {
+            margins: changed_margins.then_some(margins),
+            paper_size,
+            orientation,
+            base_revision: None,
+        },
+        &values[1],
+    )
+    .to_json())
+}
+
+fn parse_twips(value: &str) -> Result<i32, (&'static str, String)> {
+    value.parse().map_err(|_| {
+        (
+            "INVALID_ARGUMENTS",
+            "margin values must be integer twips".to_owned(),
+        )
+    })
+}
+
+fn inspect_page_setup(
+    path: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (_, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let setup = opensuite_docx::inspect_page_setup(&source)
+        .map_err(|error| ("INSPECTION_FAILED", error.to_json().to_string()))?;
+    Ok(
+        serde_json::json!({ "ok": true, "paper_size": setup.paper_size.map(|value| match value { opensuite_protocol::PaperSize::Letter => "letter", opensuite_protocol::PaperSize::A4 => "a4" }), "orientation": match setup.orientation { opensuite_protocol::PageOrientation::Portrait => "portrait", opensuite_protocol::PageOrientation::Landscape => "landscape" }, "margins_twips": { "top": setup.margins.top_twips, "right": setup.margins.right_twips, "bottom": setup.margins.bottom_twips, "left": setup.margins.left_twips } }),
+    )
 }
 
 fn set_paragraphs_list(

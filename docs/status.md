@@ -152,6 +152,10 @@ and XML source bytes.
 - Preservation-safe explicit page breaks use one dedicated canonical main-body paragraph. Inspection
   exposes `PageBreak` body blocks with `delete_page_break`; insert and delete use opaque body handles,
   preserve surrounding content, and verify the reopened package and body ordering.
+- Preservation-safe `SetPageSetup` updates only the effective terminal main-document section: partial
+  top/right/bottom/left margins in twips, Letter/A4 paper size, and portrait/landscape orientation.
+  It preserves other section children and margin header/footer/gutter values, rejects multi-section
+  and tracked section layouts, and exposes semantic `inspect-page-setup` output.
 
 ## Current Repository Target
 
@@ -173,7 +177,7 @@ and XML source bytes.
   and generic table editing
 - data-bound, locked, placeholder-state, repeating, group, picture, checkbox, dropdown,
   combo-box, nested, or multi-paragraph content-control mutation
-- paragraph styles, numbering, tabs, borders, shading, section properties, and paragraph
+- paragraph styles, numbering, tabs, borders, shading, general section properties, and paragraph
   formatting outside ordinary direct main-body paragraphs
 - table/header/footer, tracked, wrapped, or general character formatting
 - style creation, definition editing, non-paragraph style assignment, or style cleanup

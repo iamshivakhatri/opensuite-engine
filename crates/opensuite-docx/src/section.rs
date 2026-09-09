@@ -35,8 +35,8 @@ impl<'a> Section<'a> {
 }
 
 pub struct SectionProperties<'a> {
-    source: &'a SourceDocument,
-    source_id: NodeId,
+    pub(crate) source: &'a SourceDocument,
+    pub(crate) source_id: NodeId,
 }
 
 impl SectionProperties<'_> {
