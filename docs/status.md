@@ -159,6 +159,9 @@ and XML source bytes.
 - Preservation-safe `SetHeaderFooterText` inspects, creates, replaces, or clears simple default
   header/footer text for one safe single-section document. It preserves unrelated package content,
   leaves cleared parts/relationships in place, and rejects complex or multi-section layouts.
+- Preservation-safe `SetPageNumber` creates, updates, or removes one canonical `PAGE` field in a
+  simple default header or footer of a safe single-section document. It supports left, center, and
+  right alignment while preserving the coexisting simple header/footer text and package identity.
 
 ## Current Repository Target
 

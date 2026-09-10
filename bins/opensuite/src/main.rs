@@ -48,6 +48,8 @@ fn main() {
         set_page_setup(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-header-footer-text")) {
         set_header_footer_text(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-page-number")) {
+        set_page_number(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-picture-size")) {
         set_picture_size(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-picture")) {
@@ -66,6 +68,7 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-sections" => inspect_sections(path),
         (Some(command), Some(path), None) if command == "inspect-page-setup" => inspect_page_setup(path),
         (Some(command), Some(path), None) if command == "inspect-header-footer" => inspect_default_header_footer(path),
+        (Some(command), Some(path), None) if command == "inspect-page-number" => inspect_page_number(path),
         (Some(command), Some(path), None) if command == "inspect-headers-footers" => inspect_headers_footers(path),
         (Some(command), Some(path), None) if command == "inspect-references" => inspect_references(path),
         (Some(command), Some(path), None) if command == "inspect-images" => inspect_images(path),
@@ -145,6 +148,90 @@ fn set_header_footer_text(
     .to_json())
 }
 
+fn set_page_number(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(kind), Some(value), None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite set-page-number <input.docx> <output.docx> <header|footer> <left|center|right|--clear>".to_owned()));
+    };
+    let kind = match kind.to_str() {
+        Some("header") => opensuite_protocol::HeaderFooterKind::Header,
+        Some("footer") => opensuite_protocol::HeaderFooterKind::Footer,
+        _ => {
+            return Err((
+                "INVALID_ARGUMENTS",
+                "kind must be header or footer".to_owned(),
+            ));
+        }
+    };
+    let alignment = match value.to_str() {
+        Some("left") => Some(opensuite_protocol::PageNumberAlignment::Left),
+        Some("center") => Some(opensuite_protocol::PageNumberAlignment::Center),
+        Some("right") => Some(opensuite_protocol::PageNumberAlignment::Right),
+        Some("--clear") => None,
+        _ => {
+            return Err((
+                "INVALID_ARGUMENTS",
+                "alignment must be left, center, right, or --clear".to_owned(),
+            ));
+        }
+    };
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_page_number(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetPageNumber {
+            kind,
+            alignment,
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn inspect_page_number(
+    path: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let value = opensuite_docx::inspect_page_number(&package, &main, &source)
+        .map_err(|error| ("INSPECTION_FAILED", error.to_json().to_string()))?;
+    let state = match value {
+        opensuite_docx::PageNumberInspection::None => serde_json::json!({ "state": "none" }),
+        opensuite_docx::PageNumberInspection::Header(alignment) => {
+            serde_json::json!({ "state": "header", "alignment": page_number_alignment_name(alignment) })
+        }
+        opensuite_docx::PageNumberInspection::Footer(alignment) => {
+            serde_json::json!({ "state": "footer", "alignment": page_number_alignment_name(alignment) })
+        }
+        opensuite_docx::PageNumberInspection::Unsupported => {
+            serde_json::json!({ "state": "unsupported" })
+        }
+    };
+    Ok(serde_json::json!({ "ok": true, "page_number": state }))
+}
+
+fn page_number_alignment_name(value: opensuite_protocol::PageNumberAlignment) -> &'static str {
+    match value {
+        opensuite_protocol::PageNumberAlignment::Left => "left",
+        opensuite_protocol::PageNumberAlignment::Center => "center",
+        opensuite_protocol::PageNumberAlignment::Right => "right",
+    }
+}
+
 fn inspect_default_header_footer(
     path: std::ffi::OsString,
 ) -> Result<serde_json::Value, (&'static str, String)> {
@@ -160,6 +247,12 @@ fn inspect_default_header_footer(
         opensuite_docx::HeaderFooterInspection::None => serde_json::json!({ "state": "none" }),
         opensuite_docx::HeaderFooterInspection::SimpleText(text) => {
             serde_json::json!({ "state": "simple_text", "text": text })
+        }
+        opensuite_docx::HeaderFooterInspection::SimplePageNumber(alignment) => {
+            serde_json::json!({ "state": "page_number", "alignment": page_number_alignment_name(alignment) })
+        }
+        opensuite_docx::HeaderFooterInspection::SimpleTextAndPageNumber(text, alignment) => {
+            serde_json::json!({ "state": "simple_text_and_page_number", "text": text, "alignment": page_number_alignment_name(alignment) })
         }
         opensuite_docx::HeaderFooterInspection::Unsupported => {
             serde_json::json!({ "state": "unsupported" })
