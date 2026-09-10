@@ -8,7 +8,7 @@ crates/opensuite-node/*.node
 !tests/fixtures/headers-footers-errors.docx
 !tests/fixtures/references.docx
 *.txt
-tests
+/tests/
 docs/roadmap
 docs/docx-engine.md
 .DS_Store
