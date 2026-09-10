@@ -1,5 +1,32 @@
 use super::*;
 
+pub(super) const EMU_PER_PIXEL_AT_96_DPI: i64 = 9_525;
+// ponytail: fixed 6.5in width; use section layout when explicit sizing is added.
+pub(super) const MAX_INLINE_PICTURE_WIDTH_EMU: i64 = 5_943_600;
+pub(super) const IMAGE_RELATIONSHIP_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+pub(super) const PNG_CONTENT_TYPE: &str = "image/png";
+pub(super) const JPEG_CONTENT_TYPE: &str = "image/jpeg";
+
+pub(super) struct InsertedPictureVerification<'a> {
+    index: usize,
+    picture_id: u32,
+    width_emu: i64,
+    height_emu: i64,
+    image_bytes: &'a [u8],
+}
+
+pub(super) struct PictureResizeVerification {
+    handle: String,
+    width_emu: i64,
+    height_emu: i64,
+    relationship: Option<String>,
+    metadata: Option<crate::PictureMetadata>,
+    image_name: PartName,
+    image_bytes: Vec<u8>,
+    body: Vec<String>,
+}
+
 /// Inserts one inline PNG or JPEG picture and returns verified DOCX bytes.
 pub fn insert_picture_to_vec(
     package: &Package,
