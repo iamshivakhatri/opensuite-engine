@@ -72,6 +72,13 @@ After implementation changes:
 
 Code and documentation must agree.
 
+## DOCX Mutation Organization
+
+Keep DOCX feature-specific mutation code in `crates/opensuite-docx/src/mutation/` rather than
+growing `mutation.rs`. Keep semantic parsing separate from mutation code, keep tests focused on
+their domain, preserve public mutation paths through the root facade where practical, and do not
+add broad abstractions merely to reduce file size.
+
 ## Working Style
 
 Before substantial implementation:

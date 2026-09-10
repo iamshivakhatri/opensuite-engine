@@ -1,0 +1,2033 @@
+use super::*;
+
+/// Sets visible text in one simple, semantically addressed main-body table cell.
+/// Inserts one complete row after a semantic row anchor in a simple main-body table.
+pub fn insert_table_row_after_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertTableRowAfter,
+) -> Result<Vec<u8>, OperationResult> {
+    let rows = std::slice::from_ref(&operation.cells);
+    insert_table_rows_after(
+        source,
+        package,
+        main,
+        &operation.table,
+        &operation.after,
+        rows,
+    )
+}
+
+/// Inserts several complete rows with one contiguous source insertion.
+pub fn insert_table_rows_after_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertTableRowsAfter,
+) -> Result<Vec<u8>, OperationResult> {
+    insert_table_rows_after(
+        source,
+        package,
+        main,
+        &operation.table,
+        &operation.after,
+        &operation.rows,
+    )
+}
+
+pub(super) fn insert_table_rows_after(
+    source: &SourceDocument,
+    package: &Package,
+    main: &Part,
+    table: &TableTarget,
+    after: &TableRowTarget,
+    rows: &[Vec<String>],
+) -> Result<Vec<u8>, OperationResult> {
+    if rows.is_empty() || rows.len() > MAX_TABLE_ROWS_PER_OPERATION {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "inserted rows must contain between 1 and 100 rows",
+        ));
+    }
+    let target = resolve_table_row(source, table, after, rows)?;
+    let mut fragment = Vec::new();
+    for cells in rows {
+        fragment.extend(match target.template {
+            Some(template) => table_row_fragment(source, template, cells)?,
+            None => minimal_table_row_fragment(source, target.row, cells)?,
+        });
+    }
+    let insertion = source.node(target.row).expect("row exists").span().end;
+    let patched = apply_patches(
+        source,
+        vec![Patch {
+            span: SourceSpan {
+                start: insertion,
+                end: insertion,
+            },
+            replacement: fragment,
+        }],
+    )?;
+    let before = all_table_rows(source)?;
+    let mut expected = before.clone();
+    expected[target.table_index].splice(
+        target.row_index + 1..target.row_index + 1,
+        rows.iter().cloned(),
+    );
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_table_row_output_bytes(&output, &expected)?;
+    Ok(output)
+}
+
+/// Replaces visible text in several cells of one semantic table atomically.
+pub fn set_table_cells_text_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetTableCellsText,
+) -> Result<Vec<u8>, OperationResult> {
+    if operation.updates.is_empty() || operation.updates.len() > MAX_TABLE_CELL_UPDATES {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "table cell updates must contain between 1 and 100 updates",
+        ));
+    }
+    let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(unsupported(
+            "set_table_cells_text supports only simple rectangular tables without merges, nesting, or revisions",
+        )
+        .with_reason_code(reason.as_str()));
+    }
+    let mut targets = Vec::with_capacity(operation.updates.len());
+    let mut cells = HashSet::new();
+    for update in &operation.updates {
+        let target =
+            resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)?;
+        if target.text != update.expected_current_text {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "resolved cell text does not match expected current text",
+            )
+            .with_reason_code("EXPECTED_TEXT_MISMATCH"));
+        }
+        if !cells.insert(target.cell) {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "the same table cell was requested more than once",
+            ));
+        }
+        targets.push(target);
+    }
+    let mut patches = Vec::new();
+    for (target, update) in targets.iter().zip(&operation.updates) {
+        patches.extend(table_cell_patches(source, target, &update.replacement)?);
+    }
+    let patched = apply_patches(source, patches)?;
+    let mut expected = all_table_rows(source)?;
+    for (target, update) in targets.iter().zip(&operation.updates) {
+        expected[target.table_index][target.row_index][target.column_index] =
+            update.replacement.clone();
+    }
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_table_row_output_bytes(&output, &expected)?;
+    Ok(output)
+}
+
+/// Patches basic direct table properties without touching rows, cells, or the grid.
+pub fn set_table_formatting_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetTableFormatting,
+) -> Result<Vec<u8>, OperationResult> {
+    let (_, table, _, _) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(
+            unsupported("set_table_formatting supports only simple rectangular tables")
+                .with_reason_code(reason.as_str()),
+        );
+    }
+    if operation.formatting == TableFormattingPatch::default() {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "table formatting patch is empty",
+        ));
+    }
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        table_formatting_patches(source, table, &operation.formatting)?,
+    )
+}
+
+/// Inserts one grid-aware column into a simple semantic table.
+pub fn insert_table_column_after_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertTableColumnAfter,
+) -> Result<Vec<u8>, OperationResult> {
+    let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(unsupported(
+            "insert_table_column supports only simple rectangular tables without merges, nesting, or revisions",
+        )
+        .with_reason_code(reason.as_str()));
+    }
+    if operation.cells.len() != rows.len() - 1 {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "column cell count must match the table data-row count",
+        ));
+    }
+    let columns = headers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, header)| {
+            label_matches(header, &operation.after_column_header).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let column = if let Some(handle) = &operation.after_column_handle {
+        let (handle_table, column) = parse_column_handle(handle)?;
+        if handle_table != table_index {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "column handle does not belong to the selected table",
+            ));
+        }
+        if column >= headers.len() {
+            return Err(OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "table column handle was not found",
+            ));
+        }
+        column
+    } else if columns.len() != 1 {
+        return Err(OperationResult::failed(
+            if columns.is_empty() {
+                "TARGET_NOT_FOUND"
+            } else {
+                "TARGET_AMBIGUOUS"
+            },
+            "column header does not resolve to one current table column",
+        ));
+    } else {
+        columns[0]
+    };
+    let grid = explicit_table_grid(source, table, headers.len())?;
+    let mut patches = vec![Patch {
+        span: SourceSpan {
+            start: source
+                .node(grid.columns[column])
+                .expect("grid column exists")
+                .span()
+                .end,
+            end: source
+                .node(grid.columns[column])
+                .expect("grid column exists")
+                .span()
+                .end,
+        },
+        replacement: source_bytes(source, grid.columns[column])?,
+    }];
+    for (row_index, row) in rows.iter().enumerate() {
+        let cells = row.cells().collect::<Vec<_>>();
+        let value = if row_index == 0 {
+            &operation.header
+        } else {
+            &operation.cells[row_index - 1]
+        };
+        let template = cells[column].source_id();
+        let end = source.node(template).expect("cell exists").span().end;
+        patches.push(Patch {
+            span: SourceSpan { start: end, end },
+            replacement: if safe_template_cell(source, template) {
+                cell_fragment(
+                    source,
+                    template,
+                    value,
+                    word_element_prefix(source, row.source_id(), "tr")?,
+                )?
+                .into_bytes()
+            } else {
+                minimal_table_cell_fragment(source, row.source_id(), value)?.into_bytes()
+            },
+        });
+    }
+    let patched = apply_patches(source, patches)?;
+    let mut expected = all_table_rows(source)?;
+    for (row_index, row) in expected[table_index].iter_mut().enumerate() {
+        row.insert(
+            column + 1,
+            if row_index == 0 {
+                operation.header.clone()
+            } else {
+                operation.cells[row_index - 1].clone()
+            },
+        );
+    }
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let mut output_target = operation.table.clone();
+    if output_target.handle.is_none() {
+        output_target
+            .header_cells
+            .insert(column + 1, operation.header.clone());
+    }
+    verify_table_column_output_bytes(&output, &output_target, &expected)?;
+    Ok(output)
+}
+
+/// Creates a minimal, rectangular, immediately editable table.
+pub fn create_table_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &CreateTable,
+) -> Result<Vec<u8>, OperationResult> {
+    let width = operation.rows.first().map_or(0, Vec::len);
+    if operation.rows.is_empty()
+        || width == 0
+        || operation.rows.iter().any(|row| row.len() != width)
+    {
+        return Err(OperationResult::failed(
+            "INVALID_OPERATION",
+            "create_table requires a non-empty rectangular cell matrix",
+        )
+        .with_reason_code("INVALID_TABLE_DIMENSIONS"));
+    }
+    let placement = resolve_paragraph_placement(source, &operation.placement)?;
+    let (body, blocks) = direct_body_blocks(source)?;
+    let index = placement_index(&blocks, placement)?;
+    let insertion = body_insertion(source, body, &blocks, index)?;
+    let fragment = table_fragment_for_body(source, body, &operation.rows)?;
+    let patched = apply_patches(
+        source,
+        vec![Patch {
+            span: SourceSpan {
+                start: insertion,
+                end: insertion,
+            },
+            replacement: fragment,
+        }],
+    )?;
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_table_row_output_bytes(
+        &output,
+        &expected_table_insert(source, &blocks, index, &operation.rows)?,
+    )?;
+    Ok(output)
+}
+
+pub fn delete_table_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeleteTable,
+) -> Result<Vec<u8>, OperationResult> {
+    let (table_index, table, _, _) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(
+            unsupported("delete_table supports only simple direct body tables")
+                .with_reason_code(reason.as_str()),
+        );
+    }
+    let mut expected = all_table_rows(source)?;
+    expected.remove(table_index);
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span: source.node(table).expect("table exists").span(),
+            replacement: Vec::new(),
+        }],
+    )
+    .and_then(|output| {
+        verify_table_row_output_bytes(&output, &expected)?;
+        Ok(output)
+    })
+}
+
+pub fn delete_table_row_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeleteTableRow,
+) -> Result<Vec<u8>, OperationResult> {
+    let (table_index, table, rows, _) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(
+            unsupported("delete_table_row supports only simple rectangular tables")
+                .with_reason_code(reason.as_str()),
+        );
+    }
+    if rows.len() == 1 {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "deleting the final table row requires delete_table",
+        )
+        .with_reason_code("LAST_TABLE_ROW"));
+    }
+    let (handle_table, row_index) = operation
+        .row
+        .handle
+        .as_deref()
+        .map(parse_row_handle)
+        .transpose()?
+        .ok_or_else(|| {
+            OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "delete_table_row requires a row handle",
+            )
+        })?;
+    if handle_table != table_index || row_index >= rows.len() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table row handle was not found",
+        ));
+    }
+    let mut expected = all_table_rows(source)?;
+    expected[table_index].remove(row_index);
+    write_patches_to_vec(
+        package,
+        main,
+        source,
+        vec![Patch {
+            span: source
+                .node(rows[row_index].source_id())
+                .expect("row exists")
+                .span(),
+            replacement: Vec::new(),
+        }],
+    )
+    .and_then(|output| {
+        verify_table_row_output_bytes(&output, &expected)?;
+        Ok(output)
+    })
+}
+
+pub fn delete_table_column_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &DeleteTableColumn,
+) -> Result<Vec<u8>, OperationResult> {
+    let (table_index, table, rows, headers) = resolve_table(source, &operation.table)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(
+            unsupported("delete_table_column supports only simple rectangular tables")
+                .with_reason_code(reason.as_str()),
+        );
+    }
+    if headers.len() == 1 {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "deleting the final table column requires delete_table",
+        )
+        .with_reason_code("LAST_TABLE_COLUMN"));
+    }
+    let column = if let Some(handle) = &operation.column_handle {
+        let (t, c) = parse_column_handle(handle)?;
+        if t != table_index {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "column handle does not belong to the selected table",
+            ));
+        }
+        c
+    } else {
+        let found = headers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, text)| label_matches(text, &operation.column_header).then_some(i))
+            .collect::<Vec<_>>();
+        if found.len() != 1 {
+            return Err(OperationResult::failed(
+                if found.is_empty() {
+                    "TARGET_NOT_FOUND"
+                } else {
+                    "TARGET_AMBIGUOUS"
+                },
+                "column header does not resolve to one current table column",
+            ));
+        }
+        found[0]
+    };
+    if column >= headers.len() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table column handle was not found",
+        ));
+    }
+    let grid = explicit_table_grid(source, table, headers.len())?;
+    let mut patches = vec![Patch {
+        span: source
+            .node(grid.columns[column])
+            .expect("grid exists")
+            .span(),
+        replacement: Vec::new(),
+    }];
+    for row in &rows {
+        let cell = row
+            .cells()
+            .nth(column)
+            .expect("rectangular table")
+            .source_id();
+        patches.push(Patch {
+            span: source.node(cell).expect("cell exists").span(),
+            replacement: Vec::new(),
+        });
+    }
+    let mut expected = all_table_rows(source)?;
+    for row in &mut expected[table_index] {
+        row.remove(column);
+    }
+    let output = write_patches_to_vec(package, main, source, patches)?;
+    verify_table_row_output_bytes(&output, &expected)?;
+    let target = TableTarget {
+        header_cells: expected[table_index][0].clone(),
+        occurrence: None,
+        handle: Some(format!("t{table_index}")),
+    };
+    let output_package = Package::from_bytes(output.clone()).map_err(document_invalid)?;
+    let (_, output_source) = crate::open_main_source(&output_package).map_err(document_invalid)?;
+    let (_, output_table, _, output_headers) = resolve_table(&output_source, &target)?;
+    explicit_table_grid(&output_source, output_table, output_headers.len())?;
+    Ok(output)
+}
+
+pub fn set_table_cell_text(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetTableCellText,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    let output = output.as_ref();
+    if output_matches_input(package, output) {
+        return OperationResult::failed(
+            "OUTPUT_MATCHES_INPUT",
+            "output path must differ from input path",
+        );
+    }
+    let target = match resolve_table_cell(source, &operation.target) {
+        Ok(target) => target,
+        Err(result) => return result,
+    };
+    if target.text != operation.expected_current_text {
+        return OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "resolved cell text does not match expected current text",
+        );
+    }
+    let patches = if target.text.is_empty() {
+        if operation.replacement.is_empty() {
+            Vec::new()
+        } else {
+            match empty_cell_patch(source, target.paragraph, &operation.replacement) {
+                Ok(patch) => vec![patch],
+                Err(result) => return result,
+            }
+        }
+    } else {
+        let matches = match crate::text_search::resolve_text(source, &target.text) {
+            Ok(matches) => matches,
+            Err(error) => return OperationResult::failed(error.code(), error.to_string()),
+        };
+        let Some(matched) = matches.into_iter().find(|matched| {
+            matched.start == 0
+                && matched.end == target.text.len()
+                && matched
+                    .segments
+                    .iter()
+                    .all(|segment| is_descendant(source, segment.id, target.cell))
+        }) else {
+            return OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "resolved cell has no compatible text source range",
+            );
+        };
+        match patches_for_match(source, &matched, &operation.replacement) {
+            Ok(patches) => patches,
+            Err(result) => return result,
+        }
+    };
+    let patched = match apply_patches(source, patches) {
+        Ok(patched) => patched,
+        Err(result) => return result,
+    };
+    let before = match all_table_cell_texts(source) {
+        Ok(before) => before,
+        Err(result) => return result,
+    };
+    let Some(index) = before.iter().position(|item| item.0 == target.cell) else {
+        return OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "resolved target cell is not in a supported table",
+        );
+    };
+    let expected = before
+        .into_iter()
+        .enumerate()
+        .map(|(item_index, (_, text))| {
+            if item_index == index {
+                operation.replacement.clone()
+            } else {
+                text
+            }
+        })
+        .collect::<Vec<_>>();
+    let temporary = temporary_path(output);
+    if let Err(error) = package.write_replaced_part(main, &patched, &temporary) {
+        return OperationResult::failed(error.code(), error.to_string());
+    }
+    if let Err(result) = verify_table_cell_output(
+        &temporary,
+        &operation.target,
+        &operation.replacement,
+        &expected,
+    ) {
+        let _ = std::fs::remove_file(&temporary);
+        return result;
+    }
+    if let Err(error) = std::fs::rename(&temporary, output) {
+        let _ = std::fs::remove_file(&temporary);
+        return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
+    }
+    OperationResult::table_cell_text_set(target.text, operation.replacement.clone())
+}
+
+pub(super) struct ResolvedTableCell {
+    cell: NodeId,
+    paragraph: NodeId,
+    text: String,
+    table_index: usize,
+    row_index: usize,
+    column_index: usize,
+}
+
+pub(super) struct ResolvedTableRow {
+    row: NodeId,
+    template: Option<NodeId>,
+    table_index: usize,
+    row_index: usize,
+}
+
+pub(super) fn resolve_table_row(
+    source: &SourceDocument,
+    table_target: &TableTarget,
+    after: &TableRowTarget,
+    inserted_rows: &[Vec<String>],
+) -> Result<ResolvedTableRow, OperationResult> {
+    let (table_index, table, rows, _headers) = resolve_table(source, table_target)?;
+    if let Some(reason) = table_mutation_reason(source, table) {
+        return Err(unsupported(
+            "insert_table_row supports only simple rectangular tables without merges, nesting, or revisions",
+        )
+        .with_reason_code(reason.as_str()));
+    }
+    let width = rows[0].cells().count();
+    if inserted_rows.iter().any(|cells| cells.len() != width) {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "inserted row cell count must match the table column count",
+        ));
+    }
+    if let Some(handle) = &after.handle {
+        let (handle_table, row_index) = parse_row_handle(handle)?;
+        if handle_table != table_index {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "row handle does not belong to the selected table",
+            ));
+        }
+        let row = rows.get(row_index).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "table row handle was not found")
+        })?;
+        let template = rows
+            .iter()
+            .filter(|candidate| candidate.source_id() != row.source_id())
+            .find(|candidate| safe_table_row(source, candidate.source_id()))
+            .map(crate::Row::source_id);
+        return Ok(ResolvedTableRow {
+            row: row.source_id(),
+            template,
+            table_index,
+            row_index,
+        });
+    }
+    let mut matches = Vec::new();
+    for (row_index, row) in rows.iter().enumerate().skip(1) {
+        let cells = row.cells().collect::<Vec<_>>();
+        if cells.first().is_some_and(|cell| {
+            cell.text_for_view(RevisionView::Current)
+                .ok()
+                .as_deref()
+                .is_some_and(|text| label_matches(text, &after.first_cell_text))
+        }) {
+            matches.push((row_index, row.source_id()));
+        }
+    }
+    let (row_index, row) = select_row(matches, after)?;
+    let template = rows
+        .iter()
+        .filter(|candidate| candidate.source_id() != row)
+        .find(|candidate| safe_table_row(source, candidate.source_id()))
+        .map(crate::Row::source_id);
+    Ok(ResolvedTableRow {
+        row,
+        template,
+        table_index,
+        row_index,
+    })
+}
+
+pub(super) fn resolve_table<'a>(
+    source: &'a SourceDocument,
+    target: &TableTarget,
+) -> Result<(usize, NodeId, Vec<crate::Row<'a>>, Vec<String>), OperationResult> {
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    let requested_handle = target
+        .handle
+        .as_deref()
+        .map(parse_table_handle)
+        .transpose()?;
+    let mut tables = Vec::new();
+    let mut table_index = 0;
+    for block in document.blocks() {
+        let crate::BodyBlock::Table(table) = block else {
+            continue;
+        };
+        if !is_direct_body_table(source, table.source_id()) {
+            continue;
+        }
+        let current_table_index = table_index;
+        table_index += 1;
+        let rows = table.rows().collect::<Vec<_>>();
+        let Some(header) = rows.first() else { continue };
+        let headers = header
+            .cells()
+            .map(|cell| {
+                cell.text_for_view(RevisionView::Current)
+                    .map_err(document_invalid)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if requested_handle.is_some_and(|handle| handle == current_table_index)
+            || (requested_handle.is_none() && labels_match(&headers, &target.header_cells))
+        {
+            tables.push((current_table_index, table.source_id(), rows, headers));
+        }
+    }
+    select_table(tables, target)
+}
+
+pub(super) fn parse_table_handle(handle: &str) -> Result<usize, OperationResult> {
+    handle
+        .strip_prefix('t')
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| OperationResult::failed("PRECONDITION_FAILED", "table handle is malformed"))
+}
+
+pub(super) fn parse_row_handle(handle: &str) -> Result<(usize, usize), OperationResult> {
+    let Some((table, row)) = handle.split_once(":r") else {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "row handle is malformed",
+        ));
+    };
+    Ok((
+        parse_table_handle(table)?,
+        row.parse().map_err(|_| {
+            OperationResult::failed("PRECONDITION_FAILED", "row handle is malformed")
+        })?,
+    ))
+}
+
+pub(super) fn parse_column_handle(handle: &str) -> Result<(usize, usize), OperationResult> {
+    let Some((table, column)) = handle.split_once(":c") else {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "column handle is malformed",
+        ));
+    };
+    Ok((
+        parse_table_handle(table)?,
+        column.parse().map_err(|_| {
+            OperationResult::failed("PRECONDITION_FAILED", "column handle is malformed")
+        })?,
+    ))
+}
+
+pub(super) fn parse_cell_handle(handle: &str) -> Result<(usize, usize, usize), OperationResult> {
+    let Some((row, column)) = handle.split_once(":c") else {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "cell handle is malformed",
+        ));
+    };
+    let (table, row) = parse_row_handle(row)?;
+    Ok((
+        table,
+        row,
+        column.parse().map_err(|_| {
+            OperationResult::failed("PRECONDITION_FAILED", "cell handle is malformed")
+        })?,
+    ))
+}
+
+pub(super) fn select_table<'a>(
+    mut tables: Vec<(usize, NodeId, Vec<crate::Row<'a>>, Vec<String>)>,
+    target: &TableTarget,
+) -> Result<(usize, NodeId, Vec<crate::Row<'a>>, Vec<String>), OperationResult> {
+    if tables.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table header row was not found",
+        ));
+    }
+    if let Some(occurrence) = target.occurrence {
+        return tables.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "table target occurrence was not found")
+        });
+    }
+    if tables.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "table header row matches more than one table",
+        ));
+    }
+    Ok(tables.pop().expect("one table"))
+}
+
+pub(super) fn select_row(
+    mut rows: Vec<(usize, NodeId)>,
+    target: &TableRowTarget,
+) -> Result<(usize, NodeId), OperationResult> {
+    if rows.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table row was not found",
+        ));
+    }
+    if let Some(occurrence) = target.occurrence {
+        return rows.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "table row target occurrence was not found",
+            )
+        });
+    }
+    if rows.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "table row first-cell text matches more than one row",
+        ));
+    }
+    Ok(rows.pop().expect("one row"))
+}
+
+pub(super) fn safe_table_row(source: &SourceDocument, row: NodeId) -> bool {
+    source
+        .children(row)
+        .all(|child| word(source, child, "trPr") || word(source, child, "tc"))
+        && source
+            .children(row)
+            .filter(|child| word(source, *child, "tc"))
+            .all(|cell| safe_template_cell(source, cell))
+        && !source.node_ids().any(|id| {
+            is_descendant(source, id, row)
+                && (word(source, id, "fldChar")
+                    || word(source, id, "fldSimple")
+                    || word(source, id, "instrText")
+                    || word(source, id, "sdt")
+                    || word(source, id, "hyperlink")
+                    || word(source, id, "drawing")
+                    || word(source, id, "pict")
+                    || word(source, id, "bookmarkStart")
+                    || word(source, id, "bookmarkEnd")
+                    || word(source, id, "commentRangeStart")
+                    || word(source, id, "commentRangeEnd")
+                    || word(source, id, "commentReference")
+                    || word(source, id, "rPrChange"))
+        })
+}
+
+pub(super) fn safe_template_cell(source: &SourceDocument, cell: NodeId) -> bool {
+    let paragraphs = direct_cell_paragraphs(source, cell);
+    paragraphs.len() == 1
+        && source
+            .children(cell)
+            .all(|child| word(source, child, "tcPr") || word(source, child, "p"))
+        && safe_table_paragraph(source, paragraphs[0])
+        && source.children(paragraphs[0]).all(|child| {
+            word(source, child, "pPr")
+                || word(source, child, "r")
+                || matches!(
+                    source.node(child).map(|node| node.kind()),
+                    Some(SourceNodeKind::Text)
+                )
+        })
+}
+
+pub(super) fn label_matches(actual: &str, requested: &str) -> bool {
+    actual.trim() == requested.trim()
+}
+
+pub(super) fn labels_match(actual: &[String], requested: &[String]) -> bool {
+    actual.len() == requested.len()
+        && actual
+            .iter()
+            .zip(requested)
+            .all(|(actual, requested)| label_matches(actual, requested))
+}
+
+pub(super) fn table_row_fragment(
+    source: &SourceDocument,
+    row: NodeId,
+    cells: &[String],
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_element_prefix(source, row, "tr")?;
+    let name = |local: &str| qualify(prefix, local);
+    let row_properties = source
+        .children(row)
+        .find(|child| word(source, *child, "trPr"))
+        .filter(|properties| safe_row_properties(source, *properties))
+        .map(|properties| source_bytes(source, properties))
+        .transpose()?
+        .unwrap_or_default();
+    let templates = source
+        .children(row)
+        .filter(|child| word(source, *child, "tc"))
+        .collect::<Vec<_>>();
+    let mut fragment = format!(
+        "<{}>{}",
+        name("tr"),
+        String::from_utf8_lossy(&row_properties)
+    );
+    for (template, value) in templates.into_iter().zip(cells) {
+        fragment.push_str(&cell_fragment(source, template, value, prefix)?);
+    }
+    fragment.push_str(&format!("</{}>", name("tr")));
+    Ok(fragment.into_bytes())
+}
+
+pub(super) fn minimal_table_row_fragment(
+    source: &SourceDocument,
+    position_row: NodeId,
+    cells: &[String],
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_element_prefix(source, position_row, "tr")?;
+    let name = |local: &str| qualify(prefix, local);
+    let mut fragment = format!("<{}>", name("tr"));
+    for value in cells {
+        let space = if requires_space_preservation(value) {
+            " xml:space=\"preserve\""
+        } else {
+            ""
+        };
+        fragment.push_str(&format!(
+            "<{}><{}><{}><{}{}>{}</{}></{}></{}></{}>",
+            name("tc"),
+            name("p"),
+            name("r"),
+            name("t"),
+            space,
+            escape(value),
+            name("t"),
+            name("r"),
+            name("p"),
+            name("tc")
+        ));
+    }
+    fragment.push_str(&format!("</{}>", name("tr")));
+    Ok(fragment.into_bytes())
+}
+
+pub(super) fn minimal_table_cell_fragment(
+    source: &SourceDocument,
+    row: NodeId,
+    value: &str,
+) -> Result<String, OperationResult> {
+    let prefix = word_element_prefix(source, row, "tr")?;
+    let name = |local: &str| qualify(prefix, local);
+    let space = if requires_space_preservation(value) {
+        " xml:space=\"preserve\""
+    } else {
+        ""
+    };
+    Ok(format!(
+        "<{}><{}><{}><{}{}>{}</{}></{}></{}></{}>",
+        name("tc"),
+        name("p"),
+        name("r"),
+        name("t"),
+        space,
+        escape(value),
+        name("t"),
+        name("r"),
+        name("p"),
+        name("tc")
+    ))
+}
+
+pub(super) fn safe_row_properties(source: &SourceDocument, properties: NodeId) -> bool {
+    source.children(properties).all(|child| {
+        word(source, child, "trHeight")
+            || word(source, child, "cantSplit")
+            || word(source, child, "jc")
+            || word(source, child, "tblCellSpacing")
+            || word(source, child, "cnfStyle")
+    })
+}
+
+pub(super) fn cell_fragment(
+    source: &SourceDocument,
+    cell: NodeId,
+    value: &str,
+    prefix: &str,
+) -> Result<String, OperationResult> {
+    let name = |local: &str| qualify(prefix, local);
+    let properties = source
+        .children(cell)
+        .find(|child| word(source, *child, "tcPr"))
+        .map(|id| source_bytes(source, id))
+        .transpose()?
+        .unwrap_or_default();
+    let paragraph = direct_cell_paragraphs(source, cell)[0];
+    let paragraph_properties = source
+        .children(paragraph)
+        .find(|child| word(source, *child, "pPr"))
+        .map(|id| source_bytes(source, id))
+        .transpose()?
+        .unwrap_or_default();
+    let run_properties = source
+        .children(paragraph)
+        .find(|child| word(source, *child, "r"))
+        .and_then(|run| {
+            source
+                .children(run)
+                .find(|child| word(source, *child, "rPr"))
+        })
+        .map(|id| source_bytes(source, id))
+        .transpose()?
+        .unwrap_or_default();
+    let space = if requires_space_preservation(value) {
+        " xml:space=\"preserve\""
+    } else {
+        ""
+    };
+    Ok(format!(
+        "<{}>{}<{}>{}<{}>{}<{}{}>{}</{}></{}></{}></{}>",
+        name("tc"),
+        String::from_utf8_lossy(&properties),
+        name("p"),
+        String::from_utf8_lossy(&paragraph_properties),
+        name("r"),
+        String::from_utf8_lossy(&run_properties),
+        name("t"),
+        space,
+        escape(value),
+        name("t"),
+        name("r"),
+        name("p"),
+        name("tc")
+    ))
+}
+
+pub(super) fn source_bytes(
+    source: &SourceDocument,
+    id: NodeId,
+) -> Result<Vec<u8>, OperationResult> {
+    let span = source
+        .node(id)
+        .ok_or_else(|| unsupported("template source is unavailable"))?
+        .span();
+    Ok(source.original_bytes()[span.start..span.end].to_vec())
+}
+
+pub(super) fn word_element_prefix<'a>(
+    source: &'a SourceDocument,
+    id: NodeId,
+    local: &str,
+) -> Result<&'a str, OperationResult> {
+    let SourceNodeKind::Element { start_tag, .. } = source
+        .node(id)
+        .ok_or_else(|| unsupported("template source is unavailable"))?
+        .kind()
+    else {
+        return Err(unsupported("template source node is not an element"));
+    };
+    let tag = std::str::from_utf8(&source.original_bytes()[start_tag.start..start_tag.end])
+        .map_err(|_| unsupported("template tag is not UTF-8"))?;
+    let name = tag
+        .strip_prefix('<')
+        .and_then(|value| {
+            value
+                .split(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+                .next()
+        })
+        .ok_or_else(|| unsupported("template tag is invalid"))?;
+    let expected = if name == local {
+        local
+    } else {
+        name.rsplit(':').next().unwrap_or("")
+    };
+    (expected == local)
+        .then_some(
+            name.strip_suffix(local)
+                .and_then(|value| value.strip_suffix(':'))
+                .unwrap_or(""),
+        )
+        .ok_or_else(|| unsupported("template tag is not WordprocessingML"))
+}
+
+pub(super) fn all_table_rows(
+    source: &SourceDocument,
+) -> Result<Vec<Vec<Vec<String>>>, OperationResult> {
+    crate::DocxDocument::new(source)
+        .map_err(document_invalid)?
+        .blocks()
+        .filter_map(|block| match block {
+            crate::BodyBlock::Table(table) if is_direct_body_table(source, table.source_id()) => {
+                Some(table)
+            }
+            _ => None,
+        })
+        .map(|table| {
+            table
+                .rows()
+                .map(|row| {
+                    row.cells()
+                        .map(|cell| {
+                            cell.text_for_view(RevisionView::Current)
+                                .map_err(document_invalid)
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+pub(super) fn verify_table_row_output_bytes(
+    output: &[u8],
+    expected: &[Vec<Vec<String>>],
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    (all_table_rows(&source)? == expected)
+        .then_some(())
+        .ok_or_else(|| {
+            OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "output table rows do not match the requested insertion",
+            )
+        })
+}
+
+pub(super) fn resolve_table_cell(
+    source: &SourceDocument,
+    target: &TableCellTarget,
+) -> Result<ResolvedTableCell, OperationResult> {
+    if let Some(handle) = &target.handle {
+        let (table_index, row_index, column_index) = parse_cell_handle(handle)?;
+        let table = TableTarget {
+            header_cells: Vec::new(),
+            occurrence: None,
+            handle: Some(format!("t{table_index}")),
+        };
+        let (_, table_id, rows, _) = resolve_table(source, &table)?;
+        if !simple_table(source, table_id) {
+            return Err(unsupported(
+                "set_table_cell_text supports only simple rectangular tables",
+            ));
+        }
+        let row = rows.get(row_index).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "table cell handle row was not found")
+        })?;
+        let cells = row.cells().collect::<Vec<_>>();
+        let cell = cells
+            .get(column_index)
+            .ok_or_else(|| {
+                OperationResult::failed(
+                    "TARGET_NOT_FOUND",
+                    "table cell handle column was not found",
+                )
+            })?
+            .source_id();
+        let paragraphs = direct_cell_paragraphs(source, cell);
+        if let Some(reason) = table_cell_text_reason(source, cell) {
+            return Err(unsupported(
+                "set_table_cell_text requires one ordinary paragraph with direct runs",
+            )
+            .with_reason_code(reason.as_str()));
+        }
+        return Ok(ResolvedTableCell {
+            cell,
+            paragraph: paragraphs[0],
+            text: cell_current_text(source, cell)?,
+            table_index,
+            row_index,
+            column_index,
+        });
+    }
+    let mut candidates = Vec::new();
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    for block in document.blocks() {
+        let crate::BodyBlock::Table(table) = block else {
+            continue;
+        };
+        if !is_direct_body_table(source, table.source_id()) {
+            continue;
+        }
+        let rows = table.rows().collect::<Vec<_>>();
+        let Some(header) = rows.first() else {
+            continue;
+        };
+        let header_cells = header.cells().collect::<Vec<_>>();
+        for (column, header_cell) in header_cells.iter().enumerate().skip(1) {
+            if !label_matches(
+                &header_cell
+                    .text_for_view(RevisionView::Current)
+                    .map_err(document_invalid)?,
+                &target.column_header,
+            ) {
+                continue;
+            }
+            for row in rows.iter().skip(1) {
+                let cells = row.cells().collect::<Vec<_>>();
+                if cells.first().is_some_and(|cell| {
+                    cell.text_for_view(RevisionView::Current)
+                        .ok()
+                        .as_deref()
+                        .is_some_and(|text| label_matches(text, &target.row_label))
+                }) && cells.len() > column
+                {
+                    candidates.push((table.source_id(), cells[column].source_id()));
+                }
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table row label and column header intersection was not found",
+        ));
+    }
+    let (table_id, cell) = if let Some(occurrence) = target.occurrence {
+        candidates.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "table cell target occurrence was not found",
+            )
+        })?
+    } else if candidates.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "table cell target matches more than one current semantic cell",
+        ));
+    } else {
+        candidates.pop().expect("one candidate")
+    };
+    if !simple_table(source, table_id) {
+        return Err(unsupported(
+            "set_table_cell_text supports only simple rectangular tables",
+        ));
+    }
+    let paragraphs = direct_cell_paragraphs(source, cell);
+    if let Some(reason) = table_cell_text_reason(source, cell) {
+        return Err(unsupported(
+            "set_table_cell_text requires one ordinary paragraph with direct runs",
+        )
+        .with_reason_code(reason.as_str()));
+    }
+    let text = cell_current_text(source, cell)?;
+    Ok(ResolvedTableCell {
+        cell,
+        paragraph: paragraphs[0],
+        text,
+        table_index: 0,
+        row_index: 0,
+        column_index: 0,
+    })
+}
+
+pub(super) fn resolve_table_cell_in_table(
+    source: &SourceDocument,
+    table_index: usize,
+    rows: &[crate::Row<'_>],
+    headers: &[String],
+    target: &TableCellTarget,
+) -> Result<ResolvedTableCell, OperationResult> {
+    if let Some(handle) = &target.handle {
+        let (handle_table, row_index, column_index) = parse_cell_handle(handle)?;
+        if handle_table != table_index {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "cell handle does not belong to the selected table",
+            ));
+        }
+        let row = rows.get(row_index).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "table cell handle row was not found")
+        })?;
+        let cells = row.cells().collect::<Vec<_>>();
+        let cell = cells
+            .get(column_index)
+            .ok_or_else(|| {
+                OperationResult::failed(
+                    "TARGET_NOT_FOUND",
+                    "table cell handle column was not found",
+                )
+            })?
+            .source_id();
+        let paragraphs = direct_cell_paragraphs(source, cell);
+        if let Some(reason) = table_cell_text_reason(source, cell) {
+            return Err(unsupported(
+                "set_table_cells_text requires one ordinary paragraph with direct runs",
+            )
+            .with_reason_code(reason.as_str()));
+        }
+        return Ok(ResolvedTableCell {
+            cell,
+            paragraph: paragraphs[0],
+            text: cell_current_text(source, cell)?,
+            table_index,
+            row_index,
+            column_index,
+        });
+    }
+    let columns = headers
+        .iter()
+        .enumerate()
+        .skip(1)
+        .filter_map(|(index, header)| label_matches(header, &target.column_header).then_some(index))
+        .collect::<Vec<_>>();
+    if columns.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "table column header was not found",
+        ));
+    }
+    let mut candidates = Vec::new();
+    for (row_index, row) in rows.iter().enumerate().skip(1) {
+        let cells = row.cells().collect::<Vec<_>>();
+        if cells.first().is_some_and(|cell| {
+            cell.text_for_view(RevisionView::Current)
+                .ok()
+                .as_deref()
+                .is_some_and(|text| label_matches(text, &target.row_label))
+        }) {
+            for &column_index in &columns {
+                candidates.push((row_index, column_index, cells[column_index].source_id()));
+            }
+        }
+    }
+    let (row_index, column_index, cell) = if let Some(occurrence) = target.occurrence {
+        candidates.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed(
+                "TARGET_NOT_FOUND",
+                "table cell target occurrence was not found",
+            )
+        })?
+    } else if candidates.len() != 1 {
+        return Err(OperationResult::failed(
+            if candidates.is_empty() {
+                "TARGET_NOT_FOUND"
+            } else {
+                "TARGET_AMBIGUOUS"
+            },
+            "table cell target does not resolve to one current semantic cell",
+        ));
+    } else {
+        candidates.pop().expect("one candidate")
+    };
+    let paragraphs = direct_cell_paragraphs(source, cell);
+    if let Some(reason) = table_cell_text_reason(source, cell) {
+        return Err(unsupported(
+            "set_table_cells_text requires one ordinary paragraph with direct runs",
+        )
+        .with_reason_code(reason.as_str()));
+    }
+    Ok(ResolvedTableCell {
+        cell,
+        paragraph: paragraphs[0],
+        text: cell_current_text(source, cell)?,
+        table_index,
+        row_index,
+        column_index,
+    })
+}
+
+pub(super) fn table_cell_patches(
+    source: &SourceDocument,
+    target: &ResolvedTableCell,
+    replacement: &str,
+) -> Result<Vec<Patch>, OperationResult> {
+    if target.text.is_empty() {
+        return if replacement.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(vec![empty_cell_patch(
+                source,
+                target.paragraph,
+                replacement,
+            )?])
+        };
+    }
+    let matches = crate::text_search::resolve_text(source, &target.text)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let matched = matches
+        .into_iter()
+        .find(|matched| {
+            matched.start == 0
+                && matched.end == target.text.len()
+                && matched
+                    .segments
+                    .iter()
+                    .all(|segment| is_descendant(source, segment.id, target.cell))
+        })
+        .ok_or_else(|| {
+            OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "resolved cell has no compatible text source range",
+            )
+        })?;
+    patches_for_match(source, &matched, replacement)
+}
+
+pub(super) fn is_direct_body_table(source: &SourceDocument, table: NodeId) -> bool {
+    source
+        .node(table)
+        .and_then(|node| node.parent())
+        .is_some_and(|body| word(source, body, "body"))
+}
+
+pub(super) fn simple_table(source: &SourceDocument, table: NodeId) -> bool {
+    table_structure_reason(source, table).is_none()
+}
+
+pub(crate) fn table_mutation_reason(
+    source: &SourceDocument,
+    table: NodeId,
+) -> Option<AffordanceReason> {
+    table_mutation_reason_from_structure(source, table, table_structure_reason(source, table))
+}
+
+pub(crate) fn table_mutation_reason_from_structure(
+    source: &SourceDocument,
+    table: NodeId,
+    structure_reason: Option<AffordanceReason>,
+) -> Option<AffordanceReason> {
+    structure_reason.or_else(|| {
+        has_revision_wrapper(source, table).then_some(AffordanceReason::RevisionWrapper)
+    })
+}
+
+pub(crate) fn table_structure_reason(
+    source: &SourceDocument,
+    table: NodeId,
+) -> Option<AffordanceReason> {
+    if source
+        .node_ids()
+        .any(|id| id != table && word(source, id, "tbl") && is_descendant(source, id, table))
+    {
+        return Some(AffordanceReason::NestedTableStructure);
+    }
+    if source.node_ids().any(|id| {
+        is_descendant(source, id, table)
+            && (word(source, id, "gridSpan") || word(source, id, "vMerge"))
+    }) {
+        return Some(AffordanceReason::MergedTableStructure);
+    }
+    let rows = source
+        .children(table)
+        .filter(|id| word(source, *id, "tr"))
+        .collect::<Vec<_>>();
+    let Some(first) = rows.first() else {
+        return Some(AffordanceReason::NonRectangularTable);
+    };
+    let width = source
+        .children(*first)
+        .filter(|id| word(source, *id, "tc"))
+        .count();
+    (width > 0
+        && !rows.is_empty()
+        && rows.iter().all(|row| {
+            source
+                .children(*row)
+                .filter(|id| word(source, *id, "tc"))
+                .count()
+                == width
+        }))
+    .then_some(())
+    .is_none()
+    .then_some(AffordanceReason::NonRectangularTable)
+}
+
+pub(super) struct ExplicitTableGrid {
+    columns: Vec<NodeId>,
+}
+
+pub(super) fn explicit_table_grid(
+    source: &SourceDocument,
+    table: NodeId,
+    width: usize,
+) -> Result<ExplicitTableGrid, OperationResult> {
+    let grids = source
+        .children(table)
+        .filter(|id| word(source, *id, "tblGrid"))
+        .collect::<Vec<_>>();
+    if grids.len() != 1 {
+        return Err(unsupported(
+            "insert_table_column requires one explicit table grid",
+        ));
+    }
+    let columns = source
+        .children(grids[0])
+        .filter(|column| word(source, *column, "gridCol"))
+        .collect::<Vec<_>>();
+    if columns.len() != width {
+        return Err(unsupported(
+            "insert_table_column requires one grid column per table column",
+        ));
+    }
+    Ok(ExplicitTableGrid { columns })
+}
+
+pub(crate) fn table_grid_reason(
+    source: &SourceDocument,
+    table: NodeId,
+    width: usize,
+) -> Option<AffordanceReason> {
+    explicit_table_grid(source, table, width)
+        .err()
+        .map(|_| AffordanceReason::InvalidTableGrid)
+}
+
+pub(super) fn verify_table_column_output_bytes(
+    output: &[u8],
+    target: &TableTarget,
+    expected: &[Vec<Vec<String>>],
+) -> Result<(), OperationResult> {
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    if all_table_rows(&source)? != expected {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output table cells do not match the requested column insertion",
+        ));
+    }
+    let (_, table, _rows, headers) = resolve_table(&source, target)?;
+    explicit_table_grid(&source, table, headers.len())?;
+    Ok(())
+}
+
+pub(super) fn direct_cell_paragraphs(source: &SourceDocument, cell: NodeId) -> Vec<NodeId> {
+    source
+        .children(cell)
+        .filter(|id| word(source, *id, "p"))
+        .collect()
+}
+
+pub(super) fn cell_current_text(
+    source: &SourceDocument,
+    cell: NodeId,
+) -> Result<String, OperationResult> {
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    for block in document.blocks() {
+        let crate::BodyBlock::Table(table) = block else {
+            continue;
+        };
+        for row in table.rows() {
+            for item in row.cells() {
+                if item.source_id() == cell {
+                    return item
+                        .text_for_view(RevisionView::Current)
+                        .map_err(document_invalid);
+                }
+            }
+        }
+    }
+    Err(OperationResult::failed(
+        "DOCUMENT_INVALID",
+        "resolved table cell is unavailable",
+    ))
+}
+
+pub(super) fn all_table_cell_texts(
+    source: &SourceDocument,
+) -> Result<Vec<(NodeId, String)>, OperationResult> {
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    let mut values = Vec::new();
+    for block in document.blocks() {
+        let crate::BodyBlock::Table(table) = block else {
+            continue;
+        };
+        if !is_direct_body_table(source, table.source_id()) {
+            continue;
+        }
+        for row in table.rows() {
+            for cell in row.cells() {
+                values.push((
+                    cell.source_id(),
+                    cell.text_for_view(RevisionView::Current)
+                        .map_err(document_invalid)?,
+                ));
+            }
+        }
+    }
+    Ok(values)
+}
+
+pub(super) fn safe_table_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
+    source.children(paragraph).all(|id| {
+        if matches!(
+            source.node(id).map(|node| node.kind()),
+            Some(SourceNodeKind::Text)
+        ) {
+            true
+        } else if word(source, id, "pPr") {
+            !source
+                .children(id)
+                .any(|child| word(source, child, "sectPr") || word(source, child, "pPrChange"))
+        } else if word(source, id, "r") {
+            source
+                .children(id)
+                .all(|child| safe_run_child(source, child))
+        } else {
+            false
+        }
+    })
+}
+
+pub(crate) fn table_cell_text_reason(
+    source: &SourceDocument,
+    cell: NodeId,
+) -> Option<AffordanceReason> {
+    let paragraphs = direct_cell_paragraphs(source, cell);
+    match paragraphs.len() {
+        0 => Some(AffordanceReason::UnsafeCellStructure),
+        1 if safe_table_paragraph(source, paragraphs[0]) => None,
+        1 => Some(AffordanceReason::UnsafeParagraphStructure),
+        _ => Some(AffordanceReason::MultipleParagraphs),
+    }
+}
+
+pub(super) fn is_descendant(source: &SourceDocument, mut id: NodeId, ancestor: NodeId) -> bool {
+    while let Some(parent) = source.node(id).and_then(|node| node.parent()) {
+        if parent == ancestor {
+            return true;
+        }
+        id = parent;
+    }
+    false
+}
+
+pub(super) fn empty_cell_patch(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    replacement: &str,
+) -> Result<Patch, OperationResult> {
+    let fragment = run_fragment(source, paragraph, replacement)?;
+    let SourceNodeKind::Element {
+        start_tag, end_tag, ..
+    } = source.node(paragraph).expect("paragraph exists").kind()
+    else {
+        return Err(unsupported("empty cell paragraph has no source tag"));
+    };
+    if let Some(end_tag) = end_tag {
+        return Ok(Patch {
+            span: SourceSpan {
+                start: end_tag.start,
+                end: end_tag.start,
+            },
+            replacement: fragment,
+        });
+    }
+    let tag = &source.original_bytes()[start_tag.start..start_tag.end];
+    let Some(offset) = tag.windows(2).rposition(|window| window == b"/>") else {
+        return Err(unsupported(
+            "empty cell paragraph cannot receive a source insertion",
+        ));
+    };
+    Ok(Patch {
+        span: SourceSpan {
+            start: start_tag.start + offset,
+            end: start_tag.end,
+        },
+        replacement: format!(
+            ">{}</{}>",
+            String::from_utf8(fragment).expect("generated XML is UTF-8"),
+            qualified_name(source, paragraph, "p")?
+        )
+        .into_bytes(),
+    })
+}
+
+pub(super) fn run_fragment(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    text: &str,
+) -> Result<Vec<u8>, OperationResult> {
+    let run = qualified_name(source, paragraph, "r")?;
+    let value = qualified_name(source, paragraph, "t")?;
+    let space = if requires_space_preservation(text) {
+        " xml:space=\"preserve\""
+    } else {
+        ""
+    };
+    Ok(format!("<{run}><{value}{space}>{}</{value}></{run}>", escape(text)).into_bytes())
+}
+
+pub(super) fn table_fragment_for_body(
+    source: &SourceDocument,
+    body: NodeId,
+    rows: &[Vec<String>],
+) -> Result<Vec<u8>, OperationResult> {
+    let prefix = word_prefix_for(source, body, "body")?;
+    let name = |local: &str| qualify(&prefix, local);
+    let width_attribute = attr_prefix(&prefix);
+    let column_width = 9360 / rows[0].len();
+    let remainder = 9360 % rows[0].len();
+    let mut value = format!(
+        "<{}><{}><{} {}w=\"9360\" {}type=\"dxa\"/><{}><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/><{} {}val=\"single\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/></{}><{}><{} {}w=\"100\" {}type=\"dxa\"/><{} {}w=\"140\" {}type=\"dxa\"/><{} {}w=\"100\" {}type=\"dxa\"/><{} {}w=\"140\" {}type=\"dxa\"/></{}></{}><{}>",
+        name("tbl"),
+        name("tblPr"),
+        name("tblW"),
+        width_attribute,
+        width_attribute,
+        name("tblBorders"),
+        name("top"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("bottom"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("left"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("right"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("insideH"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("insideV"),
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        width_attribute,
+        name("tblBorders"),
+        name("tblCellMar"),
+        name("top"),
+        width_attribute,
+        width_attribute,
+        name("left"),
+        width_attribute,
+        width_attribute,
+        name("bottom"),
+        width_attribute,
+        width_attribute,
+        name("right"),
+        width_attribute,
+        width_attribute,
+        name("tblCellMar"),
+        name("tblPr"),
+        name("tblGrid")
+    );
+    for index in 0..rows[0].len() {
+        let width = column_width + usize::from(index < remainder);
+        value.push_str(&format!(
+            "<{} {}w=\"{width}\"/>",
+            name("gridCol"),
+            width_attribute
+        ));
+    }
+    value.push_str(&format!("</{}>", name("tblGrid")));
+    for row in rows {
+        value.push_str(&format!("<{}>", name("tr")));
+        for text in row {
+            let space = if requires_space_preservation(text) {
+                " xml:space=\"preserve\""
+            } else {
+                ""
+            };
+            value.push_str(&format!(
+                "<{}><{}><{}><{} {}before=\"0\" {}after=\"0\"/></{}><{}><{}{}>{}</{}></{}></{}></{}>",
+                name("tc"),
+                name("p"),
+                name("pPr"),
+                name("spacing"),
+                width_attribute,
+                width_attribute,
+                name("pPr"),
+                name("r"),
+                name("t"),
+                space,
+                escape(text),
+                name("t"),
+                name("r"),
+                name("p"),
+                name("tc")
+            ));
+        }
+        value.push_str(&format!("</{}>", name("tr")));
+    }
+    value.push_str(&format!("</{}>", name("tbl")));
+    Ok(value.into_bytes())
+}
+
+pub(super) fn table_formatting_patches(
+    source: &SourceDocument,
+    table: NodeId,
+    patch: &TableFormattingPatch,
+) -> Result<Vec<Patch>, OperationResult> {
+    let prefix = word_element_prefix(source, table, "tbl")?;
+    let name = |local: &str| qualify(prefix, local);
+    let properties = source.children(table).find(|id| word(source, *id, "tblPr"));
+    let mut changes = Vec::new();
+    table_property_change(
+        source,
+        properties,
+        "jc",
+        patch.alignment.as_ref().map(|value| match value {
+            PropertyPatch::Set(value) => format!(
+                "<{} {}val=\"{}\"/>",
+                name("jc"),
+                attr_prefix(prefix),
+                match value {
+                    TableAlignment::Left => "left",
+                    TableAlignment::Center => "center",
+                    TableAlignment::Right => "right",
+                }
+            ),
+            PropertyPatch::Clear => String::new(),
+        }),
+        &mut changes,
+    )?;
+    table_property_change(
+        source,
+        properties,
+        "tblCellMar",
+        patch.cell_margins.as_ref().map(|value| match value {
+            PropertyPatch::Set(value) => table_cell_margins_xml(&name, prefix, value),
+            PropertyPatch::Clear => String::new(),
+        }),
+        &mut changes,
+    )?;
+    table_property_change(
+        source,
+        properties,
+        "tblBorders",
+        patch.borders.as_ref().map(|value| match value {
+            PropertyPatch::Set(TableBorders::Grid) => table_borders_xml(&name, prefix, "single"),
+            PropertyPatch::Set(TableBorders::None) => table_borders_xml(&name, prefix, "nil"),
+            PropertyPatch::Clear => String::new(),
+        }),
+        &mut changes,
+    )?;
+    if properties.is_some() {
+        return Ok(changes);
+    }
+    if changes.is_empty() {
+        return Ok(changes);
+    }
+    let at = source
+        .children(table)
+        .next()
+        .and_then(|id| source.node(id))
+        .map(|node| node.span().start)
+        .ok_or_else(|| unsupported("table has no property insertion boundary"))?;
+    Ok(vec![Patch {
+        span: SourceSpan { start: at, end: at },
+        replacement: format!(
+            "<{}>{}</{}>",
+            name("tblPr"),
+            String::from_utf8(
+                changes
+                    .into_iter()
+                    .flat_map(|patch| patch.replacement)
+                    .collect()
+            )
+            .expect("generated XML is UTF-8"),
+            name("tblPr")
+        )
+        .into_bytes(),
+    }])
+}
+
+pub(super) fn table_property_change(
+    source: &SourceDocument,
+    properties: Option<NodeId>,
+    local: &str,
+    replacement: Option<String>,
+    changes: &mut Vec<Patch>,
+) -> Result<(), OperationResult> {
+    let Some(replacement) = replacement else {
+        return Ok(());
+    };
+    let Some(properties) = properties else {
+        if !replacement.is_empty() {
+            changes.push(Patch {
+                span: SourceSpan { start: 0, end: 0 },
+                replacement: replacement.into_bytes(),
+            });
+        }
+        return Ok(());
+    };
+    if let Some(existing) = source
+        .children(properties)
+        .find(|id| word(source, *id, local))
+    {
+        changes.push(Patch {
+            span: source.node(existing).expect("property exists").span(),
+            replacement: replacement.into_bytes(),
+        });
+    } else if !replacement.is_empty() {
+        let at = source
+            .node(properties)
+            .expect("properties exist")
+            .span()
+            .end
+            - format!(
+                "</{}>",
+                qualify(word_element_prefix(source, properties, "tblPr")?, "tblPr")
+            )
+            .len();
+        changes.push(Patch {
+            span: SourceSpan { start: at, end: at },
+            replacement: replacement.into_bytes(),
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn table_borders_xml(
+    name: &impl Fn(&str) -> String,
+    prefix: &str,
+    value: &str,
+) -> String {
+    let attribute = attr_prefix(prefix);
+    let edge = |edge: &str| {
+        format!(
+            "<{} {}val=\"{value}\" {}sz=\"4\" {}space=\"0\" {}color=\"auto\"/>",
+            name(edge),
+            attribute,
+            attribute,
+            attribute,
+            attribute
+        )
+    };
+    format!(
+        "<{}>{}{}{}{}{}{}</{}>",
+        name("tblBorders"),
+        edge("top"),
+        edge("bottom"),
+        edge("left"),
+        edge("right"),
+        edge("insideH"),
+        edge("insideV"),
+        name("tblBorders")
+    )
+}
+
+pub(super) fn table_cell_margins_xml(
+    name: &impl Fn(&str) -> String,
+    prefix: &str,
+    margins: &TableCellMargins,
+) -> String {
+    let attribute = attr_prefix(prefix);
+    let edge = |edge: &str, width: u16| {
+        format!(
+            "<{} {}w=\"{width}\" {}type=\"dxa\"/>",
+            name(edge),
+            attribute,
+            attribute
+        )
+    };
+    format!(
+        "<{}>{}{}{}{}</{}>",
+        name("tblCellMar"),
+        edge("top", margins.top_twips),
+        edge("left", margins.left_twips),
+        edge("bottom", margins.bottom_twips),
+        edge("right", margins.right_twips),
+        name("tblCellMar")
+    )
+}
+
+pub(super) fn expected_table_insert(
+    source: &SourceDocument,
+    blocks: &[NodeId],
+    index: usize,
+    rows: &[Vec<String>],
+) -> Result<Vec<Vec<Vec<String>>>, OperationResult> {
+    let mut expected = all_table_rows(source)?;
+    let table_index = blocks[..index]
+        .iter()
+        .filter(|id| word(source, **id, "tbl"))
+        .count();
+    expected.insert(table_index, rows.to_vec());
+    Ok(expected)
+}
+
+pub(super) fn verify_table_cell_output(
+    output: &Path,
+    target: &TableCellTarget,
+    replacement: &str,
+    expected_cells: &[String],
+) -> Result<(), OperationResult> {
+    let package = Package::open(output).map_err(document_invalid)?;
+    package.verify().map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let resolved = resolve_table_cell(&source, target)?;
+    if resolved.text != replacement {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output target cell text does not match replacement",
+        ));
+    }
+    let actual = all_table_cell_texts(&source)?
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>();
+    (actual == expected_cells).then_some(()).ok_or_else(|| {
+        OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output table cells do not preserve expected semantic structure",
+        )
+    })
+}
+
+pub(super) fn table_current_text(table: crate::Table<'_>) -> Result<String, SemanticError> {
+    let mut text = String::new();
+    for row in table.rows() {
+        for cell in row.cells() {
+            text.push_str(&cell.text_for_view(RevisionView::Current)?);
+        }
+    }
+    Ok(text)
+}
