@@ -46,6 +46,8 @@ fn main() {
         delete_page_break(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-page-setup")) {
         set_page_setup(arguments)
+    } else if command.as_deref() == Some(std::ffi::OsStr::new("set-header-footer-text")) {
+        set_header_footer_text(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("set-picture-size")) {
         set_picture_size(arguments)
     } else if command.as_deref() == Some(std::ffi::OsStr::new("insert-picture")) {
@@ -63,6 +65,7 @@ fn main() {
         (Some(command), Some(path), None) if command == "inspect-numbering" => inspect_numbering(path),
         (Some(command), Some(path), None) if command == "inspect-sections" => inspect_sections(path),
         (Some(command), Some(path), None) if command == "inspect-page-setup" => inspect_page_setup(path),
+        (Some(command), Some(path), None) if command == "inspect-header-footer" => inspect_default_header_footer(path),
         (Some(command), Some(path), None) if command == "inspect-headers-footers" => inspect_headers_footers(path),
         (Some(command), Some(path), None) if command == "inspect-references" => inspect_references(path),
         (Some(command), Some(path), None) if command == "inspect-images" => inspect_images(path),
@@ -97,6 +100,74 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn set_header_footer_text(
+    mut arguments: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let (Some(input), Some(output), Some(kind), Some(value), None) = (
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+        arguments.next(),
+    ) else {
+        return Err(("INVALID_ARGUMENTS", "usage: opensuite set-header-footer-text <input.docx> <output.docx> <header|footer> <text|--clear>".to_owned()));
+    };
+    let kind = match kind.to_str() {
+        Some("header") => opensuite_protocol::HeaderFooterKind::Header,
+        Some("footer") => opensuite_protocol::HeaderFooterKind::Footer,
+        _ => {
+            return Err((
+                "INVALID_ARGUMENTS",
+                "kind must be header or footer".to_owned(),
+            ));
+        }
+    };
+    let text = value
+        .into_string()
+        .map_err(|_| ("INVALID_ARGUMENTS", "text must be valid UTF-8".to_owned()))?;
+    let package =
+        opensuite_opc::Package::open(&input).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    Ok(opensuite_docx::set_header_footer_text(
+        &package,
+        &main,
+        &source,
+        &opensuite_protocol::SetHeaderFooterText {
+            kind,
+            text: (text != "--clear").then_some(text),
+            base_revision: None,
+        },
+        output,
+    )
+    .to_json())
+}
+
+fn inspect_default_header_footer(
+    path: std::ffi::OsString,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let package =
+        opensuite_opc::Package::open(&path).map_err(|error| (error.code(), error.to_string()))?;
+    let (main, source) = opensuite_docx::open_main_source(&package)
+        .map_err(|error| (error.code(), error.to_string()))?;
+    let value = |kind| {
+        opensuite_docx::inspect_header_footer(&package, &main, &source, kind)
+            .map_err(|error| ("INSPECTION_FAILED", error.to_json().to_string()))
+    };
+    let state = |value: opensuite_docx::HeaderFooterInspection| match value {
+        opensuite_docx::HeaderFooterInspection::None => serde_json::json!({ "state": "none" }),
+        opensuite_docx::HeaderFooterInspection::SimpleText(text) => {
+            serde_json::json!({ "state": "simple_text", "text": text })
+        }
+        opensuite_docx::HeaderFooterInspection::Unsupported => {
+            serde_json::json!({ "state": "unsupported" })
+        }
+    };
+    Ok(
+        serde_json::json!({ "ok": true, "header": state(value(opensuite_protocol::HeaderFooterKind::Header)?), "footer": state(value(opensuite_protocol::HeaderFooterKind::Footer)?) }),
+    )
 }
 
 fn set_page_setup(

@@ -156,6 +156,9 @@ and XML source bytes.
   top/right/bottom/left margins in twips, Letter/A4 paper size, and portrait/landscape orientation.
   It preserves other section children and margin header/footer/gutter values, rejects multi-section
   and tracked section layouts, and exposes semantic `inspect-page-setup` output.
+- Preservation-safe `SetHeaderFooterText` inspects, creates, replaces, or clears simple default
+  header/footer text for one safe single-section document. It preserves unrelated package content,
+  leaves cleared parts/relationships in place, and rejects complex or multi-section layouts.
 
 ## Current Repository Target
 
