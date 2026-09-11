@@ -1,5 +1,7 @@
 use super::*;
 
+const AUTHORED_DEFAULT_FONT: &str = "Arial";
+
 /// Sets or clears one ordinary authored list level over consecutive direct body paragraphs.
 pub fn set_paragraphs_list_to_vec(
     package: &Package,
@@ -18,6 +20,7 @@ pub fn set_paragraphs_list_to_vec(
         .into_iter()
         .map(|(_, text)| text)
         .collect::<Vec<_>>();
+    let font_family = list_font_family(package, main, source, &resolved)?;
     let (numbering_name, numbering_bytes, allocated_ids, num_id) = match operation.kind {
         ParagraphListKind::None => (None, None, None, None),
         _ => {
@@ -35,7 +38,15 @@ pub fn set_paragraphs_list_to_vec(
             };
             let num_id = match allocated_ids {
                 Some((_, num_id)) => num_id,
-                None => continuation_num_id(package, main, source, &resolved, operation.kind)?,
+                None => continuation_num_id(
+                    package,
+                    main,
+                    source,
+                    &resolved,
+                    operation.kind,
+                    operation.level,
+                    &font_family,
+                )?,
             };
             (Some(name), existing, allocated_ids, Some(num_id))
         }
@@ -46,7 +57,7 @@ pub fn set_paragraphs_list_to_vec(
     let mut replaced = vec![(main.name.clone(), document.as_slice())];
     let mut added = Vec::new();
     if let (Some(name), Some((abstract_id, num_id))) = (numbering_name, allocated_ids) {
-        let addition = numbering_xml(operation.kind, abstract_id, num_id)?;
+        let addition = numbering_xml(operation.kind, abstract_id, num_id, &font_family)?;
         let bytes = numbering_bytes
             .as_deref()
             .map(|bytes| append_xml_element(bytes, &addition))
@@ -249,6 +260,8 @@ fn continuation_num_id(
     source: &SourceDocument,
     paragraphs: &[(String, NodeId)],
     kind: ParagraphListKind,
+    requested_level: u8,
+    font_family: &str,
 ) -> Result<u32, OperationResult> {
     let body = body_texts(source)?;
     let first = body
@@ -285,7 +298,16 @@ fn continuation_num_id(
         let Ok(level) = numbering.resolve(reference) else {
             continue;
         };
-        if level.format == expected && reference.level <= 2 {
+        if level.format == expected
+            && reference.level <= 2
+            && numbering_level_font(
+                &numbering,
+                crate::ListReference {
+                    num_id: reference.num_id,
+                    level: requested_level,
+                },
+            )? == Some(font_family)
+        {
             return Ok(reference.num_id.0);
         }
     }
@@ -371,6 +393,7 @@ pub(super) fn numbering_xml(
     kind: ParagraphListKind,
     abstract_id: u32,
     num_id: u32,
+    font_family: &str,
 ) -> Result<String, OperationResult> {
     let (format, texts) = match kind {
         ParagraphListKind::Bullet => ("bullet", ["•", "•", "•"]),
@@ -388,7 +411,10 @@ pub(super) fn numbering_xml(
             use std::fmt::Write;
             write!(
                 levels,
-                r#"<w:lvl w:ilvl="{level}"><w:start w:val="1"/><w:numFmt w:val="{format}"/><w:lvlText w:val="{text}"/><w:suff w:val="space"/><w:pPr><w:ind w:left="{}" w:hanging="360"/></w:pPr></w:lvl>"#,
+                r#"<w:lvl w:ilvl="{level}"><w:start w:val="1"/><w:numFmt w:val="{format}"/><w:lvlText w:val="{text}"/><w:suff w:val="space"/><w:rPr><w:rFonts w:ascii="{}" w:hAnsi="{}" w:cs="{}"/></w:rPr><w:pPr><w:ind w:left="{}" w:hanging="360"/></w:pPr></w:lvl>"#,
+                escape(font_family),
+                escape(font_family),
+                escape(font_family),
                 720 * (level + 1),
             )
             .expect("write to string");
@@ -468,6 +494,12 @@ pub(super) fn write_list_package(
         }
     }
     if kind != ParagraphListKind::None {
+        let font_family = list_font_family(
+            &reopened,
+            &main,
+            &source,
+            &resolve_list_paragraphs(&source, targets)?,
+        )?;
         if references.windows(2).any(|pair| pair[0] != pair[1]) {
             return Err(OperationResult::failed(
                 "DOCUMENT_INVALID",
@@ -492,6 +524,13 @@ pub(super) fn write_list_package(
         };
         if level.format != expected_format
             || (kind == ParagraphListKind::Decimal && level.start != Some(1))
+            || numbering_level_font(
+                &numbering,
+                crate::ListReference {
+                    num_id: crate::NumberingId(references[0]),
+                    level: requested_level,
+                },
+            )? != Some(font_family.as_str())
         {
             return Err(OperationResult::failed(
                 "DOCUMENT_INVALID",
@@ -500,4 +539,83 @@ pub(super) fn write_list_package(
         }
     }
     Ok(output)
+}
+
+/// Uses the first visible run's effective family. One authored list has one numbering definition,
+/// so paragraphs with different families must be authored as separate lists.
+fn list_font_family(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    paragraphs: &[(String, NodeId)],
+) -> Result<String, OperationResult> {
+    let styles = crate::load_styles(package, main)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let document = crate::DocxDocument::new(source)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let mut family = None;
+    for (_, target) in paragraphs {
+        let paragraph = document
+            .paragraphs()
+            .find(|paragraph| paragraph.source_id() == *target)
+            .ok_or_else(|| {
+                OperationResult::failed("DOCUMENT_INVALID", "list paragraph is missing")
+            })?;
+        let mut current = None;
+        for run in paragraph.runs() {
+            let formatting = match &styles {
+                Some(styles) => run
+                    .effective_formatting(styles)
+                    .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?,
+                None => source
+                    .children(run.source_id())
+                    .find(|id| word(source, *id, "rPr"))
+                    .map(|rpr| crate::styles::run_formatting(source, rpr))
+                    .transpose()
+                    .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?
+                    .unwrap_or_default(),
+            };
+            if formatting.font_family.is_some() {
+                current = formatting.font_family;
+                break;
+            }
+        }
+        let current = current.unwrap_or_else(|| AUTHORED_DEFAULT_FONT.to_owned());
+        if family
+            .as_ref()
+            .is_some_and(|value: &String| value != &current)
+        {
+            return Err(OperationResult::failed(
+                "INVALID_OPERATION",
+                "list targets must share one effective font family",
+            ));
+        }
+        family = Some(current);
+    }
+    Ok(family.unwrap_or_else(|| AUTHORED_DEFAULT_FONT.to_owned()))
+}
+
+fn numbering_level_font(
+    numbering: &crate::Numbering,
+    reference: crate::ListReference,
+) -> Result<Option<&str>, OperationResult> {
+    let level = numbering
+        .resolve(reference)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    Ok(numbering
+        .source()
+        .children(level.source_id)
+        .find(|id| word(numbering.source(), *id, "rPr"))
+        .and_then(|rpr| {
+            numbering
+                .source()
+                .children(rpr)
+                .find(|id| word(numbering.source(), *id, "rFonts"))
+        })
+        .and_then(|fonts| numbering.source().node(fonts))
+        .and_then(|fonts| {
+            fonts
+                .attribute("ascii")
+                .or_else(|| fonts.attribute("hAnsi"))
+        }))
 }

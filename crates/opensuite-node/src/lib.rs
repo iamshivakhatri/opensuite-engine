@@ -502,6 +502,8 @@ fn node_docx_capability(capability: &str) -> bool {
             | "delete_table_row"
             | "delete_table_column"
             | "set_table_formatting"
+            | "set_table_column_widths"
+            | "set_table_cell_shading"
             | "find_text"
             | "inspect_context"
     )

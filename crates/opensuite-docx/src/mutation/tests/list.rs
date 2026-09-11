@@ -284,6 +284,156 @@ fn apply_list(
     )
 }
 
+fn apply_font(bytes: Vec<u8>, text: &str, family: &str) -> Vec<u8> {
+    let package = Package::from_bytes(bytes).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    set_text_formatting_to_vec(
+        &package,
+        &main,
+        &source,
+        &SetTextFormatting {
+            target: TextTarget {
+                text: text.to_owned(),
+                occurrence: None,
+            },
+            formatting: TextFormattingPatch {
+                font_family: Some(PropertyPatch::Set(family.to_owned())),
+                ..TextFormattingPatch::default()
+            },
+            base_revision: None,
+        },
+    )
+    .unwrap()
+}
+
+fn numbering_xml(bytes: &[u8]) -> String {
+    let package = Package::from_bytes(bytes.to_vec()).unwrap();
+    String::from_utf8(
+        package
+            .read_part_by_name(&PartName::parse("/word/numbering.xml").unwrap())
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn authors_marker_fonts_for_decimal_and_bullet_lists_without_sharing_definitions() {
+    let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let bytes = insert_paragraphs_to_vec(
+        &package,
+        &main,
+        &source,
+        &InsertParagraphs {
+            texts: ["Georgia decimal", "Aptos decimal", "Calibri bullet"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            placement: ParagraphPlacement::Start,
+            base_revision: None,
+        },
+    )
+    .unwrap();
+    let bytes = apply_font(bytes, "Georgia decimal", "Georgia");
+    let bytes = apply_list(
+        bytes,
+        &["Georgia decimal"],
+        ParagraphListKind::Decimal,
+        0,
+        false,
+    )
+    .unwrap();
+    let bytes = apply_font(bytes, "Aptos decimal", "Aptos");
+    let bytes = apply_list(
+        bytes,
+        &["Aptos decimal"],
+        ParagraphListKind::Decimal,
+        0,
+        false,
+    )
+    .unwrap();
+    let bytes = apply_font(bytes, "Calibri bullet", "Calibri");
+    let bytes = apply_list(
+        bytes,
+        &["Calibri bullet"],
+        ParagraphListKind::Bullet,
+        0,
+        false,
+    )
+    .unwrap();
+
+    let xml = numbering_xml(&bytes);
+    for family in ["Georgia", "Aptos", "Calibri"] {
+        assert!(xml.contains(&format!(
+            r#"<w:rFonts w:ascii="{family}" w:hAnsi="{family}" w:cs="{family}"/>"#
+        )));
+    }
+    let package = Package::from_bytes(bytes).unwrap();
+    package.verify().unwrap();
+    let (main, _) = crate::open_main_source(&package).unwrap();
+    assert_eq!(
+        crate::load_numbering(&package, &main)
+            .unwrap()
+            .unwrap()
+            .instance_count(),
+        3
+    );
+}
+
+#[test]
+fn continues_multilevel_lists_only_when_marker_font_matches() {
+    let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let bytes = insert_paragraphs_to_vec(
+        &package,
+        &main,
+        &source,
+        &InsertParagraphs {
+            texts: ["Georgia root", "Georgia branch", "Aptos branch"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            placement: ParagraphPlacement::Start,
+            base_revision: None,
+        },
+    )
+    .unwrap();
+    let bytes = apply_font(bytes, "Georgia root", "Georgia");
+    let bytes = apply_font(bytes, "Georgia branch", "Georgia");
+    let bytes = apply_font(bytes, "Aptos branch", "Aptos");
+    let bytes = apply_list(
+        bytes,
+        &["Georgia root"],
+        ParagraphListKind::Decimal,
+        0,
+        false,
+    )
+    .unwrap();
+    let bytes = apply_list(
+        bytes,
+        &["Georgia branch"],
+        ParagraphListKind::Decimal,
+        1,
+        true,
+    )
+    .unwrap();
+    assert!(
+        apply_list(
+            bytes.clone(),
+            &["Aptos branch"],
+            ParagraphListKind::Decimal,
+            1,
+            true,
+        )
+        .is_err()
+    );
+
+    let xml = numbering_xml(&bytes);
+    assert_eq!(xml.matches(r#"w:ascii="Georgia""#).count(), 3);
+    let package = Package::from_bytes(bytes).unwrap();
+    package.verify().unwrap();
+}
+
 #[test]
 fn authors_multilevel_lists_with_continuation_restart_clear_and_inspection() {
     let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
