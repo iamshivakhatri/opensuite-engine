@@ -10,5 +10,6 @@ mod paragraph;
 mod picture;
 mod support;
 mod table;
+mod table_column;
 mod table_row;
 mod text;
