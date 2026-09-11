@@ -1,5 +1,4 @@
 mod content_control;
-mod formatting;
 mod header_footer;
 mod hyperlink;
 mod list;
@@ -7,6 +6,7 @@ mod page_break;
 mod page_number;
 mod page_setup;
 mod paragraph;
+mod paragraph_formatting;
 mod picture;
 mod support;
 mod table_cell;
@@ -14,3 +14,4 @@ mod table_column;
 mod table_lifecycle;
 mod table_row;
 mod text;
+mod text_formatting;
