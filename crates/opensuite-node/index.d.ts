@@ -49,7 +49,8 @@ export interface SetParagraphFormattingInput {
   target: TextTarget; alignment?: 'left' | 'center' | 'right' | 'clear'; spacingBeforeTwips?: number; spacingAfterTwips?: number
   leftIndentTwips?: number; clearLeftIndent?: boolean; baseRevision?: string
 }
-export interface SetTextFormattingInput { target: TextTarget; bold?: boolean; italic?: boolean; fontSizeHalfPoints?: number; fontFamily?: string; clearBold?: boolean; color?: string; clearColor?: boolean; underline?: boolean; clearUnderline?: boolean; highlight?: string; clearHighlight?: boolean; strikethrough?: boolean; clearStrikethrough?: boolean; verticalAlignment?: 'baseline' | 'superscript' | 'subscript'; baseRevision?: string }
+export type VerticalAlignment = 'baseline' | 'superscript' | 'subscript'
+export interface SetTextFormattingInput { target: TextTarget; bold?: boolean; italic?: boolean; fontSizeHalfPoints?: number; fontFamily?: string; clearBold?: boolean; color?: string; clearColor?: boolean; underline?: boolean; clearUnderline?: boolean; highlight?: string; clearHighlight?: boolean; strikethrough?: boolean; clearStrikethrough?: boolean; verticalAlignment?: VerticalAlignment; clearVerticalAlignment?: boolean; baseRevision?: string }
 
 export interface CreateTableInput { rows: string[][]; placement: ParagraphPlacement; baseRevision?: string }
 export interface InsertTableRowInput { table: TableTarget; after: TableRowTarget; cells: string[]; baseRevision?: string }

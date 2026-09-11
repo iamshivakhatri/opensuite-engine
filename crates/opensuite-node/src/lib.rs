@@ -6,6 +6,7 @@ mod hyperlinks;
 mod lists;
 mod page_composition;
 mod pictures;
+mod text_formatting;
 pub use content_controls::execute_docx_set_content_control_text_node;
 pub use hyperlinks::execute_docx_set_hyperlink_node;
 pub use lists::execute_docx_set_paragraphs_list_node;
@@ -17,8 +18,8 @@ use opensuite_docx::{
     execute_docx_insert_table_rows, execute_docx_replace_text,
     execute_docx_set_paragraph_formatting, execute_docx_set_paragraph_style,
     execute_docx_set_table_cell_shading, execute_docx_set_table_cells_text,
-    execute_docx_set_table_column_widths, execute_docx_set_table_formatting,
-    execute_docx_set_text_formatting, find_docx_text, inspect_docx,
+    execute_docx_set_table_column_widths, execute_docx_set_table_formatting, find_docx_text,
+    inspect_docx,
 };
 use opensuite_protocol::{
     Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, Diagnostic,
@@ -28,9 +29,9 @@ use opensuite_protocol::{
     InspectTextContext, InspectTextContextResult, InspectionPage, OperationResult,
     ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplaceText,
     RuntimeCapabilities, SetParagraphFormatting, SetParagraphStyle, SetTableCellShading,
-    SetTableColumnWidths, SetTableFormatting, SetTextFormatting, TableAlignment, TableBorders,
-    TableCellMargins, TableCellTarget, TableCellTextUpdate, TableFormattingPatch, TableRowTarget,
-    TableTarget, TextContainer, TextFormattingPatch, TextTarget,
+    SetTableColumnWidths, SetTableFormatting, TableAlignment, TableBorders, TableCellMargins,
+    TableCellTarget, TableCellTextUpdate, TableFormattingPatch, TableRowTarget, TableTarget,
+    TextContainer, TextTarget,
 };
 pub use page_composition::{
     execute_docx_delete_page_break_node, execute_docx_insert_page_break_node,
@@ -41,6 +42,7 @@ pub use pictures::{
     execute_docx_delete_picture_node, execute_docx_insert_picture_node,
     execute_docx_replace_picture_node, execute_docx_set_picture_size_node,
 };
+pub use text_formatting::execute_docx_set_text_formatting_node;
 
 #[napi(object)]
 pub struct TextTargetInput {
@@ -96,26 +98,6 @@ pub struct SetParagraphFormattingInput {
     pub clear_left_indent: Option<bool>,
     pub base_revision: Option<String>,
 }
-#[napi(object)]
-pub struct SetTextFormattingInput {
-    pub target: TextTargetInput,
-    pub bold: Option<bool>,
-    pub italic: Option<bool>,
-    pub font_size_half_points: Option<u32>,
-    pub font_family: Option<String>,
-    pub clear_bold: Option<bool>,
-    pub color: Option<String>,
-    pub clear_color: Option<bool>,
-    pub underline: Option<bool>,
-    pub clear_underline: Option<bool>,
-    pub highlight: Option<String>,
-    pub clear_highlight: Option<bool>,
-    pub strikethrough: Option<bool>,
-    pub clear_strikethrough: Option<bool>,
-    pub vertical_alignment: Option<String>,
-    pub base_revision: Option<String>,
-}
-
 #[napi(object)]
 pub struct DiagnosticOutput {
     pub code: String,
@@ -736,67 +718,6 @@ pub fn execute_docx_set_paragraph_formatting_node(
         run: execute_docx_set_paragraph_formatting,
     })
 }
-#[napi(js_name = "executeDocxSetTextFormatting")]
-pub fn execute_docx_set_text_formatting_node(
-    input: Buffer,
-    operation: SetTextFormattingInput,
-) -> AsyncTask<SimpleTask<SetTextFormatting>> {
-    AsyncTask::new(SimpleTask {
-        input: input.to_vec(),
-        operation: SetTextFormatting {
-            target: text_target(operation.target),
-            formatting: TextFormattingPatch {
-                bold: operation
-                    .clear_bold
-                    .filter(|clear| *clear)
-                    .map(|_| PropertyPatch::Clear)
-                    .or_else(|| operation.bold.map(PropertyPatch::Set)),
-                italic: operation.italic.map(PropertyPatch::Set),
-                font_size_half_points: operation
-                    .font_size_half_points
-                    .map(|value| PropertyPatch::Set(value as u16)),
-                font_family: operation.font_family.map(PropertyPatch::Set),
-                color: operation
-                    .clear_color
-                    .filter(|value| *value)
-                    .map(|_| PropertyPatch::Clear)
-                    .or_else(|| operation.color.map(PropertyPatch::Set)),
-                underline: operation
-                    .clear_underline
-                    .filter(|value| *value)
-                    .map(|_| PropertyPatch::Clear)
-                    .or_else(|| operation.underline.map(PropertyPatch::Set)),
-                highlight: operation
-                    .clear_highlight
-                    .filter(|value| *value)
-                    .map(|_| PropertyPatch::Clear)
-                    .or_else(|| operation.highlight.map(PropertyPatch::Set)),
-                strikethrough: operation
-                    .clear_strikethrough
-                    .filter(|value| *value)
-                    .map(|_| PropertyPatch::Clear)
-                    .or_else(|| operation.strikethrough.map(PropertyPatch::Set)),
-                vertical_alignment: operation.vertical_alignment.and_then(|value| {
-                    match value.as_str() {
-                        "baseline" => Some(PropertyPatch::Set(
-                            opensuite_protocol::VerticalAlignment::Baseline,
-                        )),
-                        "superscript" => Some(PropertyPatch::Set(
-                            opensuite_protocol::VerticalAlignment::Superscript,
-                        )),
-                        "subscript" => Some(PropertyPatch::Set(
-                            opensuite_protocol::VerticalAlignment::Subscript,
-                        )),
-                        _ => None,
-                    }
-                }),
-            },
-            base_revision: operation.base_revision,
-        },
-        run: execute_docx_set_text_formatting,
-    })
-}
-
 /// Runs DOCX table-row insertion away from Node's event loop and returns a Promise.
 #[napi(js_name = "executeDocxInsertTableRow")]
 pub fn execute_docx_insert_table_row_node(

@@ -4,6 +4,7 @@ use std::{
 };
 
 use opensuite_opc::{Package, PackageError, Part};
+use opensuite_protocol::VerticalAlignment;
 
 use crate::{ListReference, NodeId, SourceDocument, SourceError, SourceNodeKind};
 
@@ -41,6 +42,11 @@ pub struct RunFormatting {
     pub italic: Option<bool>,
     pub font_size_half_points: Option<u16>,
     pub font_family: Option<String>,
+    pub color: Option<String>,
+    pub underline: Option<bool>,
+    pub highlight: Option<String>,
+    pub strikethrough: Option<bool>,
+    pub vertical_alignment: Option<VerticalAlignment>,
 }
 
 impl RunFormatting {
@@ -56,6 +62,21 @@ impl RunFormatting {
         }
         if other.font_family.is_some() {
             self.font_family = other.font_family.clone();
+        }
+        if other.color.is_some() {
+            self.color = other.color.clone();
+        }
+        if other.underline.is_some() {
+            self.underline = other.underline;
+        }
+        if other.highlight.is_some() {
+            self.highlight = other.highlight.clone();
+        }
+        if other.strikethrough.is_some() {
+            self.strikethrough = other.strikethrough;
+        }
+        if other.vertical_alignment.is_some() {
+            self.vertical_alignment = other.vertical_alignment;
         }
     }
 
@@ -487,6 +508,23 @@ pub(crate) fn run_formatting(
                     .attribute("ascii")
                     .or_else(|| node.attribute("hAnsi"))
                     .map(str::to_owned)
+            }
+            "color" => formatting.color = node.attribute("val").map(str::to_owned),
+            "u" => {
+                formatting.underline = Some(!matches!(
+                    node.attribute("val"),
+                    Some("0" | "false" | "off" | "none")
+                ))
+            }
+            "highlight" => formatting.highlight = node.attribute("val").map(str::to_owned),
+            "strike" => formatting.strikethrough = Some(is_enabled(node.attribute("val"))?),
+            "vertAlign" => {
+                formatting.vertical_alignment = Some(match node.attribute("val") {
+                    Some("baseline") => VerticalAlignment::Baseline,
+                    Some("superscript") => VerticalAlignment::Superscript,
+                    Some("subscript") => VerticalAlignment::Subscript,
+                    _ => return Err(StyleError::InvalidFormattingValue),
+                })
             }
             _ => {}
         }

@@ -139,19 +139,7 @@ fn range_text_formatting_patches(
     runs: &[FormattingRangeRun],
     patch: &TextFormattingPatch,
 ) -> Result<Vec<Patch>, OperationResult> {
-    for value in [patch.color.as_ref(), patch.highlight.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        if let PropertyPatch::Set(value) = value {
-            if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(OperationResult::failed(
-                    "INVALID_OPERATION",
-                    "text color and highlight must be 6-digit RGB hex values",
-                ));
-            }
-        }
-    }
+    validate_text_formatting(patch)?;
     let mut patches = Vec::new();
     for (run, start, end, text) in runs {
         if *start == 0 && *end == text.len() {
@@ -335,14 +323,6 @@ fn text_formatting_patches(
         ("color", patch.color.as_ref(), 5),
         ("highlight", patch.highlight.as_ref(), 6),
     ] {
-        if let Some(PropertyPatch::Set(value)) = value {
-            if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(OperationResult::failed(
-                    "INVALID_OPERATION",
-                    "text color and highlight must be 6-digit RGB hex values",
-                ));
-            }
-        }
         text_simple_property(
             source,
             rpr,
@@ -352,7 +332,7 @@ fn text_formatting_patches(
                     r#"<{} {}val="{}"/>"#,
                     name(local),
                     attr_prefix(prefix),
-                    value.to_ascii_uppercase()
+                    formatted_text_property(local, value)
                 ),
                 PropertyPatch::Clear => String::new(),
             }),
@@ -433,7 +413,7 @@ fn new_text_formatting_children(
                 r#"<{} {}val="{}"/>"#,
                 name(local),
                 attr_prefix(prefix),
-                value.to_ascii_uppercase()
+                formatted_text_property(local, value)
             ));
         }
     }
@@ -468,6 +448,56 @@ fn text_boolean_xml(
         format!("<{} />", name(local))
     } else {
         format!("<{} {}val=\"0\"/>", name(local), attr_prefix(prefix))
+    }
+}
+
+fn validate_text_formatting(patch: &TextFormattingPatch) -> Result<(), OperationResult> {
+    if let Some(PropertyPatch::Set(value)) = &patch.color {
+        if value != "auto"
+            && (value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(OperationResult::failed(
+                "INVALID_OPERATION",
+                "text color must be auto or a 6-digit RGB hex value",
+            ));
+        }
+    }
+    if let Some(PropertyPatch::Set(value)) = &patch.highlight {
+        if ![
+            "black",
+            "blue",
+            "cyan",
+            "green",
+            "magenta",
+            "red",
+            "yellow",
+            "white",
+            "darkBlue",
+            "darkCyan",
+            "darkGreen",
+            "darkMagenta",
+            "darkRed",
+            "darkYellow",
+            "darkGray",
+            "lightGray",
+            "none",
+        ]
+        .contains(&value.as_str())
+        {
+            return Err(OperationResult::failed(
+                "INVALID_OPERATION",
+                "text highlight must be a Word highlight color",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn formatted_text_property(local: &str, value: &str) -> String {
+    if local == "color" {
+        value.to_ascii_uppercase()
+    } else {
+        value.to_owned()
     }
 }
 
@@ -667,21 +697,26 @@ fn verify_text_formatting_output(
             "output target text changed",
         ));
     }
-    let direct = source
-        .children(runs[0].0)
-        .find(|id| word(&source, *id, "rPr"))
-        .map(|rpr| crate::styles::run_formatting(&source, rpr))
-        .transpose()
-        .map_err(document_invalid)?
-        .unwrap_or_default();
-    text_formatting_matches(&direct, patch)
-        .then_some(())
-        .ok_or_else(|| {
-            OperationResult::failed(
-                "DOCUMENT_INVALID",
-                "output direct run formatting does not match request",
-            )
+    let matches = runs
+        .iter()
+        .map(|(run, _, _, _)| {
+            source
+                .children(*run)
+                .find(|id| word(&source, *id, "rPr"))
+                .map(|rpr| crate::styles::run_formatting(&source, rpr))
+                .transpose()
+                .map_err(document_invalid)
+                .map(|direct| text_formatting_matches(&direct.unwrap_or_default(), patch))
         })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .all(|value| value);
+    matches.then_some(()).ok_or_else(|| {
+        OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output direct run formatting does not match request",
+        )
+    })
 }
 
 fn text_formatting_matches(
@@ -700,4 +735,31 @@ fn text_formatting_matches(
             Some(PropertyPatch::Clear) => actual.font_family.is_none(),
             Some(PropertyPatch::Set(value)) => actual.font_family.as_ref() == Some(value),
         }
+        && matches_text_value(&actual.color, patch.color.as_ref(), |value| {
+            value.to_ascii_uppercase()
+        })
+        && matches_scalar(&actual.underline, patch.underline.as_ref(), |value| value)
+        && matches_text_value(&actual.highlight, patch.highlight.as_ref(), str::to_owned)
+        && matches_scalar(
+            &actual.strikethrough,
+            patch.strikethrough.as_ref(),
+            |value| value,
+        )
+        && matches_scalar(
+            &actual.vertical_alignment,
+            patch.vertical_alignment.as_ref(),
+            |value| value,
+        )
+}
+
+fn matches_text_value(
+    actual: &Option<String>,
+    patch: Option<&PropertyPatch<String>>,
+    normalize: impl Fn(&str) -> String,
+) -> bool {
+    match patch {
+        None => true,
+        Some(PropertyPatch::Clear) => actual.is_none(),
+        Some(PropertyPatch::Set(value)) => actual.as_ref() == Some(&normalize(value)),
+    }
 }

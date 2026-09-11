@@ -17,7 +17,8 @@ N-API adapter. PPTX and XLSX have not started.
   bounded context inspection use source order and opaque local handles.
 - Creates blank DOCX files and inserts or deletes safe direct-body paragraphs.
   It replaces text, assigns existing paragraph styles, and applies supported
-  direct paragraph and text formatting.
+  direct paragraph and text formatting, including color, underline, highlight,
+  strikethrough, and superscript/subscript.
 - Creates, deletes, and safely edits simple direct-body tables, including rows,
   columns, cells, explicit column widths, cell shading, and basic table formatting.
 - Supports simple text content controls and typed bullet or decimal lists at

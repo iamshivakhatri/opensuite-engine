@@ -6,6 +6,7 @@ use std::{
     fs::File,
     io::{self, Cursor, Read, Seek, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use quick_xml::{Reader, events::Event};
@@ -15,6 +16,7 @@ pub const LAYER: &str = "opc";
 
 const CONTENT_TYPES_ENTRY: &str = "[Content_Types].xml";
 const PACKAGE_RELATIONSHIPS_ENTRY: &str = "_rels/.rels";
+static NEXT_TEMPORARY_FILE: AtomicUsize = AtomicUsize::new(0);
 const OFFICE_DOCUMENT_RELATIONSHIPS: [&str; 2] = [
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
     "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument",
@@ -381,12 +383,13 @@ impl Package {
 
         let parent = output.parent().unwrap_or_else(|| Path::new("."));
         let temporary = parent.join(format!(
-            ".opensuite-{}-{}.tmp",
+            ".opensuite-{}-{}-{}.tmp",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_TEMPORARY_FILE.fetch_add(1, Ordering::Relaxed)
         ));
         let file = File::create_new(&temporary).map_err(PackageError::Serialization)?;
         if let Err(error) = self.write_replaced_part_to(part, replacement, file) {
@@ -462,12 +465,13 @@ impl Package {
 
         let parent = output.parent().unwrap_or_else(|| Path::new("."));
         let temporary = parent.join(format!(
-            ".opensuite-{}-{}.tmp",
+            ".opensuite-{}-{}-{}.tmp",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_TEMPORARY_FILE.fetch_add(1, Ordering::Relaxed)
         ));
         let file = File::create_new(&temporary).map_err(PackageError::Serialization)?;
         if let Err(error) = self.write_package_with_changes_to(replaced, added, file) {

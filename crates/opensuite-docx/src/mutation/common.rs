@@ -1,4 +1,7 @@
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_TEMPORARY_FILE: AtomicUsize = AtomicUsize::new(0);
 
 /// The effective page layout of a safe, single-section main document.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,12 +81,13 @@ pub(super) fn qualified_name(
 
 pub(super) fn temporary_path(output: &Path) -> std::path::PathBuf {
     output.with_file_name(format!(
-        ".opensuite-{}-{}.docx",
+        ".opensuite-{}-{}-{}.docx",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_nanos()
+            .as_nanos(),
+        NEXT_TEMPORARY_FILE.fetch_add(1, Ordering::Relaxed)
     ))
 }
 

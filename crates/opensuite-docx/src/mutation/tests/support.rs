@@ -3,7 +3,10 @@ pub(super) use std::{
     fmt::Write as _,
     fs,
     io::{Read, Write},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 #[allow(unused_imports)]
@@ -26,6 +29,7 @@ pub(super) const WORD: &str = "http://schemas.openxmlformats.org/wordprocessingm
 pub(super) const OFFICE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 pub(super) static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
+pub(super) static TEST_DIRECTORY: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 pub(super) fn imported_numbering_fixture() -> Vec<u8> {
     let mut zip = ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -76,11 +80,27 @@ pub(super) fn imported_numbering_fixture() -> Vec<u8> {
 }
 
 pub(super) fn path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "opensuite-mutation-{name}-{}-{}.docx",
-        std::process::id(),
+    test_directory().join(format!(
+        "{name}-{}.docx",
         NEXT_FILE.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+fn test_directory() -> &'static std::path::Path {
+    TEST_DIRECTORY.get_or_init(|| {
+        loop {
+            let directory = std::env::temp_dir().join(format!(
+                "opensuite-mutation-{}-{}",
+                std::process::id(),
+                NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&directory) {
+                Ok(()) => return directory,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("could not create test directory: {error}"),
+            }
+        }
+    })
 }
 
 pub(super) fn valid_picture_fixture() -> std::path::PathBuf {
