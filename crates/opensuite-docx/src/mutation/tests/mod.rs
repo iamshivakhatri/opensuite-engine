@@ -12,6 +12,7 @@ mod support;
 mod table_cell;
 mod table_column;
 mod table_lifecycle;
+mod table_quality;
 mod table_row;
 mod text;
 mod text_formatting;

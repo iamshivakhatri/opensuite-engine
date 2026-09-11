@@ -12,9 +12,10 @@ use opensuite_protocol::{
     ParagraphFormattingPatch, ParagraphListKind, ParagraphPlacement, PropertyPatch, ReplacePicture,
     ReplaceText, SetContentControlText, SetHeaderFooterText, SetHyperlink, SetPageNumber,
     SetPageSetup, SetParagraphFormatting, SetParagraphStyle, SetParagraphsList, SetPictureSize,
-    SetTableCellText, SetTableCellsText, SetTableFormatting, SetTextFormatting, TableAlignment,
-    TableBorders, TableCellMargins, TableCellTarget, TableFormattingPatch, TableRowTarget,
-    TableTarget, TextFormattingPatch, TextTarget,
+    SetTableCellShading, SetTableCellText, SetTableCellsText, SetTableColumnWidths,
+    SetTableFormatting, SetTextFormatting, TableAlignment, TableBorders, TableCellMargins,
+    TableCellTarget, TableFormattingPatch, TableRowTarget, TableTarget, TextFormattingPatch,
+    TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};

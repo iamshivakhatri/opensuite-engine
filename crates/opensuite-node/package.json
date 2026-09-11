@@ -5,7 +5,7 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "build": "napi build --platform --release",
+    "build": "napi build --platform --release --dts node_modules/.opensuite-node.d.ts",
     "test": "npm run build && node --test test/*.test.mjs"
   },
   "devDependencies": {

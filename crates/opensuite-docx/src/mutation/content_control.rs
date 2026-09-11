@@ -1,5 +1,78 @@
 use super::*;
 
+/// Sets visible text in one simple semantic Word content control and returns verified DOCX bytes.
+pub fn set_content_control_text_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetContentControlText,
+) -> Result<Vec<u8>, OperationResult> {
+    let target = resolve_content_control(source, &operation.target)?;
+    if target.text != operation.expected_current_text {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "resolved content control text does not match expected current text",
+        ));
+    }
+    let patches = if target.text.is_empty() {
+        if operation.replacement.is_empty() {
+            Vec::new()
+        } else {
+            vec![empty_cell_patch(
+                source,
+                target.paragraph,
+                &operation.replacement,
+            )?]
+        }
+    } else {
+        let matches = crate::text_search::resolve_text(source, &target.text)
+            .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+        let Some(matched) = matches.into_iter().find(|matched| {
+            matched.start == 0
+                && matched.end == target.text.len()
+                && matched
+                    .segments
+                    .iter()
+                    .all(|segment| is_descendant(source, segment.id, target.control))
+        }) else {
+            return Err(OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "resolved content control has no compatible text source range",
+            ));
+        };
+        patches_for_match(source, &matched, &operation.replacement)?
+    };
+    let patched = apply_patches(source, patches)?;
+    let before = all_content_control_texts(source)?;
+    let Some(index) = before.iter().position(|item| item.0 == target.control) else {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "resolved content control is unavailable",
+        ));
+    };
+    let expected = before
+        .into_iter()
+        .enumerate()
+        .map(|(item_index, (_, text))| {
+            if item_index == index {
+                operation.replacement.clone()
+            } else {
+                text
+            }
+        })
+        .collect::<Vec<_>>();
+    let output = package
+        .write_replaced_part_to_vec(main, &patched)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    verify_content_control_output_bytes(
+        &output,
+        &operation.target,
+        &operation.replacement,
+        &expected,
+    )?;
+    Ok(output)
+}
+
 /// Sets visible text in one simple semantic Word content control.
 pub fn set_content_control_text(
     package: &Package,
@@ -15,91 +88,17 @@ pub fn set_content_control_text(
             "output path must differ from input path",
         );
     }
-    let target = match resolve_content_control(source, &operation.target) {
-        Ok(target) => target,
-        Err(result) => return result,
+    let bytes = match set_content_control_text_to_vec(package, main, source, operation) {
+        Ok(bytes) => bytes,
+        Err(error) => return error,
     };
-    if target.text != operation.expected_current_text {
-        return OperationResult::failed(
-            "PRECONDITION_FAILED",
-            "resolved content control text does not match expected current text",
-        );
-    }
-    let patches = if target.text.is_empty() {
-        if operation.replacement.is_empty() {
-            Vec::new()
-        } else {
-            match empty_cell_patch(source, target.paragraph, &operation.replacement) {
-                Ok(patch) => vec![patch],
-                Err(result) => return result,
-            }
-        }
-    } else {
-        let matches = match crate::text_search::resolve_text(source, &target.text) {
-            Ok(matches) => matches,
-            Err(error) => return OperationResult::failed(error.code(), error.to_string()),
-        };
-        let Some(matched) = matches.into_iter().find(|matched| {
-            matched.start == 0
-                && matched.end == target.text.len()
-                && matched
-                    .segments
-                    .iter()
-                    .all(|segment| is_descendant(source, segment.id, target.control))
-        }) else {
-            return OperationResult::failed(
-                "DOCUMENT_INVALID",
-                "resolved content control has no compatible text source range",
-            );
-        };
-        match patches_for_match(source, &matched, &operation.replacement) {
-            Ok(patches) => patches,
-            Err(result) => return result,
-        }
-    };
-    let patched = match apply_patches(source, patches) {
-        Ok(patched) => patched,
-        Err(result) => return result,
-    };
-    let before = match all_content_control_texts(source) {
-        Ok(values) => values,
-        Err(result) => return result,
-    };
-    let Some(index) = before.iter().position(|item| item.0 == target.control) else {
-        return OperationResult::failed(
-            "DOCUMENT_INVALID",
-            "resolved content control is unavailable",
-        );
-    };
-    let expected = before
-        .into_iter()
-        .enumerate()
-        .map(|(item_index, (_, text))| {
-            if item_index == index {
-                operation.replacement.clone()
-            } else {
-                text
-            }
-        })
-        .collect::<Vec<_>>();
-    let temporary = temporary_path(output);
-    if let Err(error) = package.write_replaced_part(main, &patched, &temporary) {
-        return OperationResult::failed(error.code(), error.to_string());
-    }
-    if let Err(result) = verify_content_control_output(
-        &temporary,
-        &operation.target,
-        &operation.replacement,
-        &expected,
-    ) {
-        let _ = std::fs::remove_file(&temporary);
-        return result;
-    }
-    if let Err(error) = std::fs::rename(&temporary, output) {
-        let _ = std::fs::remove_file(&temporary);
+    if let Err(error) = std::fs::write(output, bytes) {
         return OperationResult::failed("SERIALIZATION_FAILED", error.to_string());
     }
-    OperationResult::content_control_text_set(target.text, operation.replacement.clone())
+    OperationResult::content_control_text_set(
+        operation.expected_current_text.clone(),
+        operation.replacement.clone(),
+    )
 }
 
 pub(super) struct ResolvedContentControl {
@@ -215,13 +214,13 @@ pub(super) fn all_content_control_texts(
         .collect()
 }
 
-pub(super) fn verify_content_control_output(
-    output: &Path,
+pub(super) fn verify_content_control_output_bytes(
+    output: &[u8],
     target: &ContentControlTarget,
     replacement: &str,
     expected_controls: &[String],
 ) -> Result<(), OperationResult> {
-    let package = Package::open(output).map_err(document_invalid)?;
+    let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
     let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
     if resolve_content_control(&source, target)?.text != replacement {

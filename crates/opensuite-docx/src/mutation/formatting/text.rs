@@ -1,4 +1,5 @@
 use super::*;
+use opensuite_protocol::VerticalAlignment;
 
 /// Sets direct formatting on one complete, ordinary visible text run.
 pub fn set_text_formatting(
@@ -138,6 +139,19 @@ fn range_text_formatting_patches(
     runs: &[FormattingRangeRun],
     patch: &TextFormattingPatch,
 ) -> Result<Vec<Patch>, OperationResult> {
+    for value in [patch.color.as_ref(), patch.highlight.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        if let PropertyPatch::Set(value) = value {
+            if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(OperationResult::failed(
+                    "INVALID_OPERATION",
+                    "text color and highlight must be 6-digit RGB hex values",
+                ));
+            }
+        }
+    }
     let mut patches = Vec::new();
     for (run, start, end, text) in runs {
         if *start == 0 && *end == text.len() {
@@ -317,6 +331,73 @@ fn text_formatting_patches(
         prefix,
         &mut patches,
     )?;
+    for (local, value, rank) in [
+        ("color", patch.color.as_ref(), 5),
+        ("highlight", patch.highlight.as_ref(), 6),
+    ] {
+        if let Some(PropertyPatch::Set(value)) = value {
+            if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(OperationResult::failed(
+                    "INVALID_OPERATION",
+                    "text color and highlight must be 6-digit RGB hex values",
+                ));
+            }
+        }
+        text_simple_property(
+            source,
+            rpr,
+            local,
+            value.map(|value| match value {
+                PropertyPatch::Set(value) => format!(
+                    r#"<{} {}val="{}"/>"#,
+                    name(local),
+                    attr_prefix(prefix),
+                    value.to_ascii_uppercase()
+                ),
+                PropertyPatch::Clear => String::new(),
+            }),
+            rank,
+            &mut patches,
+        )?;
+    }
+    text_boolean_property(
+        source,
+        rpr,
+        "u",
+        patch.underline.as_ref(),
+        prefix,
+        7,
+        &mut patches,
+    )?;
+    text_boolean_property(
+        source,
+        rpr,
+        "strike",
+        patch.strikethrough.as_ref(),
+        prefix,
+        8,
+        &mut patches,
+    )?;
+    text_simple_property(
+        source,
+        rpr,
+        "vertAlign",
+        patch.vertical_alignment.as_ref().map(|value| match value {
+            PropertyPatch::Set(value) => format!(
+                r#"<{} {}val="{}"/>"#,
+                name("vertAlign"),
+                attr_prefix(prefix),
+                match value {
+                    VerticalAlignment::Baseline => "baseline",
+                    VerticalAlignment::Superscript => "superscript",
+                    VerticalAlignment::Subscript => "subscript",
+                }
+            ),
+            PropertyPatch::Clear => String::new(),
+        }),
+        9,
+        &mut patches,
+    )?;
     Ok(patches)
 }
 
@@ -341,6 +422,37 @@ fn new_text_formatting_children(
             name("sz"),
             attr_prefix(prefix),
             value
+        ));
+    }
+    for (local, value) in [
+        ("color", patch.color.as_ref()),
+        ("highlight", patch.highlight.as_ref()),
+    ] {
+        if let Some(PropertyPatch::Set(value)) = value {
+            result.push_str(&format!(
+                r#"<{} {}val="{}"/>"#,
+                name(local),
+                attr_prefix(prefix),
+                value.to_ascii_uppercase()
+            ));
+        }
+    }
+    if let Some(PropertyPatch::Set(value)) = &patch.underline {
+        result.push_str(&text_boolean_xml(name, "u", *value, prefix));
+    }
+    if let Some(PropertyPatch::Set(value)) = &patch.strikethrough {
+        result.push_str(&text_boolean_xml(name, "strike", *value, prefix));
+    }
+    if let Some(PropertyPatch::Set(value)) = &patch.vertical_alignment {
+        result.push_str(&format!(
+            r#"<{} {}val="{}"/>"#,
+            name("vertAlign"),
+            attr_prefix(prefix),
+            match value {
+                VerticalAlignment::Baseline => "baseline",
+                VerticalAlignment::Superscript => "superscript",
+                VerticalAlignment::Subscript => "subscript",
+            }
         ));
     }
     result
@@ -472,6 +584,16 @@ fn rpr_rank(source: &SourceDocument, id: NodeId) -> usize {
         3
     } else if word(source, id, "sz") {
         4
+    } else if word(source, id, "color") {
+        5
+    } else if word(source, id, "highlight") {
+        6
+    } else if word(source, id, "u") {
+        7
+    } else if word(source, id, "strike") {
+        8
+    } else if word(source, id, "vertAlign") {
+        9
     } else {
         100
     }

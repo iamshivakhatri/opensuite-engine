@@ -436,6 +436,8 @@ fn set_paragraphs_list(
         &opensuite_protocol::SetParagraphsList {
             targets,
             kind,
+            level: 0,
+            continue_from_previous: false,
             base_revision: None,
         },
         output,

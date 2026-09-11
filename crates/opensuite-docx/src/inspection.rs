@@ -49,7 +49,23 @@ pub fn inspect_docx_document(
                     );
                 }
             };
-            paragraphs(source, document, styles.as_ref(), *offset, *limit)
+            let numbering = match crate::load_numbering(package, main) {
+                Ok(numbering) => numbering,
+                Err(error) => {
+                    return InspectDocxResult::failed(
+                        error.code(),
+                        "could not inspect DOCX numbering",
+                    );
+                }
+            };
+            paragraphs(
+                source,
+                document,
+                styles.as_ref(),
+                numbering.as_ref(),
+                *offset,
+                *limit,
+            )
         }
         InspectDocxFocus::Tables { offset, limit } => tables(source, document, *offset, *limit),
         InspectDocxFocus::Context(request) => {
@@ -134,6 +150,7 @@ fn paragraphs(
     source: &SourceDocument,
     document: DocxDocument<'_>,
     styles: Option<&StyleSheet>,
+    numbering: Option<&crate::Numbering>,
     offset: usize,
     limit: usize,
 ) -> InspectDocxResult {
@@ -160,11 +177,54 @@ fn paragraphs(
                 .map(|index| format!("b{index}")),
             text,
             style_name: paragraph_style_name(&paragraph, styles),
+            list: match paragraph_list_reference(source, &paragraph, styles) {
+                Ok(Some(reference)) => Some(paragraph_list(numbering, reference)),
+                Ok(None) => None,
+                Err(error) => {
+                    return InspectDocxResult::failed(error.code(), "could not inspect DOCX list");
+                }
+            },
         });
     }
     InspectDocxResult::success(InspectDocxContent::Paragraphs(page_result(
         total, page, items,
     )))
+}
+
+fn paragraph_list_reference(
+    source: &SourceDocument,
+    paragraph: &crate::Paragraph<'_>,
+    styles: Option<&StyleSheet>,
+) -> Result<Option<crate::ListReference>, crate::StyleError> {
+    match styles {
+        Some(styles) => paragraph.list_reference(styles),
+        None => source
+            .children(paragraph.source_id())
+            .find(|id| is_word(source, *id, "pPr"))
+            .map(|ppr| crate::numbering::list_reference(source, ppr))
+            .transpose()
+            .map_err(|_| crate::StyleError::InvalidListReference)
+            .map(Option::flatten),
+    }
+}
+
+fn paragraph_list(
+    numbering: Option<&crate::Numbering>,
+    reference: crate::ListReference,
+) -> opensuite_protocol::DocxParagraphList {
+    let format = numbering
+        .and_then(|numbering| numbering.resolve(reference).ok())
+        .map(|level| &level.format);
+    let (kind, supported) = match format {
+        Some(crate::NumberFormat::Bullet) => ("bullet", true),
+        Some(crate::NumberFormat::Decimal) => ("decimal", true),
+        _ => ("unknown", false),
+    };
+    opensuite_protocol::DocxParagraphList {
+        kind: kind.to_owned(),
+        level: reference.level,
+        supported,
+    }
 }
 
 fn body_blocks(
@@ -657,6 +717,7 @@ mod tests {
             &source,
             DocxDocument::new(&source).unwrap(),
             Some(&styles),
+            None,
             0,
             2,
         );
@@ -691,7 +752,14 @@ mod tests {
     #[test]
     fn rejects_invalid_bounds_without_source_details() {
         let source = source("<w:p><w:r><w:t>text</w:t></w:r></w:p>");
-        let result = paragraphs(&source, DocxDocument::new(&source).unwrap(), None, 0, 0);
+        let result = paragraphs(
+            &source,
+            DocxDocument::new(&source).unwrap(),
+            None,
+            None,
+            0,
+            0,
+        );
         assert_eq!(result.diagnostics[0].code, "INVALID_INSPECTION_BOUNDS");
         let text = format!("{result:?}");
         assert!(!text.contains("NodeId"));

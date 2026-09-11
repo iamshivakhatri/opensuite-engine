@@ -1,7 +1,14 @@
 use napi::bindgen_prelude::{AsyncTask, Buffer, Task};
 use napi::{Env, Result};
 use napi_derive::napi;
+mod content_controls;
+mod hyperlinks;
+mod lists;
 mod page_composition;
+mod pictures;
+pub use content_controls::execute_docx_set_content_control_text_node;
+pub use hyperlinks::execute_docx_set_hyperlink_node;
+pub use lists::execute_docx_set_paragraphs_list_node;
 use opensuite_docx::{
     DocxExecutionResult, create_blank_docx, execute_docx_create_table,
     execute_docx_delete_paragraph, execute_docx_delete_table, execute_docx_delete_table_column,
@@ -9,25 +16,30 @@ use opensuite_docx::{
     execute_docx_insert_table_column, execute_docx_insert_table_row,
     execute_docx_insert_table_rows, execute_docx_replace_text,
     execute_docx_set_paragraph_formatting, execute_docx_set_paragraph_style,
-    execute_docx_set_table_cells_text, execute_docx_set_table_formatting,
+    execute_docx_set_table_cell_shading, execute_docx_set_table_cells_text,
+    execute_docx_set_table_column_widths, execute_docx_set_table_formatting,
     execute_docx_set_text_formatting, find_docx_text, inspect_docx,
 };
 use opensuite_protocol::{
     Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, Diagnostic,
-    DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxTable, DocxTableRow, FindText,
-    FindTextResult, InsertParagraph, InsertParagraphs, InsertTableColumnAfter, InspectDocx,
-    InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectTextContext,
-    InspectTextContextResult, InspectionPage, OperationResult, ParagraphAlignment,
-    ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplaceText, RuntimeCapabilities,
-    SetParagraphFormatting, SetParagraphStyle, SetTableFormatting, SetTextFormatting,
-    TableAlignment, TableBorders, TableCellMargins, TableCellTarget, TableCellTextUpdate,
-    TableFormattingPatch, TableRowTarget, TableTarget, TextContainer, TextFormattingPatch,
-    TextTarget,
+    DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxParagraphList, DocxPicture,
+    DocxTable, DocxTableRow, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
+    InsertTableColumnAfter, InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult,
+    InspectTextContext, InspectTextContextResult, InspectionPage, OperationResult,
+    ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplaceText,
+    RuntimeCapabilities, SetParagraphFormatting, SetParagraphStyle, SetTableCellShading,
+    SetTableColumnWidths, SetTableFormatting, SetTextFormatting, TableAlignment, TableBorders,
+    TableCellMargins, TableCellTarget, TableCellTextUpdate, TableFormattingPatch, TableRowTarget,
+    TableTarget, TextContainer, TextFormattingPatch, TextTarget,
 };
 pub use page_composition::{
     execute_docx_delete_page_break_node, execute_docx_insert_page_break_node,
     execute_docx_set_header_footer_text_node, execute_docx_set_page_number_node,
     execute_docx_set_page_setup_node,
+};
+pub use pictures::{
+    execute_docx_delete_picture_node, execute_docx_insert_picture_node,
+    execute_docx_replace_picture_node, execute_docx_set_picture_size_node,
 };
 
 #[napi(object)]
@@ -80,6 +92,8 @@ pub struct SetParagraphFormattingInput {
     pub alignment: Option<String>,
     pub spacing_before_twips: Option<i32>,
     pub spacing_after_twips: Option<i32>,
+    pub left_indent_twips: Option<i32>,
+    pub clear_left_indent: Option<bool>,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
@@ -89,6 +103,16 @@ pub struct SetTextFormattingInput {
     pub italic: Option<bool>,
     pub font_size_half_points: Option<u32>,
     pub font_family: Option<String>,
+    pub clear_bold: Option<bool>,
+    pub color: Option<String>,
+    pub clear_color: Option<bool>,
+    pub underline: Option<bool>,
+    pub clear_underline: Option<bool>,
+    pub highlight: Option<String>,
+    pub clear_highlight: Option<bool>,
+    pub strikethrough: Option<bool>,
+    pub clear_strikethrough: Option<bool>,
+    pub vertical_alignment: Option<String>,
     pub base_revision: Option<String>,
 }
 
@@ -220,6 +244,23 @@ pub struct SetTableFormattingInput {
     pub borders: Option<String>,
     pub base_revision: Option<String>,
 }
+#[napi(object)]
+pub struct SetTableColumnWidthsInput {
+    pub table: TableTargetInput,
+    pub widths_twips: Vec<u32>,
+    pub base_revision: Option<String>,
+}
+#[napi(object)]
+pub struct TableCellShadingUpdateInput {
+    pub target: TableCellTargetInput,
+    pub fill: Option<String>,
+}
+#[napi(object)]
+pub struct SetTableCellShadingInput {
+    pub table: TableTargetInput,
+    pub updates: Vec<TableCellShadingUpdateInput>,
+    pub base_revision: Option<String>,
+}
 
 #[napi(object)]
 pub struct FormatCapabilitiesOutput {
@@ -300,6 +341,14 @@ pub struct ParagraphOutput {
     pub handle: Option<String>,
     pub text: String,
     pub style_name: Option<String>,
+    pub list: Option<ParagraphListOutput>,
+}
+
+#[napi(object)]
+pub struct ParagraphListOutput {
+    pub kind: String,
+    pub level: u32,
+    pub supported: bool,
 }
 
 #[napi(object)]
@@ -308,6 +357,17 @@ pub struct BodyBlockOutput {
     pub kind: String,
     pub text: Option<String>,
     pub table_handle: Option<String>,
+    pub picture: Option<PictureOutput>,
+}
+
+#[napi(object)]
+pub struct PictureOutput {
+    pub handle: String,
+    pub format: String,
+    pub width_emu: i64,
+    pub height_emu: i64,
+    pub alt_text: Option<String>,
+    pub affordances: Vec<AffordanceOutput>,
 }
 
 #[napi(object)]
@@ -418,11 +478,51 @@ pub fn get_docx_capabilities() -> RuntimeCapabilitiesOutput {
                 capabilities: format
                     .capabilities
                     .into_iter()
+                    .filter(|capability| node_docx_capability(capability.as_str()))
                     .map(|capability| capability.as_str().to_owned())
                     .collect(),
             })
             .collect(),
     }
+}
+
+fn node_docx_capability(capability: &str) -> bool {
+    matches!(
+        capability,
+        "inspect"
+            | "replace_text"
+            | "create_blank_docx"
+            | "body_blocks"
+            | "insert_page_break"
+            | "delete_page_break"
+            | "set_page_setup"
+            | "set_header_footer_text"
+            | "set_page_number"
+            | "insert_paragraph"
+            | "insert_paragraphs"
+            | "delete_paragraph"
+            | "set_content_control_text"
+            | "set_paragraph_formatting"
+            | "set_text_formatting"
+            | "set_hyperlink"
+            | "set_paragraph_style"
+            | "set_paragraphs_list"
+            | "replace_picture"
+            | "delete_picture"
+            | "set_picture_size"
+            | "insert_picture"
+            | "insert_table_row"
+            | "insert_table_rows"
+            | "set_table_cells_text"
+            | "insert_table_column"
+            | "create_table"
+            | "delete_table"
+            | "delete_table_row"
+            | "delete_table_column"
+            | "set_table_formatting"
+            | "find_text"
+            | "inspect_context"
+    )
 }
 
 /// Creates a valid empty DOCX without touching the filesystem.
@@ -609,15 +709,13 @@ pub fn execute_docx_set_paragraph_formatting_node(
     input: Buffer,
     operation: SetParagraphFormattingInput,
 ) -> AsyncTask<SimpleTask<SetParagraphFormatting>> {
-    let alignment = operation
-        .alignment
-        .and_then(|value| match value.as_str() {
-            "left" => Some(ParagraphAlignment::Left),
-            "center" => Some(ParagraphAlignment::Center),
-            "right" => Some(ParagraphAlignment::Right),
-            _ => None,
-        })
-        .map(PropertyPatch::Set);
+    let alignment = operation.alignment.and_then(|value| match value.as_str() {
+        "left" => Some(PropertyPatch::Set(ParagraphAlignment::Left)),
+        "center" => Some(PropertyPatch::Set(ParagraphAlignment::Center)),
+        "right" => Some(PropertyPatch::Set(ParagraphAlignment::Right)),
+        "clear" => Some(PropertyPatch::Clear),
+        _ => None,
+    });
     AsyncTask::new(SimpleTask {
         input: input.to_vec(),
         operation: SetParagraphFormatting {
@@ -626,6 +724,11 @@ pub fn execute_docx_set_paragraph_formatting_node(
                 alignment,
                 spacing_before_twips: operation.spacing_before_twips.map(PropertyPatch::Set),
                 spacing_after_twips: operation.spacing_after_twips.map(PropertyPatch::Set),
+                left_indent_twips: operation
+                    .clear_left_indent
+                    .filter(|clear| *clear)
+                    .map(|_| PropertyPatch::Clear)
+                    .or_else(|| operation.left_indent_twips.map(PropertyPatch::Set)),
                 ..Default::default()
             },
             base_revision: operation.base_revision,
@@ -643,12 +746,50 @@ pub fn execute_docx_set_text_formatting_node(
         operation: SetTextFormatting {
             target: text_target(operation.target),
             formatting: TextFormattingPatch {
-                bold: operation.bold.map(PropertyPatch::Set),
+                bold: operation
+                    .clear_bold
+                    .filter(|clear| *clear)
+                    .map(|_| PropertyPatch::Clear)
+                    .or_else(|| operation.bold.map(PropertyPatch::Set)),
                 italic: operation.italic.map(PropertyPatch::Set),
                 font_size_half_points: operation
                     .font_size_half_points
                     .map(|value| PropertyPatch::Set(value as u16)),
                 font_family: operation.font_family.map(PropertyPatch::Set),
+                color: operation
+                    .clear_color
+                    .filter(|value| *value)
+                    .map(|_| PropertyPatch::Clear)
+                    .or_else(|| operation.color.map(PropertyPatch::Set)),
+                underline: operation
+                    .clear_underline
+                    .filter(|value| *value)
+                    .map(|_| PropertyPatch::Clear)
+                    .or_else(|| operation.underline.map(PropertyPatch::Set)),
+                highlight: operation
+                    .clear_highlight
+                    .filter(|value| *value)
+                    .map(|_| PropertyPatch::Clear)
+                    .or_else(|| operation.highlight.map(PropertyPatch::Set)),
+                strikethrough: operation
+                    .clear_strikethrough
+                    .filter(|value| *value)
+                    .map(|_| PropertyPatch::Clear)
+                    .or_else(|| operation.strikethrough.map(PropertyPatch::Set)),
+                vertical_alignment: operation.vertical_alignment.and_then(|value| {
+                    match value.as_str() {
+                        "baseline" => Some(PropertyPatch::Set(
+                            opensuite_protocol::VerticalAlignment::Baseline,
+                        )),
+                        "superscript" => Some(PropertyPatch::Set(
+                            opensuite_protocol::VerticalAlignment::Superscript,
+                        )),
+                        "subscript" => Some(PropertyPatch::Set(
+                            opensuite_protocol::VerticalAlignment::Subscript,
+                        )),
+                        _ => None,
+                    }
+                }),
             },
             base_revision: operation.base_revision,
         },
@@ -783,6 +924,51 @@ pub fn execute_docx_set_table_formatting_node(
                     _ => None,
                 }),
             },
+            base_revision: operation.base_revision,
+        },
+    })
+}
+
+#[napi(js_name = "executeDocxSetTableColumnWidths")]
+pub fn execute_docx_set_table_column_widths_node(
+    input: Buffer,
+    operation: SetTableColumnWidthsInput,
+) -> AsyncTask<SetTableColumnWidthsTask> {
+    AsyncTask::new(SetTableColumnWidthsTask {
+        input: input.to_vec(),
+        operation: SetTableColumnWidths {
+            table: table_target(operation.table),
+            widths_twips: operation
+                .widths_twips
+                .into_iter()
+                .map(|width| width as u16)
+                .collect(),
+            base_revision: operation.base_revision,
+        },
+    })
+}
+#[napi(js_name = "executeDocxSetTableCellShading")]
+pub fn execute_docx_set_table_cell_shading_node(
+    input: Buffer,
+    operation: SetTableCellShadingInput,
+) -> AsyncTask<SetTableCellShadingTask> {
+    AsyncTask::new(SetTableCellShadingTask {
+        input: input.to_vec(),
+        operation: SetTableCellShading {
+            table: table_target(operation.table),
+            updates: operation
+                .updates
+                .into_iter()
+                .map(|update| opensuite_protocol::TableCellShadingUpdate {
+                    target: TableCellTarget {
+                        row_label: update.target.row_label.unwrap_or_default(),
+                        column_header: update.target.column_header.unwrap_or_default(),
+                        occurrence: update.target.occurrence.map(|value| value as usize),
+                        handle: update.target.handle,
+                    },
+                    fill: update.fill,
+                })
+                .collect(),
             base_revision: operation.base_revision,
         },
     })
@@ -969,6 +1155,16 @@ table_task!(
     SetTableFormattingTask,
     SetTableFormatting,
     execute_docx_set_table_formatting
+);
+table_task!(
+    SetTableColumnWidthsTask,
+    SetTableColumnWidths,
+    execute_docx_set_table_column_widths
+);
+table_task!(
+    SetTableCellShadingTask,
+    SetTableCellShading,
+    execute_docx_set_table_cell_shading
 );
 
 impl Task for SetTableCellsTextTask {
@@ -1192,6 +1388,14 @@ fn heading_page_output(value: InspectionPage<DocxHeading>) -> HeadingPageOutput 
     }
 }
 
+fn paragraph_list_output(value: DocxParagraphList) -> ParagraphListOutput {
+    ParagraphListOutput {
+        kind: value.kind,
+        level: value.level as u32,
+        supported: value.supported,
+    }
+}
+
 fn paragraph_page_output(value: InspectionPage<DocxParagraph>) -> ParagraphPageOutput {
     ParagraphPageOutput {
         page: page_output(&value),
@@ -1203,6 +1407,7 @@ fn paragraph_page_output(value: InspectionPage<DocxParagraph>) -> ParagraphPageO
                 handle: item.handle,
                 text: item.text,
                 style_name: item.style_name,
+                list: item.list.map(paragraph_list_output),
             })
             .collect(),
     }
@@ -1219,7 +1424,23 @@ fn body_block_page_output(value: InspectionPage<DocxBodyBlock>) -> BodyBlockPage
                 kind: item.kind.as_str().to_owned(),
                 text: item.text,
                 table_handle: item.table_handle,
+                picture: item.picture.map(picture_output),
             })
+            .collect(),
+    }
+}
+
+fn picture_output(value: DocxPicture) -> PictureOutput {
+    PictureOutput {
+        handle: value.handle,
+        format: value.format.as_str().to_owned(),
+        width_emu: value.width_emu,
+        height_emu: value.height_emu,
+        alt_text: value.alt_text,
+        affordances: value
+            .affordances
+            .into_iter()
+            .map(affordance_output)
             .collect(),
     }
 }
@@ -1305,9 +1526,9 @@ pub struct ReplaceTextTask {
 }
 
 pub struct SimpleTask<T> {
-    input: Vec<u8>,
-    operation: T,
-    run: fn(Vec<u8>, &T) -> DocxExecutionResult,
+    pub(crate) input: Vec<u8>,
+    pub(crate) operation: T,
+    pub(crate) run: fn(Vec<u8>, &T) -> DocxExecutionResult,
 }
 impl<T: Send> Task for SimpleTask<T> {
     type Output = DocxExecutionResult;
@@ -1399,7 +1620,7 @@ impl Task for ReplaceTextTask {
     }
 }
 
-fn operation_result_output(result: OperationResult) -> OperationResultOutput {
+pub(crate) fn operation_result_output(result: OperationResult) -> OperationResultOutput {
     OperationResultOutput {
         ok: result.status == opensuite_protocol::OperationStatus::Applied,
         status: result.status.as_str().to_owned(),

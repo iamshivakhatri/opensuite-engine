@@ -5,6 +5,8 @@ mod column;
 mod formatting;
 mod lifecycle;
 mod row;
+mod shading;
+mod width;
 
 pub(crate) use cell::table_cell_text_reason;
 pub use cell::*;
@@ -13,6 +15,8 @@ pub use column::*;
 pub use formatting::*;
 pub use lifecycle::*;
 pub use row::*;
+pub use shading::*;
+pub use width::*;
 
 pub(super) fn resolve_table<'a>(
     source: &'a SourceDocument,

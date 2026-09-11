@@ -17,6 +17,7 @@ fn sets_text_formatting_without_rewriting_text_or_unknown_run_properties() {
             italic: Some(PropertyPatch::Set(false)),
             font_size_half_points: Some(PropertyPatch::Set(28)),
             font_family: Some(PropertyPatch::Set("Aptos".to_owned())),
+            ..TextFormattingPatch::default()
         },
         base_revision: None,
     };
@@ -62,6 +63,7 @@ fn rejects_partial_or_cross_run_text_formatting_and_clears_direct_properties() {
             italic: Some(PropertyPatch::Clear),
             font_size_half_points: Some(PropertyPatch::Clear),
             font_family: Some(PropertyPatch::Clear),
+            ..TextFormattingPatch::default()
         },
         base_revision: None,
     };
@@ -112,4 +114,48 @@ fn rejects_wrapped_or_tracked_text_formatting() {
         assert_eq!(result.diagnostics[0].code, "UNSUPPORTED_OPERATION");
         fs::remove_file(input).unwrap();
     }
+}
+
+#[test]
+fn sets_and_clears_professional_run_properties() {
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:r><w:rPr><w:unknown w:x=\"keep\"/></w:rPr><w:t>Styled</w:t></w:r></w:p></w:body></w:document>"
+    ));
+    let output = path("text-formatting-v2");
+    let package = Package::open(&input).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let operation = SetTextFormatting {
+        target: TextTarget {
+            text: "Styled".into(),
+            occurrence: None,
+        },
+        formatting: TextFormattingPatch {
+            color: Some(PropertyPatch::Set("0057B8".into())),
+            underline: Some(PropertyPatch::Set(true)),
+            highlight: Some(PropertyPatch::Set("FFF2CC".into())),
+            strikethrough: Some(PropertyPatch::Set(true)),
+            vertical_alignment: Some(PropertyPatch::Set(
+                opensuite_protocol::VerticalAlignment::Superscript,
+            )),
+            ..Default::default()
+        },
+        base_revision: None,
+    };
+    assert_eq!(
+        set_text_formatting(&package, &main, &source, &operation, &output).status,
+        opensuite_protocol::OperationStatus::Applied
+    );
+    let xml = String::from_utf8(entry(&output, "word/document.xml")).unwrap();
+    for value in [
+        "w:color w:val=\"0057B8\"",
+        "<w:u />",
+        "w:highlight w:val=\"FFF2CC\"",
+        "<w:strike />",
+        "w:vertAlign w:val=\"superscript\"",
+        "w:unknown w:x=\"keep\"",
+    ] {
+        assert!(xml.contains(value), "{value}");
+    }
+    fs::remove_file(input).unwrap();
+    fs::remove_file(output).unwrap();
 }

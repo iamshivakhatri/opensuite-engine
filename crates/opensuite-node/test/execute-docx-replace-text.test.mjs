@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import binding from '../index.js'
 
-const { createBlankDocx, executeDocxCreateTable, executeDocxDeleteParagraph, executeDocxDeleteTable, executeDocxDeleteTableColumn, executeDocxDeleteTableRow, executeDocxInsertParagraph, executeDocxInsertParagraphs, executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetParagraphFormatting, executeDocxSetParagraphStyle, executeDocxSetTableCellsText, executeDocxSetTableFormatting, executeDocxSetTextFormatting, findDocxText, getDocxCapabilities, inspectDocx } = binding
+const { createBlankDocx, executeDocxCreateTable, executeDocxDeleteParagraph, executeDocxDeleteTable, executeDocxDeleteTableColumn, executeDocxDeleteTableRow, executeDocxInsertParagraph, executeDocxInsertParagraphs, executeDocxInsertTableColumn, executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetParagraphFormatting, executeDocxSetParagraphStyle, executeDocxSetTableCellsText, executeDocxSetTableFormatting, executeDocxSetTextFormatting, findDocxText, getDocxCapabilities, inspectDocx } = binding
 const office = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
 const word = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
@@ -149,6 +149,35 @@ test('authors and edits a complete paragraph lifecycle through native bindings',
   assert.equal((await findDocxText(result.output, { text: 'Conclusion' })).matchCount, 0)
 })
 
+test('covers remaining table and formatting binding mappings', async () => {
+  let result = await executeDocxCreateTable(createBlankDocx(), {
+    rows: [['Name', 'Role'], ['Avery', 'Owner']], placement: { kind: 'end' },
+  })
+  let table = (await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 1 } })).tables.items[0]
+  result = await executeDocxInsertTableRow(result.output, {
+    table: { handle: table.handle }, after: { handle: table.rows[1].handle }, cells: ['Morgan', 'Editor'],
+  })
+  assert.equal(result.result.ok, true)
+  table = (await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 1 } })).tables.items[0]
+  result = await executeDocxInsertTableColumn(result.output, {
+    table: { handle: table.handle }, afterColumnHandle: table.columns[0].handle, header: 'Team', cells: ['Writing', 'Editing'],
+  })
+  assert.equal(result.result.ok, true)
+  table = (await inspectDocx(result.output, { focus: { kind: 'tables', offset: 0, limit: 1 } })).tables.items[0]
+  assert.deepEqual(table.rows.map((row) => row.cells), [['Name', 'Team', 'Role'], ['Avery', 'Writing', 'Owner'], ['Morgan', 'Editing', 'Editor']])
+
+  result = await executeDocxInsertParagraph(createBlankDocx(), { text: 'Formatted', placement: { kind: 'end' } })
+  result = await executeDocxSetParagraphStyle(result.output, { target: { text: 'Formatted' }, style: 'Heading 1' })
+  result = await executeDocxSetParagraphStyle(result.output, { target: { text: 'Formatted' } })
+  assert.equal(result.result.ok, true)
+  result = await executeDocxSetParagraphFormatting(result.output, { target: { text: 'Formatted' }, leftIndentTwips: 360 })
+  result = await executeDocxSetParagraphFormatting(result.output, { target: { text: 'Formatted' }, clearLeftIndent: true })
+  assert.equal(result.result.ok, true)
+  result = await executeDocxSetTextFormatting(result.output, { target: { text: 'Formatted' }, bold: true })
+  result = await executeDocxSetTextFormatting(result.output, { target: { text: 'Formatted' }, clearBold: true })
+  assert.equal(result.result.ok, true)
+})
+
 test('places paragraph batches around body blocks and preserves text exactly', async () => {
   let bytes = await executeDocxInsertParagraphs(createBlankDocx(), { texts: ['end', '', '  ünicode  '], placement: { kind: 'end' } }).then((value) => value.output)
   bytes = (await executeDocxInsertParagraphs(bytes, { texts: ['start'], placement: { kind: 'start' } })).output
@@ -185,6 +214,9 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   assert.ok(capabilities.formats[0].capabilities.includes('insert_table_row'))
   assert.ok(capabilities.formats[0].capabilities.includes('insert_table_rows'))
   assert.ok(capabilities.formats[0].capabilities.includes('set_table_cells_text'))
+  assert.ok(capabilities.formats[0].capabilities.includes('set_content_control_text'))
+  assert.ok(capabilities.formats[0].capabilities.includes('replace_picture'))
+  assert.equal(capabilities.formats[0].capabilities.includes('fields'), false)
 
   const found = await findDocxText(input, { text: 'Date:' })
   assert.equal(found.ok, true)

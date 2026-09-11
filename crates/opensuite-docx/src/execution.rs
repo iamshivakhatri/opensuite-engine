@@ -4,9 +4,10 @@ use opensuite_protocol::{
     DeleteTableRow, Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertPageBreak,
     InsertParagraph, InsertParagraphs, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
     InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
-    InspectTextContextResult, OperationResult, ReplaceText, SetHeaderFooterText, SetHyperlink,
-    SetPageNumber, SetPageSetup, SetParagraphFormatting, SetParagraphStyle, SetParagraphsList,
-    SetPictureSize, SetTableCellsText, SetTableFormatting, SetTextFormatting,
+    InspectTextContextResult, OperationResult, ReplacePicture, ReplaceText, SetContentControlText,
+    SetHeaderFooterText, SetHyperlink, SetPageNumber, SetPageSetup, SetParagraphFormatting,
+    SetParagraphStyle, SetParagraphsList, SetPictureSize, SetTableCellShading, SetTableCellsText,
+    SetTableColumnWidths, SetTableFormatting, SetTextFormatting,
 };
 
 use crate::{
@@ -14,10 +15,11 @@ use crate::{
     delete_table_column_to_vec, delete_table_row_to_vec, delete_table_to_vec,
     insert_page_break_to_vec, insert_paragraph_to_vec, insert_paragraphs_to_vec,
     insert_picture_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
-    insert_table_rows_after_to_vec, open_main_source, replace_text_to_vec,
-    set_header_footer_text_to_vec, set_hyperlink_to_vec, set_page_number_to_vec,
-    set_page_setup_to_vec, set_paragraph_formatting_to_vec, set_paragraph_style_to_vec,
-    set_paragraphs_list_to_vec, set_picture_size_to_vec, set_table_cells_text_to_vec,
+    insert_table_rows_after_to_vec, open_main_source, replace_picture_to_vec, replace_text_to_vec,
+    set_content_control_text_to_vec, set_header_footer_text_to_vec, set_hyperlink_to_vec,
+    set_page_number_to_vec, set_page_setup_to_vec, set_paragraph_formatting_to_vec,
+    set_paragraph_style_to_vec, set_paragraphs_list_to_vec, set_picture_size_to_vec,
+    set_table_cell_shading_to_vec, set_table_cells_text_to_vec, set_table_column_widths_to_vec,
     set_table_formatting_to_vec, set_text_formatting_to_vec,
 };
 
@@ -307,6 +309,63 @@ pub fn execute_docx_set_picture_size(
     }
 }
 
+/// Executes `SetContentControlText` against owned DOCX bytes and returns verified output bytes.
+pub fn execute_docx_set_content_control_text(
+    input_artifact: Vec<u8>,
+    operation: &SetContentControlText,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    match set_content_control_text_to_vec(&package, &main, &source, operation) {
+        Ok(output_artifact) => DocxExecutionResult {
+            operation: OperationResult::content_control_text_set(
+                operation.expected_current_text.clone(),
+                operation.replacement.clone(),
+            ),
+            output_artifact: Some(output_artifact),
+        },
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(error, "set_content_control_text", None),
+            output_artifact: None,
+        },
+    }
+}
+
+/// Executes `ReplacePicture` against owned DOCX bytes and returns verified output bytes.
+pub fn execute_docx_replace_picture(
+    input_artifact: Vec<u8>,
+    operation: &ReplacePicture,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input_artifact) {
+        Ok(package) => package,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load DOCX artifact"),
+    };
+    match replace_picture_to_vec(&package, &main, &source, operation) {
+        Ok(output_artifact) => DocxExecutionResult {
+            operation: OperationResult::applied(String::new(), String::new()),
+            output_artifact: Some(output_artifact),
+        },
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "replace_picture",
+                operation.target.handle.as_deref(),
+            ),
+            output_artifact: None,
+        },
+    }
+}
+
 fn placement_handle(placement: &opensuite_protocol::ParagraphPlacement) -> Option<&str> {
     match placement {
         opensuite_protocol::ParagraphPlacement::Before { handle }
@@ -345,6 +404,18 @@ execute_paragraph_mutation!(
     DeleteParagraph,
     delete_paragraph_to_vec,
     "delete_paragraph"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_table_column_widths,
+    SetTableColumnWidths,
+    set_table_column_widths_to_vec,
+    "set_table_column_widths"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_table_cell_shading,
+    SetTableCellShading,
+    set_table_cell_shading_to_vec,
+    "set_table_cell_shading"
 );
 execute_paragraph_mutation!(
     execute_docx_set_paragraph_formatting,

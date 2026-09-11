@@ -19,8 +19,9 @@ N-API adapter. PPTX and XLSX have not started.
   It replaces text, assigns existing paragraph styles, and applies supported
   direct paragraph and text formatting.
 - Creates, deletes, and safely edits simple direct-body tables, including rows,
-  columns, cells, and basic table formatting.
-- Supports simple text content controls, level-zero bullet or decimal lists,
+  columns, cells, explicit column widths, cell shading, and basic table formatting.
+- Supports simple text content controls and typed bullet or decimal lists at
+  levels zero through two, including safe continuation and restart,
   external HTTP(S) hyperlinks, inline PNG/JPEG insertion and replacement,
   supported picture deletion and proportional resizing.
 - Supports dedicated page breaks, single-section page setup, simple default
@@ -33,17 +34,16 @@ N-API adapter. PPTX and XLSX have not started.
 The adapter exposes capability discovery, blank-document creation, inspection,
 text search, text replacement, paragraph insertion/deletion/style/formatting,
 text formatting, table operations, page breaks, page setup, default
-headers/footers, and page numbers. Rust DOCX capabilities currently exceed
-Node/N-API parity for hyperlinks, lists, content controls, and picture
-mutations.
+headers/footers, page numbers, lists, hyperlinks, and picture insertion,
+deletion, resizing, replacement, and targeting inspection, plus simple
+content-control text updates. DOCX mutation capabilities are Node-exposed.
 
 ## Immediate Direction
 
-1. Reach DOCX N-API parity.
-2. Validate complete application and agent workflows.
-3. Compare benchmark documents with current capabilities and identify real gaps.
-4. Add remaining DOCX P0 capabilities only when those workflows require them.
-5. Freeze DOCX V1 once benchmark and interoperability criteria are met, then
+1. Validate complete application and agent workflows.
+2. Compare benchmark documents with current capabilities and identify real gaps.
+3. Add remaining DOCX P0 capabilities only when those workflows require them.
+4. Freeze DOCX V1 once benchmark and interoperability criteria are met, then
    begin PPTX.
 
 See [the DOCX engine reference](docx-engine.md) for product scope and the DOCX

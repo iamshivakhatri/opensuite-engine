@@ -30,8 +30,28 @@ fn applies_and_clears_a_hyperlink_without_touching_existing_links() {
         ))
     );
     assert_eq!(links[1].text().unwrap(), "OpenSuite");
+    let replace = SetHyperlink {
+        target: operation.target.clone(),
+        url: Some("https://example.com/updated".to_owned()),
+        base_revision: None,
+    };
+    let bytes = set_hyperlink_to_vec(&package, &main, &source, &replace).unwrap();
+    let package = Package::from_bytes(bytes).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    assert_eq!(
+        crate::DocxDocument::new(&source)
+            .unwrap()
+            .hyperlinks()
+            .next()
+            .unwrap()
+            .target(&package, &main)
+            .unwrap(),
+        Some(crate::HyperlinkTarget::External(
+            "https://example.com/updated".to_owned()
+        ))
+    );
     let clear = SetHyperlink {
-        target: operation.target,
+        target: replace.target,
         url: None,
         base_revision: None,
     };

@@ -427,6 +427,29 @@ pub struct SetTableFormatting {
     pub base_revision: Option<String>,
 }
 
+/// Sets every grid column in one simple rectangular table, in twips.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetTableColumnWidths {
+    pub table: TableTarget,
+    pub widths_twips: Vec<u16>,
+    pub base_revision: Option<String>,
+}
+
+/// Sets or clears background shading for one resolved table cell.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableCellShadingUpdate {
+    pub target: TableCellTarget,
+    pub fill: Option<String>,
+}
+
+/// Sets or clears background shading for several cells atomically.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetTableCellShading {
+    pub table: TableTarget,
+    pub updates: Vec<TableCellShadingUpdate>,
+    pub base_revision: Option<String>,
+}
+
 /// A semantic content-control target. At least one of `tag` or `alias` is required.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContentControlTarget {
@@ -500,6 +523,18 @@ pub struct TextFormattingPatch {
     pub italic: Option<PropertyPatch<bool>>,
     pub font_size_half_points: Option<PropertyPatch<u16>>,
     pub font_family: Option<PropertyPatch<String>>,
+    pub color: Option<PropertyPatch<String>>,
+    pub underline: Option<PropertyPatch<bool>>,
+    pub highlight: Option<PropertyPatch<String>>,
+    pub strikethrough: Option<PropertyPatch<bool>>,
+    pub vertical_alignment: Option<PropertyPatch<VerticalAlignment>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VerticalAlignment {
+    Baseline,
+    Superscript,
+    Subscript,
 }
 
 /// Changes selected direct run properties for one whole visible run.
@@ -534,11 +569,15 @@ pub enum ParagraphListKind {
     None,
 }
 
-/// Applies or clears one level-zero list across consecutive body paragraphs.
+/// Applies or clears one typed list level across consecutive body paragraphs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SetParagraphsList {
     pub targets: Vec<TextTarget>,
     pub kind: ParagraphListKind,
+    /// The authored list level. DOCX V1 supports levels zero through two.
+    pub level: u8,
+    /// Reuses the immediately preceding compatible list instance. Otherwise starts a new list.
+    pub continue_from_previous: bool,
     pub base_revision: Option<String>,
 }
 
@@ -759,6 +798,16 @@ pub struct DocxParagraph {
     pub handle: Option<String>,
     pub text: String,
     pub style_name: Option<String>,
+    pub list: Option<DocxParagraphList>,
+}
+
+/// The resolved list information for a paragraph. `supported` is false for
+/// imported numbering that DOCX V1 preserves but does not author.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxParagraphList {
+    pub kind: String,
+    pub level: u8,
+    pub supported: bool,
 }
 
 /// One ordinary direct child of the document body in source order.

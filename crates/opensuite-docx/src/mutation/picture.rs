@@ -669,26 +669,25 @@ pub(super) fn verify_resized_picture_bytes(
     Ok(())
 }
 
-pub fn replace_picture(
+/// Replaces one supported picture and returns verified DOCX bytes.
+pub fn replace_picture_to_vec(
     package: &Package,
     main: &Part,
     source: &SourceDocument,
     operation: &ReplacePicture,
-    output: impl AsRef<Path>,
-) -> OperationResult {
-    let output = output.as_ref();
+) -> Result<Vec<u8>, OperationResult> {
     if operation.target.handle.is_none()
         && operation.target.name.is_none()
         && operation.target.description.is_none()
     {
-        return OperationResult::failed(
+        return Err(OperationResult::failed(
             "TARGET_NOT_FOUND",
             "picture target requires name or description",
-        );
+        ));
     }
     let document = match crate::DocxDocument::new(source) {
         Ok(value) => value,
-        Err(error) => return document_invalid(error),
+        Err(error) => return Err(document_invalid(error)),
     };
     let mut pictures = document
         .pictures()
@@ -715,69 +714,73 @@ pub fn replace_picture(
         match pictures.get(occurrence) {
             Some(_) => pictures.remove(occurrence),
             None => {
-                return OperationResult::failed(
+                return Err(OperationResult::failed(
                     "TARGET_NOT_FOUND",
                     "picture target occurrence was not found",
-                );
+                ));
             }
         }
     } else if pictures.len() != 1 {
-        return OperationResult::failed(
+        return Err(OperationResult::failed(
             if pictures.is_empty() {
                 "TARGET_NOT_FOUND"
             } else {
                 "TARGET_AMBIGUOUS"
             },
             "picture target did not resolve deterministically",
-        );
+        ));
     } else {
         pictures.pop().expect("one picture")
     };
-    let metadata = picture.metadata().expect("matched metadata");
-    let name = metadata
-        .name
-        .clone()
-        .or(metadata.description.clone())
-        .unwrap_or_else(|| "picture".to_owned());
     let crate::ImageReference::Embedded(image) = (match picture.image_reference(package, main) {
         Ok(value) => value,
-        Err(error) => return unsupported(error.to_string()),
+        Err(error) => return Err(unsupported(error.to_string())),
     }) else {
-        return unsupported("replace_picture supports only internal embedded images");
+        return Err(unsupported(
+            "replace_picture supports only internal embedded images",
+        ));
     };
     let content_type = image.part.content_type.as_str();
     if !matches!(content_type, "image/png" | "image/jpeg")
         || operation.replacement.content_type != content_type
         || !valid_image(&operation.replacement.bytes, content_type)
     {
-        return unsupported(
+        return Err(unsupported(
             "replacement image must be a valid PNG or JPEG with the existing content type",
-        );
+        ));
     }
-    let references = match crate::DocxDocument::new(source) { Ok(document) => document.pictures().filter_map(|item| item.image_reference(package, main).ok()).filter(|reference| matches!(reference, crate::ImageReference::Embedded(other) if other.part.name == image.part.name)).count(), Err(error) => return document_invalid(error) };
+    let references = match crate::DocxDocument::new(source) { Ok(document) => document.pictures().filter_map(|item| item.image_reference(package, main).ok()).filter(|reference| matches!(reference, crate::ImageReference::Embedded(other) if other.part.name == image.part.name)).count(), Err(error) => return Err(document_invalid(error)) };
     if references != 1 {
-        return unsupported("replace_picture does not replace shared image parts");
+        return Err(unsupported(
+            "replace_picture does not replace shared image parts",
+        ));
     }
-    if let Err(error) =
-        package.write_replaced_part(&image.part, &operation.replacement.bytes, output)
-    {
-        return OperationResult::failed(error.code(), error.to_string());
-    }
-    let reopened = match Package::open(output) {
+    let output = package
+        .write_replaced_part_to_vec(&image.part, &operation.replacement.bytes)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let reopened = match Package::from_bytes(output.clone()) {
         Ok(value) => value,
-        Err(error) => return document_invalid(error),
+        Err(error) => return Err(document_invalid(error)),
     };
     if let Err(error) = reopened.verify() {
-        return document_invalid(error);
+        return Err(document_invalid(error));
     }
     let (reopened_main, reopened_source) = match crate::open_main_source(&reopened) {
         Ok(value) => value,
-        Err(error) => return document_invalid(error),
+        Err(error) => return Err(document_invalid(error)),
     };
     let output_picture = match crate::DocxDocument::new(&reopened_source) {
         Ok(document) => document
             .pictures()
             .filter(|picture| {
+                if let Some(handle) = &operation.target.handle {
+                    return crate::inspection::picture_source_for_handle(
+                        &reopened,
+                        &reopened_main,
+                        &reopened_source,
+                        handle,
+                    ) == Some(picture.source_id());
+                }
                 picture.metadata().is_some_and(|meta| {
                     operation
                         .target
@@ -794,29 +797,32 @@ pub fn replace_picture(
                 })
             })
             .nth(operation.target.occurrence.unwrap_or(0)),
-        Err(error) => return document_invalid(error),
+        Err(error) => return Err(document_invalid(error)),
     };
     let Some(output_picture) = output_picture else {
-        return OperationResult::failed("DOCUMENT_INVALID", "output picture target was not found");
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output picture target was not found",
+        ));
     };
     if output_picture.kind() != picture.kind()
         || output_picture.extent().ok() != picture.extent().ok()
     {
-        return OperationResult::failed(
+        return Err(OperationResult::failed(
             "DOCUMENT_INVALID",
             "output picture metadata or dimensions changed",
-        );
+        ));
     }
     let crate::ImageReference::Embedded(output_image) =
         (match output_picture.image_reference(&reopened, &reopened_main) {
             Ok(value) => value,
-            Err(error) => return document_invalid(error),
+            Err(error) => return Err(document_invalid(error)),
         })
     else {
-        return OperationResult::failed(
+        return Err(OperationResult::failed(
             "DOCUMENT_INVALID",
             "output picture image relationship changed",
-        );
+        ));
     };
     if output_image.part.content_type != image.part.content_type
         || reopened
@@ -826,15 +832,25 @@ pub fn replace_picture(
             .as_deref()
             != Some(operation.replacement.bytes.as_slice())
     {
-        return OperationResult::failed(
+        return Err(OperationResult::failed(
             "DOCUMENT_INVALID",
             "output picture payload does not match replacement",
-        );
+        ));
     }
-    OperationResult::picture_replaced(
-        name,
-        image.size_bytes as usize,
-        operation.replacement.bytes.len(),
+    Ok(output)
+}
+
+pub fn replace_picture(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &ReplacePicture,
+    output: impl AsRef<Path>,
+) -> OperationResult {
+    write_operation_output(
+        package,
+        output.as_ref(),
+        replace_picture_to_vec(package, main, source, operation),
     )
 }
 

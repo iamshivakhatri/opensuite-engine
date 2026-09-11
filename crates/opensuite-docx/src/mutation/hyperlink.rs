@@ -267,8 +267,8 @@ pub(super) fn replace_supported_hyperlink(
         return Err(unsupported("hyperlink has no source boundaries"));
     };
     let children = &source.original_bytes()[start_tag.end..end_tag.start];
-    let prefix = word_prefix(source, link)?;
-    let replacement = format!("<{} xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"{id}\">", qualify(prefix,"hyperlink")).into_bytes().into_iter().chain(children.iter().copied()).chain(format!("</{}>",qualify(prefix,"hyperlink")).bytes()).collect();
+    let prefix = word_prefix_for(source, link, "hyperlink")?;
+    let replacement = format!("<{} xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"{id}\">", qualify(&prefix,"hyperlink")).into_bytes().into_iter().chain(children.iter().copied()).chain(format!("</{}>",qualify(&prefix,"hyperlink")).bytes()).collect();
     write_hyperlink_changes(
         package,
         main,

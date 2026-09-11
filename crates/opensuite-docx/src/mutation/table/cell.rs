@@ -130,8 +130,8 @@ pub fn set_table_cell_text(
     OperationResult::table_cell_text_set(target.text, operation.replacement.clone())
 }
 
-struct ResolvedTableCell {
-    cell: NodeId,
+pub(super) struct ResolvedTableCell {
+    pub(super) cell: NodeId,
     paragraph: NodeId,
     text: String,
     table_index: usize,
@@ -266,7 +266,7 @@ fn resolve_table_cell(
     })
 }
 
-fn resolve_table_cell_in_table(
+pub(super) fn resolve_table_cell_in_table(
     source: &SourceDocument,
     table_index: usize,
     rows: &[crate::Row<'_>],

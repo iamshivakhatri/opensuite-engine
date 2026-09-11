@@ -1,18 +1,24 @@
 use super::*;
 
-/// Sets or clears one ordinary level-zero list over consecutive direct body paragraphs.
+/// Sets or clears one ordinary authored list level over consecutive direct body paragraphs.
 pub fn set_paragraphs_list_to_vec(
     package: &Package,
     main: &Part,
     source: &SourceDocument,
     operation: &SetParagraphsList,
 ) -> Result<Vec<u8>, OperationResult> {
+    if operation.level > 2 {
+        return Err(OperationResult::failed(
+            "INVALID_OPERATION",
+            "DOCX V1 supports list levels zero through two",
+        ));
+    }
     let resolved = resolve_list_paragraphs(source, &operation.targets)?;
     let body_before = body_texts(source)?
         .into_iter()
         .map(|(_, text)| text)
         .collect::<Vec<_>>();
-    let (numbering_name, numbering_bytes, abstract_id, num_id) = match operation.kind {
+    let (numbering_name, numbering_bytes, allocated_ids, num_id) = match operation.kind {
         ParagraphListKind::None => (None, None, None, None),
         _ => {
             let name =
@@ -22,15 +28,24 @@ pub fn set_paragraphs_list_to_vec(
                 Err(PackageError::MissingTargetPart(_)) => None,
                 Err(error) => return Err(OperationResult::failed(error.code(), error.to_string())),
             };
-            let (abstract_id, num_id) = numbering_ids(existing.as_deref())?;
-            (Some(name), existing, Some(abstract_id), Some(num_id))
+            let allocated_ids = if operation.continue_from_previous {
+                None
+            } else {
+                Some(numbering_ids(existing.as_deref())?)
+            };
+            let num_id = match allocated_ids {
+                Some((_, num_id)) => num_id,
+                None => continuation_num_id(package, main, source, &resolved, operation.kind)?,
+            };
+            (Some(name), existing, allocated_ids, Some(num_id))
         }
     };
-    let patches = list_paragraph_patches(source, &resolved, operation.kind, num_id)?;
+    let patches =
+        list_paragraph_patches(source, &resolved, operation.kind, operation.level, num_id)?;
     let document = apply_patches(source, patches)?;
     let mut replaced = vec![(main.name.clone(), document.as_slice())];
     let mut added = Vec::new();
-    if let (Some(name), Some(abstract_id), Some(num_id)) = (numbering_name, abstract_id, num_id) {
+    if let (Some(name), Some((abstract_id, num_id))) = (numbering_name, allocated_ids) {
         let addition = numbering_xml(operation.kind, abstract_id, num_id)?;
         let bytes = numbering_bytes
             .as_deref()
@@ -88,6 +103,7 @@ pub fn set_paragraphs_list_to_vec(
                 added,
                 &operation.targets,
                 operation.kind,
+                operation.level,
                 body_before,
             );
         }
@@ -97,6 +113,7 @@ pub fn set_paragraphs_list_to_vec(
             added,
             &operation.targets,
             operation.kind,
+            operation.level,
             body_before,
         );
     }
@@ -106,6 +123,7 @@ pub fn set_paragraphs_list_to_vec(
         added,
         &operation.targets,
         operation.kind,
+        operation.level,
         body_before,
     )
 }
@@ -176,6 +194,7 @@ pub(super) fn list_paragraph_patches(
     source: &SourceDocument,
     paragraphs: &[(String, NodeId)],
     kind: ParagraphListKind,
+    level: u8,
     num_id: Option<u32>,
 ) -> Result<Vec<Patch>, OperationResult> {
     let mut patches = Vec::new();
@@ -185,7 +204,7 @@ pub(super) fn list_paragraph_patches(
         let value = match (kind, num_id) {
             (ParagraphListKind::None, _) => String::new(),
             (_, Some(num_id)) => format!(
-                r#"<{}><{} {}val="0"/><{} {}val="{num_id}"/></{}>"#,
+                r#"<{}><{} {}val="{level}"/><{} {}val="{num_id}"/></{}>"#,
                 name("numPr"),
                 name("ilvl"),
                 attr_prefix(prefix),
@@ -222,6 +241,58 @@ pub(super) fn list_paragraph_patches(
         }
     }
     Ok(patches)
+}
+
+fn continuation_num_id(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    paragraphs: &[(String, NodeId)],
+    kind: ParagraphListKind,
+) -> Result<u32, OperationResult> {
+    let body = body_texts(source)?;
+    let first = body
+        .iter()
+        .position(|(id, _)| *id == paragraphs[0].1)
+        .ok_or_else(|| {
+            OperationResult::failed(
+                "UNSUPPORTED_STRUCTURE",
+                "list target is not a direct body paragraph",
+            )
+        })?;
+    let numbering = crate::load_numbering(package, main)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?
+        .ok_or_else(|| {
+            OperationResult::failed(
+                "INVALID_OPERATION",
+                "there is no preceding list to continue",
+            )
+        })?;
+    let expected = match kind {
+        ParagraphListKind::Bullet => crate::NumberFormat::Bullet,
+        ParagraphListKind::Decimal => crate::NumberFormat::Decimal,
+        ParagraphListKind::None => unreachable!(),
+    };
+    for (previous, _) in body[..first].iter().rev() {
+        let reference = source
+            .children(*previous)
+            .find(|id| word(source, *id, "pPr"))
+            .map(|ppr| crate::numbering::list_reference(source, ppr))
+            .transpose()
+            .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?
+            .flatten();
+        let Some(reference) = reference else { continue };
+        let Ok(level) = numbering.resolve(reference) else {
+            continue;
+        };
+        if level.format == expected && reference.level <= 2 {
+            return Ok(reference.num_id.0);
+        }
+    }
+    Err(OperationResult::failed(
+        "INVALID_OPERATION",
+        "there is no preceding compatible DOCX V1 list to continue",
+    ))
 }
 
 pub(super) fn numbering_part_name(main: &Part) -> Result<PartName, OperationResult> {
@@ -301,9 +372,9 @@ pub(super) fn numbering_xml(
     abstract_id: u32,
     num_id: u32,
 ) -> Result<String, OperationResult> {
-    let (format, text) = match kind {
-        ParagraphListKind::Bullet => ("bullet", "•"),
-        ParagraphListKind::Decimal => ("decimal", "%1."),
+    let (format, texts) = match kind {
+        ParagraphListKind::Bullet => ("bullet", ["•", "•", "•"]),
+        ParagraphListKind::Decimal => ("decimal", ["%1.", "%1.%2", "%1.%2.%3"]),
         ParagraphListKind::None => {
             return Err(OperationResult::failed(
                 "INVALID_OPERATION",
@@ -311,8 +382,21 @@ pub(super) fn numbering_xml(
             ));
         }
     };
+    let levels = texts.into_iter().enumerate().fold(
+        String::new(),
+        |mut levels, (level, text)| {
+            use std::fmt::Write;
+            write!(
+                levels,
+                r#"<w:lvl w:ilvl="{level}"><w:start w:val="1"/><w:numFmt w:val="{format}"/><w:lvlText w:val="{text}"/><w:suff w:val="space"/><w:pPr><w:ind w:left="{}" w:hanging="360"/></w:pPr></w:lvl>"#,
+                720 * (level + 1),
+            )
+            .expect("write to string");
+            levels
+        },
+    );
     Ok(format!(
-        r#"<w:abstractNum w:abstractNumId="{abstract_id}"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="{format}"/><w:lvlText w:val="{text}"/><w:suff w:val="space"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="{num_id}"><w:abstractNumId w:val="{abstract_id}"/></w:num>"#
+        r#"<w:abstractNum w:abstractNumId="{abstract_id}"><w:multiLevelType w:val="multilevel"/>{levels}</w:abstractNum><w:num w:numId="{num_id}"><w:abstractNumId w:val="{abstract_id}"/></w:num>"#
     ))
 }
 
@@ -329,6 +413,7 @@ pub(super) fn write_list_package(
     added: Vec<(PartName, &[u8])>,
     targets: &[TextTarget],
     kind: ParagraphListKind,
+    requested_level: u8,
     body_before: Vec<String>,
 ) -> Result<Vec<u8>, OperationResult> {
     let output = package
@@ -373,7 +458,7 @@ pub(super) fn write_list_package(
                 .and_then(|id| source.node(id))
                 .and_then(|node| node.attribute("val"))
                 .and_then(|value| value.parse::<u32>().ok());
-            if level != Some(0) || num_id.is_none() {
+            if level != Some(requested_level) || num_id.is_none() {
                 return Err(OperationResult::failed(
                     "DOCUMENT_INVALID",
                     "output list reference is invalid",
@@ -397,7 +482,7 @@ pub(super) fn write_list_package(
         let level = numbering
             .resolve(crate::ListReference {
                 num_id: crate::NumberingId(references[0]),
-                level: 0,
+                level: requested_level,
             })
             .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
         let expected_format = match kind {

@@ -12,3 +12,5 @@ crates/opensuite-node/*.node
 docs/roadmap
 docs/docx-engine.md
 .DS_Store
+artifacts/
+bins/opensuite-showcase
