@@ -1,6 +1,7 @@
 use napi::bindgen_prelude::{AsyncTask, Buffer, Task};
 use napi::{Env, Result};
 use napi_derive::napi;
+mod page_composition;
 use opensuite_docx::{
     DocxExecutionResult, create_blank_docx, execute_docx_create_table,
     execute_docx_delete_paragraph, execute_docx_delete_table, execute_docx_delete_table_column,
@@ -22,6 +23,11 @@ use opensuite_protocol::{
     TableAlignment, TableBorders, TableCellMargins, TableCellTarget, TableCellTextUpdate,
     TableFormattingPatch, TableRowTarget, TableTarget, TextContainer, TextFormattingPatch,
     TextTarget,
+};
+pub use page_composition::{
+    execute_docx_delete_page_break_node, execute_docx_insert_page_break_node,
+    execute_docx_set_header_footer_text_node, execute_docx_set_page_number_node,
+    execute_docx_set_page_setup_node,
 };
 
 #[napi(object)]

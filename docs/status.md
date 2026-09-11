@@ -1,218 +1,50 @@
 # OpenSuite Engine Status
 
-## Current Phase
+## Current Scope
 
-Preservation-first DOCX mutation
+OpenSuite is a preservation-first DOCX engine. The Rust workspace contains the
+OPC package layer, DOCX engine, stable protocol types, native CLI, and Node
+N-API adapter. PPTX and XLSX have not started.
 
-## Current Format
+## Current DOCX Engine
 
-DOCX
+- Opens DOCX packages from files or owned bytes, discovers the main document,
+  resolves content types and relationships, and writes verified in-memory or
+  file output while retaining untouched payloads.
+- Inspects semantic document content: text, headings, body blocks, tables,
+  styles, numbering, sections, headers/footers, references, pictures, fields,
+  content controls, comments, and tracked-change views. Exact text search and
+  bounded context inspection use source order and opaque local handles.
+- Creates blank DOCX files and inserts or deletes safe direct-body paragraphs.
+  It replaces text, assigns existing paragraph styles, and applies supported
+  direct paragraph and text formatting.
+- Creates, deletes, and safely edits simple direct-body tables, including rows,
+  columns, cells, and basic table formatting.
+- Supports simple text content controls, level-zero bullet or decimal lists,
+  external HTTP(S) hyperlinks, inline PNG/JPEG insertion and replacement,
+  supported picture deletion and proportional resizing.
+- Supports dedicated page breaks, single-section page setup, simple default
+  header/footer text, and simple header/footer PAGE fields.
+- Uses typed operations, structured diagnostics, source-local safety checks,
+  package verification, reopen checks, and operation-specific postconditions.
 
-PPTX and XLSX have not started.
+## Node/N-API
 
-## Current Objective
+The adapter exposes capability discovery, blank-document creation, inspection,
+text search, text replacement, paragraph insertion/deletion/style/formatting,
+text formatting, table operations, page breaks, page setup, default
+headers/footers, and page numbers. Rust DOCX capabilities currently exceed
+Node/N-API parity for hyperlinks, lists, content controls, and picture
+mutations.
 
-Prove one source-backed DOCX mutation while preserving untouched package parts
-and XML source bytes.
+## Immediate Direction
 
-## Implemented
+1. Reach DOCX N-API parity.
+2. Validate complete application and agent workflows.
+3. Compare benchmark documents with current capabilities and identify real gaps.
+4. Add remaining DOCX P0 capabilities only when those workflows require them.
+5. Freeze DOCX V1 once benchmark and interoperability criteria are met, then
+   begin PPTX.
 
-- Minimal Rust workspace, CI, and native CLI.
-- Read-only OPC package opening from filesystem paths or owned ZIP bytes, with safe ZIP entry indexing.
-- Preservation-safe single-part package output to a filesystem path or in-memory ZIP bytes.
-- Embeddable `ReplaceText` execution from immutable DOCX bytes to verified output bytes and
-  structured diagnostics. Artifact persistence and versioning remain application-owned.
-- The Node.js N-API adapter exposes Rust-sourced DOCX capabilities plus async `findDocxText`,
-  bounded `inspectDocx` overview/headings/main-body paragraphs/tables/context, and
-  `executeDocxReplaceText`. Node `Buffer` bytes cross into semantic inspection/search or typed
-  replacement and replacement returns verified `Buffer` bytes. The core engine remains
-  Node-independent; normal failures stay structured and source identities remain internal.
-- Broad `inspectDocx` collections use version-local source order with `offset`, `limit`, total,
-  returned count, and `has_more`; table structures remain readable even where future mutation
-  would reject them.
-- Broad table inspection returns opaque version-local handles for tables, rows, columns, and
-  cells. Table mutation accepts those handles alongside existing semantic labels, allowing safe
-  updates and row/column insertion anchors even when visible labels are blank or duplicated.
-- Table inspection also reports Rust-derived, artifact-local affordances for row and column
-  insertion and cell-text replacement. These reuse the mutation safety checks and provide narrow
-  machine-readable reasons when a current table or cell is unsupported.
-- Preservation-safe `InsertTableRowAfter` inserts one complete row after a semantic first-cell
-  anchor in a simple main-body rectangular table selected by its complete header row. It creates
-  new text content while preserving safe cell, paragraph, run, and selected row formatting from
-  the anchor row, then verifies the reopened table structure and all table text.
-- Preservation-safe `InsertTableRowsAfter` inserts 1–100 complete rows in requested order with one
-  source insertion. `SetTableCellsText` updates 1–100 unique semantic cells in one simple selected
-  table only after all targets and expected values have been validated; both reopen and verify every
-  table while preserving untouched source and OPC payloads.
-- Preservation-safe `InsertTableColumnAfter` adds one column to a simple table only when an explicit
-  `w:tblGrid` has one `w:gridCol` per cell. It copies the adjacent grid column source unchanged,
-  preserving present, zero, or absent widths while increasing the table's grid width by one.
-- Preservation-safe table lifecycle operations create a rectangular direct-body table with a minimal
-  `w:tblGrid`, delete a selected table, and delete one row or one grid-aligned column. Final-row and
-  final-column deletion are rejected explicitly so callers must use table deletion instead.
-- Table semantic header and first-cell row-label targeting trims only leading and trailing Unicode
-  whitespace. Raw visible text remains unchanged; normalized duplicates remain ambiguous.
-- `[Content_Types].xml` Default and Override content type resolution.
-- Package-level `_rels/.rels` parsing and main office document discovery through
-  Transitional or Strict `officeDocument` relationships.
-- `opensuite inspect <path-to-office-file>` JSON package metadata output.
-- Source-aware DOCX semantic views for document text, tables, styles,
-  numbering, sections, headers/footers, references, pictures, and fields.
-- Intrinsic PNG and JPEG pixel-dimension parsing from image bytes, without
-  image decoding or DOCX/package dependencies.
-- Read-only `fldSimple` and nested complex-field inspection, including source
-  boundaries, instruction text, and cached result text when declared.
-- Read-only WordprocessingML content-control (`w:sdt`) inspection, including
-  source IDs, declared metadata, visible text, list/date metadata, and declared
-  data bindings without Custom XML resolution.
-- `opensuite inspect-content-controls <file.docx>` compact semantic output.
-- Read-only DOCX tracked-content changes: insertions, deletions, move-from, and
-  move-to revisions with metadata and Current/Original paragraph and cell text
-  views. `opensuite inspect-tracked-changes <file.docx>` and
-  `opensuite inspect-revision-view <file.docx> <current|original>` expose compact JSON.
-- Read-only standard DOCX comments, including comments-part relationship discovery,
-  metadata, body text, document range/reference pairing, and compact
-  `opensuite inspect-comments <file.docx>` output. Modern/threaded comments remain
-  unsupported and source-preserved.
-- Runtime/protocol boundary foundation: versioned DOCX read-side capability
-  discovery, compact diagnostics, and `opensuite capabilities`.
-- Mutation diagnostics carry optional machine-readable reason codes, operation IDs, and opaque
-  handle targets. Table safety refusals reuse the same reason identifiers as inspection affordances.
-- Preservation-safe `ReplaceText` for exact Current-view text in one source
-  node or across compatible ordinary runs in one paragraph, with semantic
-  preconditions, XML escaping, output reopen checks, and structured results.
-  Incompatible run formatting, inline wrappers, and tracked revision content
-  remain unsupported.
-- Current-view exact semantic text search across runs within one paragraph or
-  table-cell paragraph, with bounded context, deterministic occurrences, and
-  `opensuite find-text <input.docx> <text>`. `ReplaceText` uses the same resolver.
-- Read-only targeted text-context inspection for a `TextTarget`, returning its
-  full semantic container and up to ten nearby containers in source order.
-  `opensuite inspect-context <input.docx> <text> [occurrence] [before] [after]`
-  reuses Current-view target resolution and is declared as `inspect_context`.
-- Mutation output verification reads every ZIP payload, checks XML syntax and
-  internal relationship targets, then reopens and checks the semantic result.
-- Preservation-safe `InsertParagraphAfter` for a semantic text anchor in an ordinary,
-  direct main-document body paragraph. It inserts a plain unformatted paragraph,
-  verifies the output package, reopens it, and proves the paragraph follows its anchor.
-- Deterministic blank DOCX creation with main-document, relationships, basic styles (Normal and
-  Heading 1–3), and terminal section properties. Ordered direct body-block inspection exposes
-  version-local `bN` handles, and `InsertParagraph` places a plain paragraph at start/end or
-  before/after a paragraph or table handle while preserving terminal section properties.
-- Blank DOCX authoring defaults provide Arial 11pt body text, 1.15-line spacing, and 8pt before/after
-  paragraph spacing. OpenSuite-created tables use neutral single borders, 9360-twip equal-width grids, and
-  modest cell margins; imported documents remain source-preserved.
-- Fresh blank DOCX packages include a minimal settings part with Word compatibility mode 15, avoiding
-  legacy Compatibility Mode without changing settings or borders in imported documents.
-- OpenSuite-created table cells use table-level 5pt vertical and 7pt horizontal margins with compact
-  zero-spacing cell paragraphs. `SetTableFormatting` safely patches basic direct table alignment,
-  complete cell margins, and theme-safe grid/none borders.
-- Canonical table serialization uses valid single-prefix Word attributes (for example `w:w` and
-  `w:before`), preventing the malformed doubled-prefix attributes that strict DOCX consumers reject.
-- Preservation-safe `DeleteParagraph` for an ordinary direct body paragraph selected
-  through semantic text. It removes only that source span, checks ranges and wrappers,
-  preserves existing relationships, and verifies the reopened body structure.
-- Preservation-safe `SetTableCellText` for a simple top-level table cell selected by
-  exact row-label and column-header text. It supports one ordinary paragraph with
-  direct runs, including empty paragraphs, and verifies the reopened table cells.
-- Preservation-safe `SetContentControlText` for a simple text content control selected
-  by exact tag and/or alias. It supports one ordinary paragraph with direct runs,
-  including empty paragraphs, and verifies the reopened control text and metadata.
-- Preservation-safe `SetParagraphFormatting` for an ordinary direct body paragraph
-  selected through `TextTarget`. It patches only direct `w:pPr` alignment, spacing,
-  indentation, and keep properties, then reopens and verifies the direct formatting.
-- Preservation-safe `SetTextFormatting` for a Current-view range in simple direct body runs.
-  It splits only boundary runs, patches whole selected runs directly, and supports direct bold,
-  italic, font-size, and font-family changes.
-- Preservation-safe `SetHyperlink` applies, replaces, or clears an external HTTP(S) hyperlink for
-  existing text in one ordinary direct-body paragraph while preserving selected run formatting and
-  leaving unused relationships intact.
-- Preservation-safe `SetParagraphStyle` for an ordinary direct body paragraph selected through
-  `TextTarget`. It resolves an existing paragraph style by exact display name and changes only
-  the direct `w:pStyle` reference.
-- Preservation-safe `SetParagraphsList` applies or clears one level-zero bullet or decimal list
-  across 1–100 consecutive ordinary direct-body paragraphs. It appends canonical numbering
-  definitions and instances without rewriting imported numbering. Tests cover ID collision,
-  imported XML/relationship/content-type preservation, existing list replacement/clearing, and
-  creation of missing numbering parts, relationships, and content-type entries.
-- Preservation-safe `ReplacePicture` for a uniquely referenced, internal main-document PNG or
-  JPEG selected by exact picture metadata. It replaces only the same-type media payload.
-- Preservation-safe `InsertPicture` for inline PNG/JPEG images in the direct main document body.
-  It adds one media part and relationship, preserves unrelated parts, and sizes intrinsic pixels at
-  96 DPI capped at 6.5 inches wide.
-- Body-block inspection recognizes a direct-body paragraph containing exactly one ordinary inline,
-  embedded PNG/JPEG picture. It reports an opaque `pN` picture handle, EMU dimensions, optional
-  alt text, and `replace_picture`, `delete_picture`, and `set_picture_size` affordances. Floating, linked, mixed,
-  table, header/footer, and other DrawingML forms remain ordinary preserved content.
-- `DeletePicture` removes only the dedicated main-body picture paragraph selected by its `pN`
-  handle. Its relationship and media part are intentionally retained, even when unused.
-- `SetPictureSize` changes exactly one requested EMU dimension of a supported `pN` picture while
-  preserving its displayed ratio and synchronizing the inline and transform extents.
-  Arbitrary distortion, crop, and floating-picture layout remain deferred.
-- Preservation-safe explicit page breaks use one dedicated canonical main-body paragraph. Inspection
-  exposes `PageBreak` body blocks with `delete_page_break`; insert and delete use opaque body handles,
-  preserve surrounding content, and verify the reopened package and body ordering.
-- Preservation-safe `SetPageSetup` updates only the effective terminal main-document section: partial
-  top/right/bottom/left margins in twips, Letter/A4 paper size, and portrait/landscape orientation.
-  It preserves other section children and margin header/footer/gutter values, rejects multi-section
-  and tracked section layouts, and exposes semantic `inspect-page-setup` output.
-- Preservation-safe `SetHeaderFooterText` inspects, creates, replaces, or clears simple default
-  header/footer text for one safe single-section document. It preserves unrelated package content,
-  leaves cleared parts/relationships in place, and rejects complex or multi-section layouts.
-- Preservation-safe `SetPageNumber` creates, updates, or removes one canonical `PAGE` field in a
-  simple default header or footer of a safe single-section document. It supports left, center, and
-  right alignment while preserving the coexisting simple header/footer text and package identity.
-
-## Current Repository Target
-
-- `opensuite-opc`
-- `opensuite-docx`
-- `opensuite-node`
-- `opensuite-protocol`
-- `opensuite` CLI binary
-
-## Explicitly Not Implemented Yet
-
-- tracked-change and incompatible/wrapper cross-run text mutation
-- paragraph insertion in tables, headers/footers, content controls, tracked wrappers,
-  or after section-boundary paragraphs; insert-before, copied formatting, explicit styles,
-  and numbered-list semantics
-- empty paragraph targeting; table/header/footer/wrapper/section-boundary paragraph deletion;
-  automatic bookmark/comment repair and relationship garbage collection
-- merged or nested tables, table cells with multiple paragraphs or inline wrappers,
-  and generic table editing
-- data-bound, locked, placeholder-state, repeating, group, picture, checkbox, dropdown,
-  combo-box, nested, or multi-paragraph content-control mutation
-- paragraph styles, numbering, tabs, borders, shading, general section properties, and paragraph
-  formatting outside ordinary direct main-body paragraphs
-- table/header/footer, tracked, wrapped, or general character formatting
-- style creation, definition editing, non-paragraph style assignment, or style cleanup
-- picture deletion, resizing, relationship rewiring, or shared-image cloning
-- mutation batches or transactions
-- rendering
-- server
-- agent runtime
-- Python bindings
-- PPTX
-- XLSX
-
-`ReplaceText` writes a new artifact atomically after reopening it, while
-leaving the input artifact untouched. It copies unchanged part payloads as-is
-and patches only the main document XML text source region. The engine checks
-the semantic expected text; opaque application revision metadata is accepted
-but not enforced because application history remains outside the engine.
-
-Tracked-change edits, incompatible/wrapper cross-run edits, batches, broader validation,
-serialization APIs, and rendering remain unimplemented.
-
-Small hand-assembled fixtures remain useful for parser tests, but are not
-Office-interoperability evidence. Mutation interoperability checks use a
-known Office-openable input and still require manual Word/Google Docs review.
-
-Tracked formatting/property revisions such as `w:rPrChange`, `w:pPrChange`,
-and table/section property changes remain unsupported and source-preserved.
-
-## Next Milestone
-
-Extend typed DOCX mutation only when a new operation has a similarly narrow,
-preservation-safe source mapping.
+See [the DOCX engine reference](docx-engine.md) for product scope and the DOCX
+V1 stop rule.
