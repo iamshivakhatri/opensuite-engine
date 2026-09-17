@@ -245,6 +245,55 @@ pub(super) fn resolve_paragraph_anchor(
     Ok((matched.text, paragraph))
 }
 
+/// Resolves only the ordinary direct body paragraphs that paragraph formatting
+/// can safely mutate. Text in table cells must not make a body paragraph
+/// selector ambiguous.
+pub(super) fn resolve_formatting_paragraph(
+    source: &SourceDocument,
+    target: &TextTarget,
+) -> Result<(String, NodeId), OperationResult> {
+    let matches = crate::text_search::resolve_text(source, &target.text)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    if matches.is_empty() {
+        return Err(OperationResult::failed(
+            "TARGET_NOT_FOUND",
+            "text target was not found",
+        ));
+    }
+    let candidates = matches
+        .into_iter()
+        .filter_map(|matched| {
+            let paragraph = matched
+                .segments
+                .first()
+                .and_then(|segment| paragraph_ancestor(source, segment.id))?;
+            (matched
+                .segments
+                .iter()
+                .all(|segment| paragraph_ancestor(source, segment.id) == Some(paragraph))
+                && safe_body_paragraph(source, paragraph))
+            .then_some((matched.text, paragraph))
+        })
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Err(unsupported(
+            "paragraph formatting supports only ordinary direct body paragraphs",
+        ));
+    }
+    if let Some(occurrence) = target.occurrence {
+        return candidates.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "text target occurrence was not found")
+        });
+    }
+    if candidates.len() != 1 {
+        return Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "text target matches more than one current body paragraph",
+        ));
+    }
+    Ok(candidates.into_iter().next().expect("one candidate"))
+}
+
 pub(super) fn paragraph_ancestor(source: &SourceDocument, mut id: NodeId) -> Option<NodeId> {
     loop {
         if word(source, id, "p") {
@@ -254,7 +303,7 @@ pub(super) fn paragraph_ancestor(source: &SourceDocument, mut id: NodeId) -> Opt
     }
 }
 
-pub(super) fn safe_body_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
+pub(crate) fn safe_body_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
     let Some(body) = source.node(paragraph).and_then(|node| node.parent()) else {
         return false;
     };

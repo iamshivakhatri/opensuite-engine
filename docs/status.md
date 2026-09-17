@@ -4,7 +4,9 @@
 
 OpenSuite is a preservation-first DOCX engine. The Rust workspace contains the
 OPC package layer, DOCX engine, stable protocol types, native CLI, and Node
-N-API adapter. PPTX and XLSX have not started.
+N-API adapter. PPTX currently has package validation, slide/shape inspection,
+cheap paragraph text search, and safe replacement of one directly present
+DrawingML text run; XLSX has not started.
 
 ## Current DOCX Engine
 
@@ -22,7 +24,8 @@ N-API adapter. PPTX and XLSX have not started.
 - Creates, deletes, and safely edits simple direct-body tables, including rows,
   columns, cells, explicit column widths, cell shading, and basic table formatting.
 - Supports simple text content controls and typed bullet or decimal lists at
-  levels zero through two, including safe continuation and restart,
+  levels zero through two, including safe continuation and restart; one bullet
+  request may safely target separate source-ordered direct-body runs,
   external HTTP(S) hyperlinks, inline PNG/JPEG insertion and replacement,
   supported picture deletion and proportional resizing.
 - Supports dedicated page breaks, single-section page setup, simple default

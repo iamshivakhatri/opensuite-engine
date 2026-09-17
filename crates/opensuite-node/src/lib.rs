@@ -319,8 +319,9 @@ pub struct HeadingOutput {
 
 #[napi(object)]
 pub struct ParagraphOutput {
-    pub occurrence: u32,
+    pub index: u32,
     pub handle: Option<String>,
+    pub target_occurrence: Option<u32>,
     pub text: String,
     pub style_name: Option<String>,
     pub list: Option<ParagraphListOutput>,
@@ -1326,8 +1327,9 @@ fn paragraph_page_output(value: InspectionPage<DocxParagraph>) -> ParagraphPageO
             .items
             .into_iter()
             .map(|item| ParagraphOutput {
-                occurrence: item.occurrence as u32,
+                index: item.index as u32,
                 handle: item.handle,
+                target_occurrence: item.target_occurrence.map(|value| value as u32),
                 text: item.text,
                 style_name: item.style_name,
                 list: item.list.map(paragraph_list_output),

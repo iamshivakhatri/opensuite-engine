@@ -158,6 +158,7 @@ fn resolve_table_cell(
         }
         let row = rows.get(row_index).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "table cell handle row was not found")
+                .with_reason_code("TABLE_ROW_NOT_FOUND")
         })?;
         let cells = row.cells().collect::<Vec<_>>();
         let cell = cells
@@ -167,6 +168,7 @@ fn resolve_table_cell(
                     "TARGET_NOT_FOUND",
                     "table cell handle column was not found",
                 )
+                .with_reason_code("TABLE_COLUMN_NOT_FOUND")
             })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
@@ -320,7 +322,8 @@ pub(super) fn resolve_table_cell_in_table(
         return Err(OperationResult::failed(
             "TARGET_NOT_FOUND",
             "table column header was not found",
-        ));
+        )
+        .with_reason_code("TABLE_COLUMN_NOT_FOUND"));
     }
     let mut candidates = Vec::new();
     for (row_index, row) in rows.iter().enumerate().skip(1) {
@@ -342,16 +345,19 @@ pub(super) fn resolve_table_cell_in_table(
                 "TARGET_NOT_FOUND",
                 "table cell target occurrence was not found",
             )
+            .with_reason_code("TABLE_ROW_NOT_FOUND")
         })?
     } else if candidates.len() != 1 {
-        return Err(OperationResult::failed(
-            if candidates.is_empty() {
-                "TARGET_NOT_FOUND"
-            } else {
-                "TARGET_AMBIGUOUS"
-            },
-            "table cell target does not resolve to one current semantic cell",
-        ));
+        return Err(if candidates.is_empty() {
+            OperationResult::failed("TARGET_NOT_FOUND", "table row label was not found")
+                .with_reason_code("TABLE_ROW_NOT_FOUND")
+        } else {
+            OperationResult::failed(
+                "TARGET_AMBIGUOUS",
+                "table cell target matches more than one current semantic cell",
+            )
+            .with_reason_code("TABLE_CELL_AMBIGUOUS")
+        });
     } else {
         candidates.pop().expect("one candidate")
     };

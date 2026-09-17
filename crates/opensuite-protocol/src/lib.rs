@@ -796,8 +796,13 @@ pub struct DocxHeading {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocxParagraph {
-    pub occurrence: usize,
+    /// Zero-based position among ordinary direct body paragraphs.
+    pub index: usize,
     pub handle: Option<String>,
+    /// Zero-based occurrence among ordinary body paragraphs with the same
+    /// current-view text. This is the selector accepted by paragraph
+    /// formatting mutations.
+    pub target_occurrence: Option<usize>,
     pub text: String,
     pub style_name: Option<String>,
     pub list: Option<DocxParagraphList>,

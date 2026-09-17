@@ -4,6 +4,7 @@ use opensuite_protocol::{
     DocxParagraph, DocxPicture, DocxPictureFormat, DocxTable, DocxTableColumn, DocxTableRow,
     InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectionPage,
 };
+use std::collections::HashMap;
 
 use crate::{BodyBlock, DocxDocument, RevisionView, SourceDocument, StyleSheet, load_styles};
 
@@ -157,6 +158,21 @@ fn paragraphs(
     let Some(page) = page(offset, limit) else {
         return invalid_bounds();
     };
+    let mut target_occurrences = HashMap::new();
+    let mut text_counts = HashMap::new();
+    for paragraph in document.paragraphs() {
+        let text = match paragraph.text_for_view(RevisionView::Current) {
+            Ok(text) => text,
+            Err(error) => {
+                return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact");
+            }
+        };
+        if crate::mutation::safe_body_paragraph(source, paragraph.source_id()) {
+            let occurrence = text_counts.entry(text).or_insert(0);
+            target_occurrences.insert(paragraph.source_id(), *occurrence);
+            *occurrence += 1;
+        }
+    }
     let mut total = 0;
     let mut items = Vec::new();
     for paragraph in document.paragraphs() {
@@ -172,9 +188,10 @@ fn paragraphs(
             }
         };
         items.push(DocxParagraph {
-            occurrence,
+            index: occurrence,
             handle: direct_body_block_index(source, document.body_id(), paragraph.source_id())
                 .map(|index| format!("b{index}")),
+            target_occurrence: target_occurrences.get(&paragraph.source_id()).copied(),
             text,
             style_name: paragraph_style_name(&paragraph, styles),
             list: match paragraph_list_reference(source, &paragraph, styles) {
@@ -728,6 +745,28 @@ mod tests {
         assert!(paragraphs.has_more);
         assert_eq!(paragraphs.items[1].text, "new text");
         assert_eq!(paragraphs.items[1].style_name.as_deref(), Some("Body Text"));
+    }
+
+    #[test]
+    fn paragraphs_expose_the_same_occurrence_used_by_paragraph_formatting() {
+        let source = source(
+            "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>The Lantern Moth</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>The Lantern Moth</w:t></w:r></w:p><w:p><w:r><w:t>Repeated</w:t></w:r></w:p><w:p><w:r><w:t>Repeated</w:t></w:r></w:p>",
+        );
+        let result = paragraphs(
+            &source,
+            DocxDocument::new(&source).unwrap(),
+            None,
+            None,
+            0,
+            10,
+        );
+        let Some(InspectDocxContent::Paragraphs(paragraphs)) = result.content else {
+            panic!("expected paragraphs");
+        };
+        assert_eq!(paragraphs.items[0].index, 0);
+        assert_eq!(paragraphs.items[0].target_occurrence, Some(0));
+        assert_eq!(paragraphs.items[1].target_occurrence, Some(0));
+        assert_eq!(paragraphs.items[2].target_occurrence, Some(1));
     }
 
     #[test]

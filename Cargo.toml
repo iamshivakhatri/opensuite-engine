@@ -2,6 +2,7 @@
 members = [
     "crates/opensuite-opc",
     "crates/opensuite-docx",
+    "crates/opensuite-pptx",
     "crates/opensuite-protocol",
     "crates/opensuite-node",
     "bins/opensuite",

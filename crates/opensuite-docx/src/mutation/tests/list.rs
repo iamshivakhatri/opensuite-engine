@@ -37,7 +37,7 @@ fn authors_one_shared_decimal_list_and_can_clear_it() {
             &source,
             &SetParagraphsList {
                 targets: vec![targets[0].clone(), targets[2].clone()],
-                kind: ParagraphListKind::Bullet,
+                kind: ParagraphListKind::Decimal,
                 level: 0,
                 continue_from_previous: false,
                 base_revision: None,
@@ -115,6 +115,72 @@ fn authors_one_shared_decimal_list_and_can_clear_it() {
         package
             .part(&PartName::parse("/word/numbering.xml").unwrap())
             .is_ok()
+    );
+}
+
+#[test]
+fn bullets_can_cover_disjoint_source_ordered_runs() {
+    let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let bytes = insert_paragraphs_to_vec(
+        &package,
+        &main,
+        &source,
+        &InsertParagraphs {
+            texts: ["first", "second", "Section", "third", "fourth"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            placement: ParagraphPlacement::Start,
+            base_revision: None,
+        },
+    )
+    .unwrap();
+    let package = Package::from_bytes(bytes).unwrap();
+    let (_main, source) = crate::open_main_source(&package).unwrap();
+    let operation = SetParagraphsList {
+        targets: ["first", "second", "third", "fourth"]
+            .into_iter()
+            .map(|text| TextTarget {
+                text: text.to_owned(),
+                occurrence: None,
+            })
+            .collect(),
+        kind: ParagraphListKind::Bullet,
+        level: 0,
+        continue_from_previous: false,
+        base_revision: None,
+    };
+    let bytes = set_paragraphs_list_to_vec(&package, &main, &source, &operation).unwrap();
+    let package = Package::from_bytes(bytes).unwrap();
+    package.verify().unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let xml = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
+    assert_eq!(xml.matches("<w:numId w:val=\"1\"/>").count(), 4);
+    assert!(xml.contains("<w:t>Section</w:t>"));
+    assert!(
+        set_paragraphs_list_to_vec(
+            &package,
+            &main,
+            &source,
+            &SetParagraphsList {
+                kind: ParagraphListKind::Decimal,
+                ..operation.clone()
+            },
+        )
+        .is_err()
+    );
+    assert!(
+        set_paragraphs_list_to_vec(
+            &package,
+            &main,
+            &source,
+            &SetParagraphsList {
+                targets: operation.targets.iter().cloned().rev().collect(),
+                ..operation.clone()
+            },
+        )
+        .is_err()
     );
 }
 
@@ -248,7 +314,7 @@ fn preserves_imported_numbering_while_allocating_and_clearing_lists() {
         &package,
         &main,
         &source,
-        &list(ParagraphListKind::Bullet, &["First", "Existing"]),
+        &list(ParagraphListKind::Decimal, &["First", "Existing"]),
         &output,
     );
     assert_eq!(result.status, opensuite_protocol::OperationStatus::Failed);

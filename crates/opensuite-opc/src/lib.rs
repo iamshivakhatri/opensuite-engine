@@ -52,12 +52,16 @@ impl PartName {
     }
 
     fn resolve_target_segments(base: &[&str], target: &str) -> Result<Self, PackageError> {
-        if target.is_empty() || target.starts_with('/') || target.contains(['\\', '?', '#']) {
+        if target.is_empty() || target.contains(['\\', '?', '#']) {
             return Err(PackageError::InvalidRelationshipTarget(target.to_owned()));
         }
 
-        let mut segments = base.to_vec();
-        for segment in target.split('/') {
+        let mut segments = if target.starts_with('/') {
+            Vec::new()
+        } else {
+            base.to_vec()
+        };
+        for segment in target.trim_start_matches('/').split('/') {
             match segment {
                 "" => return Err(PackageError::InvalidRelationshipTarget(target.to_owned())),
                 "." => {}
@@ -1088,6 +1092,21 @@ mod tests {
         assert_eq!(package.part_count(), 1);
         assert_eq!(part.name.as_str(), "/custom/main.xml");
         assert_eq!(part.content_type.as_str(), "application/custom-main+xml");
+    }
+
+    #[test]
+    fn resolves_an_absolute_internal_relationship_target() {
+        let path = package_file(
+            &content_types("/custom/main.xml"),
+            &relationships("/custom/main.xml"),
+            &[("custom/main.xml", "<document/>")],
+        );
+        let package = Package::open(&path).unwrap();
+        assert_eq!(
+            package.main_office_document().unwrap().name.as_str(),
+            "/custom/main.xml"
+        );
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

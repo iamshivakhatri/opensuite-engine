@@ -75,6 +75,45 @@ fn sets_widths_and_header_shading_without_rewriting_other_properties() {
     let xml = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
     assert!(xml.contains(r#"<w:gridCol w:w="2400"/><w:gridCol w:w="6960"/>"#));
     assert_eq!(xml.matches(r#"w:fill="E9EEF5""#).count(), 2);
+    for (target, reason_code) in [
+        (
+            TableCellTarget {
+                row_label: "Missing".into(),
+                column_header: "Notes".into(),
+                occurrence: None,
+                handle: None,
+            },
+            "TABLE_ROW_NOT_FOUND",
+        ),
+        (
+            TableCellTarget {
+                row_label: "A".into(),
+                column_header: "Missing".into(),
+                occurrence: None,
+                handle: None,
+            },
+            "TABLE_COLUMN_NOT_FOUND",
+        ),
+    ] {
+        let result = set_table_cell_shading_to_vec(
+            &package,
+            &main,
+            &source,
+            &SetTableCellShading {
+                table: table.clone(),
+                updates: vec![TableCellShadingUpdate {
+                    target,
+                    fill: Some("E9EEF5".into()),
+                }],
+                base_revision: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            result.diagnostics[0].reason_code.as_deref(),
+            Some(reason_code)
+        );
+    }
     assert!(
         set_table_column_widths_to_vec(
             &package,

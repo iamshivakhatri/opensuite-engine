@@ -34,3 +34,22 @@ test('maps list levels and continuation through N-API', async () => {
     ['decimal', 0, true], ['decimal', 1, true], ['decimal', 2, true],
   ])
 })
+
+test('groups disjoint bullet runs without relaxing decimal or source order', async () => {
+  let bytes = (await executeDocxInsertParagraphs(createBlankDocx(), {
+    texts: ['First', 'Second', 'Section', 'Third', 'Fourth'], placement: { kind: 'end' },
+  })).output
+  const targets = ['First', 'Second', 'Third', 'Fourth'].map((text) => ({ text }))
+  const bullets = await executeDocxSetParagraphsList(bytes, { targets, kind: 'bullet' })
+  assert.equal(bullets.result.ok, true)
+  bytes = bullets.output
+  const inspected = await inspectDocx(bytes, { focus: { kind: 'paragraphs' } })
+  assert.deepEqual(inspected.paragraphs.items.map(({ text, list }) => [text, list?.kind ?? null]), [
+    ['First', 'bullet'], ['Second', 'bullet'], ['Section', null], ['Third', 'bullet'], ['Fourth', 'bullet'],
+  ])
+
+  const decimal = await executeDocxSetParagraphsList(bytes, { targets, kind: 'decimal' })
+  assert.equal(decimal.result.ok, false)
+  const reordered = await executeDocxSetParagraphsList(bytes, { targets: [...targets].reverse(), kind: 'bullet' })
+  assert.equal(reordered.result.ok, false)
+})

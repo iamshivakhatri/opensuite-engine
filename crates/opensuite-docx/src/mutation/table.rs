@@ -101,21 +101,23 @@ pub(super) fn select_table<'a>(
     target: &TableTarget,
 ) -> Result<(usize, NodeId, Vec<crate::Row<'a>>, Vec<String>), OperationResult> {
     if tables.is_empty() {
-        return Err(OperationResult::failed(
-            "TARGET_NOT_FOUND",
-            "table header row was not found",
-        ));
+        return Err(
+            OperationResult::failed("TARGET_NOT_FOUND", "table header row was not found")
+                .with_reason_code("TABLE_NOT_FOUND"),
+        );
     }
     if let Some(occurrence) = target.occurrence {
         return tables.into_iter().nth(occurrence).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "table target occurrence was not found")
+                .with_reason_code("TABLE_NOT_FOUND")
         });
     }
     if tables.len() != 1 {
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "table header row matches more than one table",
-        ));
+        )
+        .with_reason_code("TABLE_AMBIGUOUS"));
     }
     Ok(tables.pop().expect("one table"))
 }

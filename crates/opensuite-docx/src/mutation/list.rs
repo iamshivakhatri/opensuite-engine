@@ -2,7 +2,7 @@ use super::*;
 
 const AUTHORED_DEFAULT_FONT: &str = "Arial";
 
-/// Sets or clears one ordinary authored list level over consecutive direct body paragraphs.
+/// Sets or clears one ordinary authored list level over direct body paragraphs.
 pub fn set_paragraphs_list_to_vec(
     package: &Package,
     main: &Part,
@@ -15,7 +15,7 @@ pub fn set_paragraphs_list_to_vec(
             "DOCX V1 supports list levels zero through two",
         ));
     }
-    let resolved = resolve_list_paragraphs(source, &operation.targets)?;
+    let resolved = resolve_list_paragraphs(source, &operation.targets, operation.kind)?;
     let body_before = body_texts(source)?
         .into_iter()
         .map(|(_, text)| text)
@@ -165,6 +165,7 @@ pub fn set_paragraphs_list(
 pub(super) fn resolve_list_paragraphs(
     source: &SourceDocument,
     targets: &[TextTarget],
+    kind: ParagraphListKind,
 ) -> Result<Vec<(String, NodeId)>, OperationResult> {
     if targets.is_empty() || targets.len() > MAX_PARAGRAPHS_PER_OPERATION {
         return Err(OperationResult::failed(
@@ -192,7 +193,10 @@ pub(super) fn resolve_list_paragraphs(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if positions.windows(2).any(|pair| pair[1] != pair[0] + 1) {
+    if positions.windows(2).any(|pair| pair[1] <= pair[0])
+        || (kind != ParagraphListKind::Bullet
+            && positions.windows(2).any(|pair| pair[1] != pair[0] + 1))
+    {
         return Err(OperationResult::failed(
             "INVALID_OPERATION",
             "list targets must be consecutive direct body paragraphs in source order",
@@ -498,7 +502,7 @@ pub(super) fn write_list_package(
             &reopened,
             &main,
             &source,
-            &resolve_list_paragraphs(&source, targets)?,
+            &resolve_list_paragraphs(&source, targets, kind)?,
         )?;
         if references.windows(2).any(|pair| pair[0] != pair[1]) {
             return Err(OperationResult::failed(

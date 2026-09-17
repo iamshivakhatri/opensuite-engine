@@ -1,0 +1,124 @@
+# Build + publish @opensuite/engine (N-API) for linux-x64-gnu and darwin-arm64.
+# Requires repo secret NPM_TOKEN (automation token for @opensuite scope).
+#
+# Triggers:
+# - workflow_dispatch (manual)
+# - push of tags matching v*.*.* (e.g. v0.1.0)
+
+name: Publish engine
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  DEBUG: napi:*
+  APP_NAME: opensuite_node
+  WORKING_DIRECTORY: crates/opensuite-node
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build: npm run build -- --target x86_64-unknown-linux-gnu --use-napi-cross
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            build: npm run build -- --target aarch64-apple-darwin
+    name: build-${{ matrix.target }}
+    runs-on: ${{ matrix.host }}
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/opensuite-node/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ~/.napi-rs
+            target/
+          key: engine-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build native binding
+        run: ${{ matrix.build }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: |
+            ${{ env.WORKING_DIRECTORY }}/${{ env.APP_NAME }}.*.node
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/opensuite-node/package-lock.json
+          registry-url: https://registry.npmjs.org
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Create npm dirs
+        run: npm run create-npm-dirs
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.WORKING_DIRECTORY }}/artifacts
+
+      - name: Move artifacts into packages
+        run: npm run artifacts -- --output-dir artifacts --npm-dir npm
+
+      - name: List packages
+        run: ls -R ./npm
+
+      - name: Publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is not set — skipping publish (artifacts built OK)."
+            exit 0
+          fi
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
+          npm config set provenance true
+          npm publish --access public

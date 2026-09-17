@@ -15,7 +15,7 @@ pub fn set_paragraph_formatting(
             "output path must differ from input path",
         );
     }
-    let (text, paragraph) = match resolve_paragraph_anchor(source, &operation.target) {
+    let (text, paragraph) = match resolve_formatting_paragraph(source, &operation.target) {
         Ok(value) => value,
         Err(result) => return result,
     };
@@ -50,7 +50,7 @@ pub fn set_paragraph_formatting_to_vec(
     source: &SourceDocument,
     operation: &SetParagraphFormatting,
 ) -> Result<Vec<u8>, OperationResult> {
-    let (_, paragraph) = resolve_paragraph_anchor(source, &operation.target)?;
+    let (_, paragraph) = resolve_formatting_paragraph(source, &operation.target)?;
     write_patches_to_vec(
         package,
         main,
@@ -74,7 +74,7 @@ pub fn set_paragraph_style(
             "output path must differ from input path",
         );
     }
-    let (text, paragraph) = match resolve_paragraph_anchor(source, &operation.target) {
+    let (text, paragraph) = match resolve_formatting_paragraph(source, &operation.target) {
         Ok(value) => value,
         Err(result) => return result,
     };
@@ -136,7 +136,7 @@ pub fn set_paragraph_style_to_vec(
     source: &SourceDocument,
     operation: &SetParagraphStyle,
 ) -> Result<Vec<u8>, OperationResult> {
-    let (_, paragraph) = resolve_paragraph_anchor(source, &operation.target)?;
+    let (_, paragraph) = resolve_formatting_paragraph(source, &operation.target)?;
     let styles = crate::load_styles(package, main).map_err(document_invalid)?;
     let style = resolve_paragraph_style(styles.as_ref(), &operation.style)?;
     write_patches_to_vec(
@@ -162,13 +162,14 @@ pub(super) fn resolve_paragraph_style(
         return Err(OperationResult::failed(
             "TARGET_NOT_FOUND",
             "paragraph style name must not be empty",
-        ));
+        )
+        .with_reason_code("STYLE_NOT_FOUND"));
     }
     let Some(styles) = styles else {
-        return Err(OperationResult::failed(
-            "TARGET_NOT_FOUND",
-            "document has no stylesheet",
-        ));
+        return Err(
+            OperationResult::failed("UNSUPPORTED_OPERATION", "document has no stylesheet")
+                .with_reason_code("NO_STYLESHEET"),
+        );
     };
     let matches = styles
         .styles()
@@ -178,13 +179,15 @@ pub(super) fn resolve_paragraph_style(
         return Err(OperationResult::failed(
             "TARGET_NOT_FOUND",
             "paragraph style name was not found",
-        ));
+        )
+        .with_reason_code("STYLE_NOT_FOUND"));
     }
     if matches.len() != 1 {
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "paragraph style name matches more than one style",
-        ));
+        )
+        .with_reason_code("STYLE_AMBIGUOUS"));
     }
     (matches[0].style_type() == crate::StyleType::Paragraph)
         .then_some(Some((matches[0].id().as_str().to_owned(), name.clone())))
@@ -634,7 +637,7 @@ pub(super) fn verify_formatting_output(
     let package = Package::open(output).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
     let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
-    let (resolved, paragraph) = resolve_paragraph_anchor(&source, target)?;
+    let (resolved, paragraph) = resolve_formatting_paragraph(&source, target)?;
     if resolved != text {
         return Err(OperationResult::failed(
             "DOCUMENT_INVALID",
@@ -668,7 +671,7 @@ pub(super) fn verify_paragraph_style_output(
     let package = Package::open(output).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
     let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
-    let (resolved, paragraph) = resolve_paragraph_anchor(&source, target)?;
+    let (resolved, paragraph) = resolve_formatting_paragraph(&source, target)?;
     if resolved != text {
         return Err(OperationResult::failed(
             "DOCUMENT_INVALID",

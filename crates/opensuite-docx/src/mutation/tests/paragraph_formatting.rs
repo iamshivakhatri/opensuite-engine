@@ -150,9 +150,9 @@ fn sets_and_clears_existing_paragraph_styles_by_name_without_touching_styles_par
             .unwrap()
             .contains("pStyle")
     );
-    for (style, code) in [
-        ("Emphasis", "UNSUPPORTED_OPERATION"),
-        ("Missing", "TARGET_NOT_FOUND"),
+    for (style, code, reason_code) in [
+        ("Emphasis", "UNSUPPORTED_OPERATION", None),
+        ("Missing", "TARGET_NOT_FOUND", Some("STYLE_NOT_FOUND")),
     ] {
         let result = set_paragraph_style(
             &package,
@@ -169,8 +169,105 @@ fn sets_and_clears_existing_paragraph_styles_by_name_without_touching_styles_par
             path("style-rejected"),
         );
         assert_eq!(result.diagnostics[0].code, code);
+        assert_eq!(result.diagnostics[0].reason_code.as_deref(), reason_code);
     }
     fs::remove_file(input).unwrap();
     fs::remove_file(output).unwrap();
     fs::remove_file(cleared).unwrap();
+}
+
+#[test]
+fn paragraph_style_reports_no_stylesheet_separately_from_target_failure() {
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:r><w:t>Style me</w:t></w:r></w:p></w:body></w:document>"
+    ));
+    let package = Package::open(&input).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let result = set_paragraph_style(
+        &package,
+        &main,
+        &source,
+        &SetParagraphStyle {
+            target: TextTarget {
+                text: "Style me".to_owned(),
+                occurrence: None,
+            },
+            style: PropertyPatch::Set("Heading 1".to_owned()),
+            base_revision: None,
+        },
+        path("style-no-stylesheet"),
+    );
+    assert_eq!(result.diagnostics[0].code, "UNSUPPORTED_OPERATION");
+    assert_eq!(
+        result.diagnostics[0].reason_code.as_deref(),
+        Some("NO_STYLESHEET")
+    );
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
+fn paragraph_formatting_ignores_matching_table_cell_text_and_counts_body_duplicates() {
+    let input = styled_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>The Lantern Moth</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>The Lantern Moth</w:t></w:r></w:p><w:p><w:r><w:t>Repeated</w:t></w:r></w:p><w:p><w:r><w:t>Repeated</w:t></w:r></w:p></w:body></w:document>"
+    ));
+    let output = path("style-body-target");
+    let package = Package::open(&input).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let apply = |target: TextTarget, output: &std::path::Path| {
+        set_paragraph_style(
+            &package,
+            &main,
+            &source,
+            &SetParagraphStyle {
+                target,
+                style: PropertyPatch::Set("Heading 1".to_owned()),
+                base_revision: None,
+            },
+            output,
+        )
+    };
+
+    assert_eq!(
+        apply(
+            TextTarget {
+                text: "The Lantern Moth".to_owned(),
+                occurrence: None,
+            },
+            &output,
+        )
+        .status,
+        opensuite_protocol::OperationStatus::Applied
+    );
+    let xml = String::from_utf8(entry(&output, "word/document.xml")).unwrap();
+    assert_eq!(xml.matches("<w:pStyle w:val=\"HeadingOne\"/>").count(), 1);
+
+    let ambiguous = apply(
+        TextTarget {
+            text: "Repeated".to_owned(),
+            occurrence: None,
+        },
+        &path("style-body-ambiguous"),
+    );
+    assert_eq!(ambiguous.diagnostics[0].code, "TARGET_AMBIGUOUS");
+
+    let repeated = path("style-body-occurrence");
+    assert_eq!(
+        apply(
+            TextTarget {
+                text: "Repeated".to_owned(),
+                occurrence: Some(1),
+            },
+            &repeated,
+        )
+        .status,
+        opensuite_protocol::OperationStatus::Applied
+    );
+    let xml = String::from_utf8(entry(&repeated, "word/document.xml")).unwrap();
+    assert!(
+        xml.contains("<w:t>Repeated</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val=\"HeadingOne\"/>")
+    );
+
+    fs::remove_file(input).unwrap();
+    fs::remove_file(output).unwrap();
+    fs::remove_file(repeated).unwrap();
 }
