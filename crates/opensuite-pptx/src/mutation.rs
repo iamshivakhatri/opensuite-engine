@@ -4,7 +4,7 @@ use opensuite_opc::{Package, Part};
 use opensuite_protocol::OperationResult;
 
 use crate::{
-    PptxInspection, ShapeKind,
+    PptxInspection, ShapeGeometry, ShapeKind,
     handles::{ParagraphHandle, RunHandle, parse_paragraph_handle, parse_run_handle},
     inspect_pptx, is_drawing_namespace, is_presentation_namespace, presentation_element,
     presentation_slide_ids, slide_part, top_level_shape_kind,
@@ -27,6 +27,17 @@ pub struct ReplaceParagraphTextRange {
     pub expected_current_text: String,
     pub expected_paragraph_text: String,
     pub replacement_text: String,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetShapeGeometry {
+    pub shape_handle: String,
+    pub expected_current_geometry: ShapeGeometry,
+    pub x: i64,
+    pub y: i64,
+    pub width: i64,
+    pub height: i64,
     pub base_revision: Option<String>,
 }
 
@@ -244,9 +255,239 @@ pub fn execute_pptx_replace_paragraph_text_range(
     }
 }
 
+pub fn execute_pptx_set_shape_geometry(
+    input_artifact: Vec<u8>,
+    operation: &SetShapeGeometry,
+) -> PptxExecutionResult {
+    if operation.width <= 0 || operation.height <= 0 {
+        return failed("INVALID_GEOMETRY", "width and height must be positive")
+            .with_target("set_shape_geometry", &operation.shape_handle);
+    }
+    let package = match Package::from_bytes(input_artifact.clone()) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load PPTX artifact"),
+    };
+    if let Err(error) = package.verify() {
+        return failed(error.code(), "PPTX package failed validation");
+    }
+    let before = match inspection(input_artifact) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let target = match crate::handles::parse_shape_handle(&operation.shape_handle) {
+        Some(value) => value,
+        None => return target_not_found(&operation.shape_handle),
+    };
+    let shape = match before
+        .overview
+        .as_ref()
+        .and_then(|value| value.slides.get(target.slide_index))
+        .and_then(|slide| slide.shapes.get(target.shape_index))
+    {
+        Some(value) => value,
+        None => return target_not_found(&operation.shape_handle),
+    };
+    if !matches!(
+        shape.kind,
+        ShapeKind::Shape | ShapeKind::Picture | ShapeKind::GraphicFrame
+    ) {
+        return unsupported(
+            &operation.shape_handle,
+            "shape type has no supported direct transform",
+        );
+    }
+    if shape.geometry.as_ref() != Some(&operation.expected_current_geometry) {
+        return failed(
+            "PRECONDITION_FAILED",
+            "shape geometry does not match expected current geometry",
+        )
+        .with_target("set_shape_geometry", &operation.shape_handle);
+    }
+    if !has_direct_geometry(&operation.expected_current_geometry) {
+        return unsupported(
+            &operation.shape_handle,
+            "shape has no direct transform geometry",
+        );
+    }
+    let main = match package.main_office_document() {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not find main presentation part"),
+    };
+    let part = match slide_part_for_index(&package, &main, target.slide_index) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let source = match package.read_part(&part) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read slide part"),
+    };
+    let spans = match find_geometry_attributes(&source, target) {
+        Some(value) => value,
+        None => {
+            return unsupported(
+                &operation.shape_handle,
+                "shape direct transform is malformed",
+            );
+        }
+    };
+    let mut patched = source;
+    for ((start, end), value) in [
+        (spans.0, operation.x),
+        (spans.1, operation.y),
+        (spans.2, operation.width),
+        (spans.3, operation.height),
+    ]
+    .into_iter()
+    .rev()
+    {
+        patched.splice(start..end, value.to_string().bytes());
+    }
+    let output = match package.write_replaced_part_to_vec(&part, &patched) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), error.to_string()),
+    };
+    let after = match inspection(output.clone()) {
+        Ok(value) => value,
+        Err(_) => return geometry_verification_failed(operation),
+    };
+    let expected = ShapeGeometry {
+        x: Some(operation.x),
+        y: Some(operation.y),
+        width: Some(operation.width),
+        height: Some(operation.height),
+        rotation: operation.expected_current_geometry.rotation,
+        flip_horizontal: operation.expected_current_geometry.flip_horizontal,
+        flip_vertical: operation.expected_current_geometry.flip_vertical,
+    };
+    let actual = after
+        .overview
+        .as_ref()
+        .and_then(|value| value.slides.get(target.slide_index))
+        .and_then(|slide| slide.shapes.get(target.shape_index));
+    if actual.is_none_or(|value| {
+        value.handle != operation.shape_handle || value.geometry.as_ref() != Some(&expected)
+    }) {
+        return geometry_verification_failed(operation);
+    }
+    PptxExecutionResult {
+        operation: OperationResult::applied("geometry".to_owned(), "geometry".to_owned()),
+        output_artifact: Some(output),
+    }
+}
+
 fn verification_range_failed(operation: &ReplaceParagraphTextRange) -> PptxExecutionResult {
     failed("DOCUMENT_INVALID", "output PPTX artifact failed validation")
         .with_target("replace_paragraph_text_range", &operation.paragraph_handle)
+}
+
+fn has_direct_geometry(value: &ShapeGeometry) -> bool {
+    value.x.is_some() && value.y.is_some() && value.width.is_some() && value.height.is_some()
+}
+
+fn find_geometry_attributes(
+    source: &[u8],
+    target: crate::handles::ShapeHandle,
+) -> Option<(
+    (usize, usize),
+    (usize, usize),
+    (usize, usize),
+    (usize, usize),
+)> {
+    let mut reader = NsReader::from_reader(source);
+    let mut buffer = Vec::new();
+    let mut depth = 0usize;
+    let mut tree = None;
+    let mut index = 0usize;
+    let mut shape = None;
+    let mut xfrm = None;
+    let mut values = [None; 4];
+    loop {
+        let (namespace, event) = reader.read_resolved_event_into(&mut buffer).ok()?;
+        let presentation = is_presentation_namespace(&namespace);
+        match event {
+            Event::Start(element) => {
+                depth += 1;
+                if presentation_element(presentation, &element, "spTree") {
+                    tree = Some(depth);
+                } else if tree == Some(depth - 1) {
+                    if let Some(kind) = top_level_shape_kind(presentation, &element) {
+                        if index == target.shape_index
+                            && matches!(
+                                kind,
+                                ShapeKind::Shape | ShapeKind::Picture | ShapeKind::GraphicFrame
+                            )
+                        {
+                            shape = Some(depth);
+                        }
+                        index += 1;
+                    }
+                } else if shape.is_some()
+                    && element.local_name().as_ref() == b"xfrm"
+                    && depth <= shape? + 2
+                {
+                    xfrm = Some(depth);
+                }
+            }
+            Event::Empty(element) => {
+                if tree == Some(depth) {
+                    if let Some(kind) = top_level_shape_kind(presentation, &element) {
+                        if index == target.shape_index
+                            && matches!(
+                                kind,
+                                ShapeKind::Shape | ShapeKind::Picture | ShapeKind::GraphicFrame
+                            )
+                        {
+                            shape = Some(depth);
+                        }
+                        index += 1;
+                    }
+                }
+                if xfrm == Some(depth) && element.local_name().as_ref() == b"off" {
+                    let end = reader.buffer_position() as usize;
+                    let start = end.checked_sub(element.as_ref().len())?;
+                    values[0] = raw_attribute_span(&source[start..end], start, b"x");
+                    values[1] = raw_attribute_span(&source[start..end], start, b"y");
+                }
+                if xfrm == Some(depth) && element.local_name().as_ref() == b"ext" {
+                    let end = reader.buffer_position() as usize;
+                    let start = end.checked_sub(element.as_ref().len())?;
+                    values[2] = raw_attribute_span(&source[start..end], start, b"cx");
+                    values[3] = raw_attribute_span(&source[start..end], start, b"cy");
+                }
+            }
+            Event::End(_) => {
+                if xfrm == Some(depth) {
+                    xfrm = None;
+                }
+                if shape == Some(depth) {
+                    shape = None;
+                }
+                if tree == Some(depth) {
+                    tree = None;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Some((values[0]?, values[1]?, values[2]?, values[3]?))
+}
+
+fn raw_attribute_span(raw: &[u8], absolute: usize, name: &[u8]) -> Option<(usize, usize)> {
+    let needle = [name, b"=\""].concat();
+    let start = raw
+        .windows(needle.len())
+        .position(|value| value == needle)?
+        + needle.len();
+    let end = start + raw[start..].iter().position(|byte| *byte == b'\"')?;
+    Some((absolute + start, absolute + end))
+}
+
+fn geometry_verification_failed(operation: &SetShapeGeometry) -> PptxExecutionResult {
+    failed("DOCUMENT_INVALID", "output PPTX geometry failed validation")
+        .with_target("set_shape_geometry", &operation.shape_handle)
 }
 
 fn semantic_target(

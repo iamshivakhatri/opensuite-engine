@@ -14,8 +14,9 @@ mod mutation;
 mod search;
 
 pub use mutation::{
-    PptxExecutionResult, ReplaceParagraphTextRange, ReplaceTextRun,
+    PptxExecutionResult, ReplaceParagraphTextRange, ReplaceTextRun, SetShapeGeometry,
     execute_pptx_replace_paragraph_text_range, execute_pptx_replace_text_run,
+    execute_pptx_set_shape_geometry,
 };
 pub use search::{
     FindPptxText, PptxShapeInspection, PptxTextMatch, PptxTextSearchResult, find_pptx_text,
@@ -1587,5 +1588,82 @@ mod tests {
                 .output_artifact
                 .is_none()
         );
+    }
+
+    #[test]
+    fn moves_and_resizes_a_direct_text_shape() {
+        let input = package(
+            &[("rId1", "")],
+            &rel("rId1", "slides/slide1.xml"),
+            &[(
+                "ppt/slides/slide1.xml",
+                &slide(
+                    "<p:sp><p:spPr><a:xfrm rot=\"9\" flipH=\"1\"><a:off x=\"1\" y=\"2\"/><a:ext cx=\"3\" cy=\"4\"/></a:xfrm></p:spPr><p:txBody><a:p><a:r><a:t>keep</a:t></a:r></a:p></p:txBody></p:sp>",
+                ),
+            )],
+        );
+        let current = inspect_pptx(input.clone()).overview.unwrap().slides[0].shapes[0]
+            .geometry
+            .clone()
+            .unwrap();
+        let output = execute_pptx_set_shape_geometry(
+            input,
+            &SetShapeGeometry {
+                shape_handle: "s0:sh0".to_owned(),
+                expected_current_geometry: current,
+                x: 10,
+                y: 20,
+                width: 30,
+                height: 40,
+                base_revision: None,
+            },
+        )
+        .output_artifact
+        .unwrap();
+        let shape = &inspect_pptx(output).overview.unwrap().slides[0].shapes[0];
+        assert_eq!(shape.geometry.as_ref().unwrap().x, Some(10));
+        assert_eq!(shape.geometry.as_ref().unwrap().rotation, Some(9));
+        assert_eq!(shape.text_preview.as_deref(), Some("keep"));
+    }
+
+    #[test]
+    fn preserves_realistic_fixture_parts_when_moving_a_text_shape() {
+        let input = include_bytes!("../tests/fixtures/realistic-presentation.pptx").to_vec();
+        let before = inspect_pptx(input.clone()).overview.unwrap();
+        let shape = &before.slides[0].shapes[1];
+        let output = execute_pptx_set_shape_geometry(
+            input.clone(),
+            &SetShapeGeometry {
+                shape_handle: shape.handle.clone(),
+                expected_current_geometry: shape.geometry.clone().unwrap(),
+                x: 1066800,
+                y: 1676400,
+                width: 4953000,
+                height: 1371600,
+                base_revision: None,
+            },
+        )
+        .output_artifact
+        .unwrap();
+        let changed = inspect_pptx(output.clone()).overview.unwrap();
+        assert_eq!(changed.slides.len(), 3);
+        assert_eq!(changed.slides[0].shapes[1].text_preview, shape.text_preview);
+        assert_eq!(
+            changed.slides[0].shapes[1].geometry.as_ref().unwrap().x,
+            Some(1066800)
+        );
+        for part in [
+            "ppt/slides/slide2.xml",
+            "ppt/slideMasters/slideMaster1.xml",
+            "ppt/slideLayouts/slideLayout1.xml",
+            "ppt/theme/theme1.xml",
+            "ppt/slides/charts/chart1.xml",
+        ] {
+            assert_eq!(
+                entry_bytes(&input, part),
+                entry_bytes(&output, part),
+                "{part}"
+            );
+        }
     }
 }
