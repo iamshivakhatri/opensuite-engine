@@ -1393,7 +1393,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_a_realistic_presentation_when_replacing_one_run() {
+    fn preserves_a_realistic_presentation_when_replacing_a_cross_run_range() {
         let input = include_bytes!("../tests/fixtures/realistic-presentation.pptx").to_vec();
         let inspection = inspect_pptx(input.clone());
         assert!(
@@ -1406,7 +1406,7 @@ mod tests {
         let search = find_pptx_text(
             input.clone(),
             &FindPptxText {
-                text: "& source".to_owned(),
+                text: "Baseline & source".to_owned(),
                 case_sensitive: true,
                 limit: None,
             },
@@ -1420,12 +1420,22 @@ mod tests {
                 .handle,
             target.shape_handle
         );
-        let output = execute_pptx_replace_text_run(
+        let before_paragraph = &overview.slides[0].shapes[1]
+            .text_frame
+            .as_ref()
+            .unwrap()
+            .paragraphs[0];
+        assert_eq!(before_paragraph.runs[0].formatting.bold, Some(true));
+        assert_eq!(before_paragraph.runs[1].formatting.italic, Some(true));
+        let output = execute_pptx_replace_paragraph_text_range(
             input.clone(),
-            &ReplaceTextRun {
-                run_handle: target.run_handles[0].clone(),
-                expected_current_text: "& source".to_owned(),
-                replacement_text: "& verified".to_owned(),
+            &ReplaceParagraphTextRange {
+                paragraph_handle: target.paragraph_handle.clone(),
+                start_offset: target.start_offset,
+                end_offset: target.end_offset,
+                expected_current_text: target.matched_text.clone(),
+                expected_paragraph_text: before_paragraph.text.clone(),
+                replacement_text: "Reviewed content".to_owned(),
                 base_revision: None,
             },
         )
@@ -1434,7 +1444,16 @@ mod tests {
         let changed = inspect_pptx(output.clone()).overview.unwrap();
         assert_eq!(changed.slides.len(), 3);
         assert_eq!(changed.slides[0].handle, "s0");
-        assert!(changed.slides[0].text_preview.contains("& verified"));
+        let paragraph = &changed.slides[0].shapes[1]
+            .text_frame
+            .as_ref()
+            .unwrap()
+            .paragraphs[0];
+        assert_eq!(paragraph.handle, target.paragraph_handle);
+        assert_eq!(paragraph.text, "Reviewed content remains");
+        assert_eq!(paragraph.runs[0].formatting.bold, Some(true));
+        assert_eq!(paragraph.runs[1].text, " remains");
+        assert_eq!(paragraph.runs[1].formatting.italic, Some(true));
         assert!(
             changed.slides[1]
                 .text_preview
@@ -1445,6 +1464,7 @@ mod tests {
             "ppt/slideLayouts/slideLayout1.xml",
             "ppt/theme/theme1.xml",
             "ppt/slides/slide2.xml",
+            "ppt/slides/charts/chart1.xml",
         ] {
             assert_eq!(
                 entry_bytes(&input, part),

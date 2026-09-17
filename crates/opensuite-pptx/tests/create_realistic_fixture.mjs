@@ -18,7 +18,7 @@ first.background.fill = "white";
 const title = text(first, "Title placeholder", "OpenSuite PPTX interoperability", { left: 72, top: 56, width: 1040, height: 64 }, "title");
 title.text.style = { fontSize: 34, bold: true, color: "slate-950", typeface: "Aptos Display" };
 const body = text(first, "Body placeholder", [
-  [{ run: "Baseline ", textStyle: { bold: true } }, { run: "& source", textStyle: { italic: true, color: "#2563eb" } }],
+  [{ run: "Baseline ", textStyle: { bold: true } }, { run: "& source remains", textStyle: { italic: true, color: "#2563eb" } }],
   [{ run: "Second paragraph remains unchanged." }],
 ], { left: 84, top: 160, width: 600, height: 160 }, "body");
 body.text.style = { fontSize: 22, color: "slate-800", typeface: "Aptos" };
