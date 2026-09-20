@@ -1,7 +1,7 @@
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
     Affordance, AffordanceReason, DocxBodyBlock, DocxBodyBlockKind, DocxHeading, DocxOverview,
-    DocxParagraph, DocxPicture, DocxPictureFormat, DocxTable, DocxTableColumn, DocxTableRow,
+    DocxParagraph, DocxPicture, DocxPictureFormat, DocxTable, DocxTableColumn, DocxTableRow, DocxTableRowWindow, DocxTableRowWindowItem,
     InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectionPage,
 };
 use std::collections::HashMap;
@@ -26,7 +26,24 @@ pub fn inspect_docx_document(
     match &request.focus {
         InspectDocxFocus::Overview => overview(document),
         InspectDocxFocus::BodyBlocks { offset, limit } => {
-            body_blocks(package, main, source, document, *offset, *limit)
+            let styles = match load_styles(package, main) {
+                Ok(styles) => styles,
+                Err(error) => {
+                    return InspectDocxResult::failed(
+                        error.code(),
+                        "could not inspect DOCX styles",
+                    );
+                }
+            };
+            body_blocks(
+                package,
+                main,
+                source,
+                document,
+                styles.as_ref(),
+                *offset,
+                *limit,
+            )
         }
         InspectDocxFocus::Headings { offset, limit } => {
             let styles = match load_styles(package, main) {
@@ -69,6 +86,7 @@ pub fn inspect_docx_document(
             )
         }
         InspectDocxFocus::Tables { offset, limit } => tables(source, document, *offset, *limit),
+        InspectDocxFocus::TableRows { table_handle, row_offset, row_limit } => table_rows(document, table_handle, *row_offset, *row_limit),
         InspectDocxFocus::Context(request) => {
             let result = match crate::inspect_text_context(source, request) {
                 Ok(result) => result,
@@ -249,6 +267,7 @@ fn body_blocks(
     main: &Part,
     source: &SourceDocument,
     document: DocxDocument<'_>,
+    styles: Option<&StyleSheet>,
     offset: usize,
     limit: usize,
 ) -> InspectDocxResult {
@@ -260,11 +279,39 @@ fn body_blocks(
     let mut items = Vec::new();
     let mut table_index = 0;
     let mut picture_index = 0;
+    let mut paragraphs = HashMap::new();
+    let mut tables = HashMap::new();
+    for block in document.blocks() {
+        match block {
+            BodyBlock::Paragraph(paragraph) => {
+                paragraphs.insert(paragraph.source_id(), paragraph);
+            }
+            BodyBlock::Table(table) => {
+                tables.insert(table.source_id(), table);
+            }
+        }
+    }
     for id in source.children(body) {
-        let (kind, text, table_handle, picture, affordances) = if is_word(source, id, "p") {
+        let (
+            kind,
+            text,
+            style_name,
+            heading_level,
+            table_handle,
+            row_count,
+            column_count,
+            header_texts,
+            picture,
+            affordances,
+        ) = if is_word(source, id, "p") {
             if page_break_paragraph(source, id) {
                 (
                     DocxBodyBlockKind::PageBreak,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                     None,
                     None,
                     None,
@@ -274,6 +321,11 @@ fn body_blocks(
                 picture_index += 1;
                 (
                     DocxBodyBlockKind::Picture,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                     None,
                     None,
                     Some(picture),
@@ -290,9 +342,19 @@ fn body_blocks(
                             );
                         }
                     };
+                let paragraph = paragraphs
+                    .get(&id)
+                    .expect("direct body paragraphs match semantic paragraphs");
+                let style_name = paragraph_style_name(paragraph, styles);
+                let heading_level = style_name.as_deref().and_then(heading_level);
                 (
                     DocxBodyBlockKind::Paragraph,
                     Some(text),
+                    style_name,
+                    heading_level,
+                    None,
+                    None,
+                    None,
                     None,
                     None,
                     Vec::new(),
@@ -301,10 +363,27 @@ fn body_blocks(
         } else if is_word(source, id, "tbl") {
             let handle = format!("t{table_index}");
             table_index += 1;
+            let table = tables
+                .get(&id)
+                .expect("direct body tables match semantic tables");
+            let (row_count, column_count, header_texts) = match table_summary(table) {
+                Ok(summary) => summary,
+                Err(error) => {
+                    return InspectDocxResult::failed(
+                        error.code(),
+                        "could not inspect DOCX artifact",
+                    );
+                }
+            };
             (
                 DocxBodyBlockKind::Table,
                 None,
+                None,
+                None,
                 Some(handle),
+                Some(row_count),
+                Some(column_count),
+                Some(header_texts),
                 None,
                 Vec::new(),
             )
@@ -318,7 +397,12 @@ fn body_blocks(
                 handle: format!("b{index}"),
                 kind,
                 text,
+                style_name,
+                heading_level,
                 table_handle,
+                row_count,
+                column_count,
+                header_texts,
                 picture,
                 affordances,
             });
@@ -327,6 +411,20 @@ fn body_blocks(
     InspectDocxResult::success(InspectDocxContent::BodyBlocks(page_result(
         total, page, items,
     )))
+}
+
+fn table_summary(
+    table: &crate::Table<'_>,
+) -> Result<(usize, usize, Vec<String>), crate::SemanticError> {
+    let mut rows = table.rows();
+    let Some(first_row) = rows.next() else {
+        return Ok((0, 0, Vec::new()));
+    };
+    let header_texts = first_row
+        .cells()
+        .map(|cell| cell.text_for_view(RevisionView::Current))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((rows.count() + 1, header_texts.len(), header_texts))
 }
 
 /// Recognizes only the canonical dedicated paragraph used for editable page breaks.
@@ -471,7 +569,12 @@ fn tables(
             table_id,
             cell_table_reason,
         );
-        let width = table.rows().next().map_or(0, |row| row.cells().count());
+        let (row_count, width, header_texts) = match table_summary(&table) {
+            Ok(summary) => summary,
+            Err(error) => {
+                return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact");
+            }
+        };
         let mut rows = Vec::new();
         for (row_index, row) in table.rows().enumerate() {
             let mut cells = Vec::new();
@@ -507,7 +610,7 @@ fn tables(
         items.push(DocxTable {
             occurrence,
             handle: format!("t{occurrence}"),
-            row_count: rows.len(),
+            row_count,
             is_rectangular,
             affordances: vec![
                 affordance("set_table_formatting", table_reason),
@@ -530,21 +633,44 @@ fn tables(
                         .or_else(|| crate::mutation::table_grid_reason(source, table_id, width)),
                 ),
             ],
-            columns: rows.first().map_or_else(Vec::new, |row| {
-                row.cells
-                    .iter()
-                    .enumerate()
-                    .map(|(column, text)| DocxTableColumn {
-                        occurrence: column,
-                        handle: format!("t{occurrence}:c{column}"),
-                        text: text.clone(),
-                    })
-                    .collect()
-            }),
+            columns: header_texts
+                .into_iter()
+                .enumerate()
+                .map(|(column, text)| DocxTableColumn {
+                    occurrence: column,
+                    handle: format!("t{occurrence}:c{column}"),
+                    text,
+                })
+                .collect(),
             rows,
         });
     }
     InspectDocxResult::success(InspectDocxContent::Tables(page_result(total, page, items)))
+}
+
+fn table_rows(document: DocxDocument<'_>, handle: &str, row_offset: usize, row_limit: usize) -> InspectDocxResult {
+    if row_limit == 0 || row_limit > 10 {
+        return InspectDocxResult::failed("INVALID_TABLE_ROW_LIMIT", "table row limit must be between 1 and 10");
+    }
+    let Some(index) = handle.strip_prefix('t').and_then(|value| value.parse::<usize>().ok()) else {
+        return InspectDocxResult::failed("PRECONDITION_FAILED", "table handle is malformed");
+    };
+    let Some(table) = document.blocks().filter_map(|block| match block { BodyBlock::Table(table) => Some(table), BodyBlock::Paragraph(_) => None }).nth(index) else {
+        return InspectDocxResult::failed("TARGET_NOT_FOUND", "table handle was not found");
+    };
+    let (row_count, column_count, header_texts) = match table_summary(&table) {
+        Ok(summary) => summary,
+        Err(error) => return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact"),
+    };
+    let mut rows = Vec::new();
+    for (index, row) in table.rows().enumerate().skip(row_offset).take(row_limit) {
+        let cells = match row.cells().map(|cell| cell.text_for_view(RevisionView::Current)).collect::<Result<Vec<_>, _>>() {
+            Ok(cells) => cells,
+            Err(error) => return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact"),
+        };
+        rows.push(DocxTableRowWindowItem { index, cells });
+    }
+    InspectDocxResult::success(InspectDocxContent::TableRows(DocxTableRowWindow { table_handle: handle.to_owned(), row_count, column_count, header_texts, row_offset, rows }))
 }
 
 fn affordance(capability: &'static str, reason: Option<AffordanceReason>) -> Affordance {
@@ -693,9 +819,63 @@ mod tests {
 
     fn styles() -> StyleSheet {
         StyleSheet::parse(
-            format!("<w:styles xmlns:w=\"{WORD}\"><w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"Heading 1\"/></w:style><w:style w:type=\"paragraph\" w:styleId=\"Body\"><w:name w:val=\"Body Text\"/></w:style></w:styles>").into_bytes(),
+            format!("<w:styles xmlns:w=\"{WORD}\"><w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"Heading 1\"/></w:style><w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"Heading 2\"/></w:style><w:style w:type=\"paragraph\" w:styleId=\"Heading3\"><w:name w:val=\"Heading 3\"/></w:style><w:style w:type=\"paragraph\" w:styleId=\"Body\"><w:name w:val=\"Body Text\"/></w:style></w:styles>").into_bytes(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn body_blocks_add_style_heading_and_slim_table_structure() {
+        let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+        let (main, _) = crate::open_main_source(&package).unwrap();
+        let source = source(
+            "<w:p><w:pPr><w:pStyle w:val=\"Body\"/></w:pPr><w:r><w:t>Normal</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val=\"Heading2\"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val=\"Heading3\"/></w:pPr><w:r><w:t>Three</w:t></w:r></w:p><w:p><w:r><w:t>Unstyled</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Avery</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Owner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Only</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+        );
+        let inspect = |offset, limit| {
+            body_blocks(
+                &package,
+                &main,
+                &source,
+                DocxDocument::new(&source).unwrap(),
+                Some(&styles()),
+                offset,
+                limit,
+            )
+        };
+        let Some(InspectDocxContent::BodyBlocks(blocks)) = inspect(0, 10).content else {
+            panic!("expected body blocks")
+        };
+        assert_eq!(blocks.items[0].text.as_deref(), Some("Normal"));
+        assert_eq!(blocks.items[0].style_name.as_deref(), Some("Body Text"));
+        assert_eq!(blocks.items[0].heading_level, None);
+        assert_eq!(blocks.items[1].heading_level, Some(1));
+        assert_eq!(blocks.items[2].heading_level, Some(2));
+        assert_eq!(blocks.items[3].heading_level, Some(3));
+        assert_eq!(blocks.items[4].style_name, None);
+        let first_table = &blocks.items[5];
+        assert_eq!(first_table.handle, "b5");
+        assert_eq!(first_table.table_handle.as_deref(), Some("t0"));
+        assert_eq!(first_table.row_count, Some(2));
+        assert_eq!(first_table.column_count, Some(2));
+        assert_eq!(
+            first_table.header_texts.as_deref(),
+            Some(["Name".to_owned(), "Role".to_owned()].as_slice())
+        );
+        assert_eq!(blocks.items[6].table_handle.as_deref(), Some("t1"));
+        assert_eq!(
+            blocks.items[6].header_texts.as_deref(),
+            Some(["Only".to_owned()].as_slice())
+        );
+
+        let Some(InspectDocxContent::BodyBlocks(page)) = inspect(5, 1).content else {
+            panic!("expected body blocks")
+        };
+        assert_eq!(page.total, 7);
+        assert!(page.has_more);
+        assert_eq!(
+            page.items[0].header_texts.as_deref(),
+            Some(["Name".to_owned(), "Role".to_owned()].as_slice())
+        );
     }
 
     #[test]
@@ -786,6 +966,26 @@ mod tests {
         assert_eq!(tables.items[0].rows[1].handle, "t0:r1");
         assert_eq!(tables.items[0].rows[1].cell_handles[0], "t0:r1:c0");
         assert!(!tables.items[0].is_rectangular);
+    }
+
+    #[test]
+    fn table_rows_returns_a_bounded_current_view_window() {
+        let source = source("<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Header</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>One</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:ins><w:r><w:t>Two</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Other</w:t></w:r></w:p></w:tc></w:tr></w:tbl>");
+        let result = table_rows(DocxDocument::new(&source).unwrap(), "t0", 1, 10);
+        let Some(InspectDocxContent::TableRows(rows)) = result.content else { panic!("expected table rows") };
+        assert_eq!(rows.row_count, 3);
+        assert_eq!(rows.column_count, 1);
+        assert_eq!(rows.header_texts, ["Header"]);
+        assert_eq!(rows.rows[0].index, 1);
+        assert_eq!(rows.rows[0].cells, ["One"]);
+        assert_eq!(rows.rows[1].index, 2);
+        assert_eq!(rows.rows[1].cells, ["Two"]);
+        let empty = table_rows(DocxDocument::new(&source).unwrap(), "t0", 3, 1);
+        let Some(InspectDocxContent::TableRows(empty)) = empty.content else { panic!("expected table rows") };
+        assert!(empty.rows.is_empty());
+        assert_eq!(table_rows(DocxDocument::new(&source).unwrap(), "bad", 0, 1).diagnostics[0].code, "PRECONDITION_FAILED");
+        assert_eq!(table_rows(DocxDocument::new(&source).unwrap(), "t9", 0, 1).diagnostics[0].code, "TARGET_NOT_FOUND");
+        assert_eq!(table_rows(DocxDocument::new(&source).unwrap(), "t0", 0, 11).diagnostics[0].code, "INVALID_TABLE_ROW_LIMIT");
     }
 
     #[test]

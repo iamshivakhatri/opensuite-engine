@@ -14,9 +14,10 @@ mod mutation;
 mod search;
 
 pub use mutation::{
-    PptxExecutionResult, ReplaceParagraphTextRange, ReplacePicture, ReplaceTextRun,
-    SetShapeGeometry, SetTextRunFormatting, execute_pptx_replace_paragraph_text_range,
-    execute_pptx_replace_picture, execute_pptx_replace_text_run, execute_pptx_set_shape_geometry,
+    InsertPicture, PptxExecutionResult, ReplaceParagraphTextRange, ReplacePicture, ReplaceTextRun,
+    SetShapeGeometry, SetTextRunFormatting, execute_pptx_insert_picture,
+    execute_pptx_replace_paragraph_text_range, execute_pptx_replace_picture,
+    execute_pptx_replace_text_run, execute_pptx_set_shape_geometry,
     execute_pptx_set_text_run_formatting,
 };
 pub use search::{
@@ -907,7 +908,7 @@ mod tests {
     }
     fn slide(body: &str) -> String {
         format!(
-            "<p:sld xmlns:p=\"{P}\" xmlns:a=\"{A}\"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/>{body}</p:spTree></p:cSld></p:sld>"
+            "<p:sld xmlns:p=\"{P}\" xmlns:a=\"{A}\" xmlns:r=\"{R}\"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/>{body}</p:spTree></p:cSld></p:sld>"
         )
     }
     fn rel(id: &str, target: &str) -> String {
@@ -920,6 +921,44 @@ mod tests {
         let mut value = Vec::new();
         entry.read_to_end(&mut value).unwrap();
         value
+    }
+
+    fn picture_insert_package(
+        slide_xml: &str,
+        slide_rels: &str,
+        extra_parts: &[(&str, &[u8])],
+    ) -> Vec<u8> {
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        for (name, value) in [
+            (
+                "[Content_Types].xml",
+                "<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/></Types>".to_owned(),
+            ),
+            (
+                "_rels/.rels",
+                format!("<Relationships><Relationship Id=\"rId1\" Type=\"{OFFICE}\" Target=\"ppt/presentation.xml\"/></Relationships>"),
+            ),
+            (
+                "ppt/presentation.xml",
+                format!("<p:presentation xmlns:p=\"{P}\" xmlns:r=\"{R}\"><p:sldIdLst><p:sldId r:id=\"rId1\"/></p:sldIdLst></p:presentation>"),
+            ),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                format!("<Relationships>{}</Relationships>", rel("rId1", "slides/slide1.xml")),
+            ),
+            ("ppt/slides/slide1.xml", slide_xml.to_owned()),
+            ("ppt/slides/_rels/slide1.xml.rels", slide_rels.to_owned()),
+            ("ppt/theme/theme1.xml", "<theme/>".to_owned()),
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(value.as_bytes()).unwrap();
+        }
+        for (name, value) in extra_parts {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(value).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
     }
 
     #[test]
@@ -1833,5 +1872,306 @@ mod tests {
                 .x,
             Some(1)
         );
+    }
+
+    #[test]
+    fn replaces_realistic_fixture_picture_without_changing_other_parts() {
+        let input = include_bytes!("../tests/fixtures/realistic-presentation.pptx").to_vec();
+        let replacement = include_bytes!("../tests/fixtures/replacement-landscape.png").to_vec();
+        let before = inspect_pptx(input.clone()).overview.unwrap();
+        let picture_index = before.slides[0]
+            .shapes
+            .iter()
+            .position(|shape| shape.kind == ShapeKind::Picture)
+            .unwrap();
+        let picture = &before.slides[0].shapes[picture_index];
+        let output = execute_pptx_replace_picture(
+            input.clone(),
+            &ReplacePicture {
+                shape_handle: picture.handle.clone(),
+                replacement_image: replacement.clone(),
+                expected_current_media_part: "/ppt/media/image.png".to_owned(),
+                expected_current_content_type: "image/png".to_owned(),
+                base_revision: None,
+            },
+        )
+        .output_artifact
+        .unwrap();
+        let changed = inspect_pptx(output.clone()).overview.unwrap();
+        assert_eq!(changed.slides.len(), 3);
+        assert_eq!(
+            changed
+                .slides
+                .iter()
+                .map(|slide| &slide.part_name)
+                .collect::<Vec<_>>(),
+            before
+                .slides
+                .iter()
+                .map(|slide| &slide.part_name)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            changed.slides[0].shapes[picture_index].handle,
+            picture.handle
+        );
+        assert_eq!(
+            changed.slides[0].shapes[picture_index].geometry,
+            picture.geometry
+        );
+        assert_eq!(
+            changed.slides[0].shapes[picture_index].object_id,
+            picture.object_id
+        );
+        assert_eq!(changed.slides[0].shapes[picture_index].name, picture.name);
+        assert_eq!(
+            changed.slides[0].text_preview,
+            before.slides[0].text_preview
+        );
+        for (index, shape) in before.slides[0].shapes.iter().enumerate() {
+            if index != picture_index {
+                assert_eq!(changed.slides[0].shapes[index], *shape);
+            }
+        }
+        assert_eq!(entry_bytes(&output, "ppt/media/image1.png"), replacement);
+        assert_eq!(
+            entry_bytes(&input, "ppt/media/image.png"),
+            entry_bytes(&output, "ppt/media/image.png")
+        );
+        for part in [
+            "ppt/slides/slide2.xml",
+            "ppt/slideMasters/slideMaster1.xml",
+            "ppt/slideLayouts/slideLayout1.xml",
+            "ppt/theme/theme1.xml",
+            "ppt/slides/charts/chart1.xml",
+        ] {
+            assert_eq!(
+                entry_bytes(&input, part),
+                entry_bytes(&output, part),
+                "{part}"
+            );
+        }
+    }
+
+    #[test]
+    fn inserts_png_at_the_end_with_stable_existing_handles() {
+        let input = picture_insert_package(
+            &slide(
+                "<p:sp><p:nvSpPr><p:cNvPr id=\"1\" name=\"Existing\"/></p:nvSpPr><p:spPr/><p:txBody><a:p><a:r><a:t>Keep text</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:cNvPr id=\"3\" name=\"Picture 1\"/></p:nvSpPr><p:spPr/></p:sp>",
+            ),
+            "<Relationships/>",
+            &[],
+        );
+        let before = inspect_pptx(input.clone()).overview.unwrap();
+        let image = include_bytes!("../tests/fixtures/replacement-landscape.png").to_vec();
+        let result = execute_pptx_insert_picture(
+            input.clone(),
+            &InsertPicture {
+                slide_handle: "s0".to_owned(),
+                image: image.clone(),
+                x: 10,
+                y: 20,
+                width: 30,
+                height: 40,
+                name: None,
+                base_revision: None,
+            },
+        );
+        assert!(result.output_artifact.is_some(), "{:?}", result.operation);
+        assert_eq!(result.created_picture_handle.as_deref(), Some("s0:sh2"));
+        let output = result.output_artifact.unwrap();
+        let after = inspect_pptx(output.clone()).overview.unwrap();
+        assert_eq!(after.slides[0].shapes[..2], before.slides[0].shapes);
+        let picture = &after.slides[0].shapes[2];
+        assert_eq!(picture.kind, ShapeKind::Picture);
+        assert_eq!(picture.object_id.as_deref(), Some("2"));
+        assert_eq!(picture.name.as_deref(), Some("Picture 2"));
+        assert_eq!(
+            picture.geometry,
+            Some(ShapeGeometry {
+                x: Some(10),
+                y: Some(20),
+                width: Some(30),
+                height: Some(40),
+                rotation: None,
+                flip_horizontal: None,
+                flip_vertical: None,
+            })
+        );
+        assert_eq!(entry_bytes(&output, "ppt/media/image1.png"), image);
+        assert!(
+            String::from_utf8(entry_bytes(&output, "ppt/slides/_rels/slide1.xml.rels"))
+                .unwrap()
+                .contains("Id=\"rId1\"")
+        );
+    }
+
+    #[test]
+    fn inserts_jpeg_with_a_supplied_name_and_content_type() {
+        let image = include_bytes!("../tests/fixtures/fixture-landscape.jpg").to_vec();
+        let output = execute_pptx_insert_picture(
+            picture_insert_package(&slide(""), "<Relationships/>", &[]),
+            &InsertPicture {
+                slide_handle: "s0".to_owned(),
+                image: image.clone(),
+                x: 100,
+                y: 200,
+                width: 300,
+                height: 400,
+                name: Some("Supplied photo".to_owned()),
+                base_revision: None,
+            },
+        )
+        .output_artifact
+        .unwrap();
+        let overview = inspect_pptx(output.clone()).overview.unwrap();
+        assert_eq!(
+            overview.slides[0].shapes[0].name.as_deref(),
+            Some("Supplied photo")
+        );
+        assert_eq!(entry_bytes(&output, "ppt/media/image1.jpeg"), image);
+        assert!(
+            String::from_utf8(entry_bytes(&output, "[Content_Types].xml"))
+                .unwrap()
+                .contains("Extension=\"jpeg\" ContentType=\"image/jpeg\"")
+        );
+    }
+
+    #[test]
+    fn allocates_collision_safe_picture_parts_and_inserts_before_extensions() {
+        let original = include_bytes!("../tests/fixtures/fixture-landscape.png");
+        let replacement = include_bytes!("../tests/fixtures/replacement-landscape.png").to_vec();
+        let input = picture_insert_package(
+            &slide(
+                "<p:sp><p:nvSpPr><p:cNvPr id=\"1\" name=\"Existing\"/></p:nvSpPr><p:spPr/></p:sp><p:extLst><p:ext uri=\"keep\"/></p:extLst>",
+            ),
+            "<Relationships><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/image1.png\"/></Relationships>",
+            &[("ppt/media/image1.png", original)],
+        );
+        let output = execute_pptx_insert_picture(
+            input.clone(),
+            &InsertPicture {
+                slide_handle: "s0".to_owned(),
+                image: replacement.clone(),
+                x: 1,
+                y: 2,
+                width: 3,
+                height: 4,
+                name: None,
+                base_revision: None,
+            },
+        )
+        .output_artifact
+        .unwrap();
+        assert_eq!(entry_bytes(&output, "ppt/media/image1.png"), original);
+        assert_eq!(entry_bytes(&output, "ppt/media/image2.png"), replacement);
+        let rels =
+            String::from_utf8(entry_bytes(&output, "ppt/slides/_rels/slide1.xml.rels")).unwrap();
+        assert!(rels.contains("Id=\"rId2\""));
+        let slide_xml = String::from_utf8(entry_bytes(&output, "ppt/slides/slide1.xml")).unwrap();
+        assert!(slide_xml.find("<p:pic ").unwrap() < slide_xml.find("<p:extLst>").unwrap());
+    }
+
+    #[test]
+    fn rejects_invalid_picture_insertion_requests() {
+        let input = picture_insert_package(&slide(""), "<Relationships/>", &[]);
+        let invalid = InsertPicture {
+            slide_handle: "s0".to_owned(),
+            image: vec![1, 2, 3],
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            name: None,
+            base_revision: None,
+        };
+        assert!(
+            execute_pptx_insert_picture(input.clone(), &invalid)
+                .output_artifact
+                .is_none()
+        );
+        let zero = InsertPicture {
+            image: include_bytes!("../tests/fixtures/fixture-landscape.png").to_vec(),
+            width: 0,
+            ..invalid.clone()
+        };
+        assert!(
+            execute_pptx_insert_picture(input.clone(), &zero)
+                .output_artifact
+                .is_none()
+        );
+        let negative = InsertPicture {
+            width: -1,
+            ..zero.clone()
+        };
+        assert!(
+            execute_pptx_insert_picture(input.clone(), &negative)
+                .output_artifact
+                .is_none()
+        );
+        let missing = InsertPicture {
+            slide_handle: "s9".to_owned(),
+            width: 1,
+            ..zero
+        };
+        assert!(
+            execute_pptx_insert_picture(input, &missing)
+                .output_artifact
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn inserts_a_picture_into_the_realistic_fixture_without_changing_other_parts() {
+        let input = include_bytes!("../tests/fixtures/realistic-presentation.pptx").to_vec();
+        let image = include_bytes!("../tests/fixtures/replacement-landscape.png").to_vec();
+        let before = inspect_pptx(input.clone()).overview.unwrap();
+        let result = execute_pptx_insert_picture(
+            input.clone(),
+            &InsertPicture {
+                slide_handle: "s0".to_owned(),
+                image: image.clone(),
+                x: 6096000,
+                y: 3900000,
+                width: 2286000,
+                height: 1524000,
+                name: Some("Inserted fixture picture".to_owned()),
+                base_revision: None,
+            },
+        );
+        let expected_handle = format!("s0:sh{}", before.slides[0].shapes.len());
+        assert_eq!(
+            result.created_picture_handle.as_deref(),
+            Some(expected_handle.as_str())
+        );
+        let output = result.output_artifact.unwrap();
+        let after = inspect_pptx(output.clone()).overview.unwrap();
+        assert_eq!(after.slides.len(), 3);
+        assert_eq!(
+            after.slides[0].shapes[..before.slides[0].shapes.len()],
+            before.slides[0].shapes
+        );
+        assert_eq!(after.slides[1], before.slides[1]);
+        assert_eq!(after.slides[2], before.slides[2]);
+        assert_eq!(entry_bytes(&output, "ppt/media/image1.png"), image);
+        assert!(
+            String::from_utf8(entry_bytes(&output, "ppt/slides/slide1.xml"))
+                .unwrap()
+                .contains("<p:pic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">")
+        );
+        for part in [
+            "ppt/media/image.png",
+            "ppt/slides/slide2.xml",
+            "ppt/slideMasters/slideMaster1.xml",
+            "ppt/slideLayouts/slideLayout1.xml",
+            "ppt/theme/theme1.xml",
+            "ppt/slides/charts/chart1.xml",
+        ] {
+            assert_eq!(
+                entry_bytes(&input, part),
+                entry_bytes(&output, part),
+                "{part}"
+            );
+        }
     }
 }

@@ -765,6 +765,7 @@ pub enum InspectDocxFocus {
     Headings { offset: usize, limit: usize },
     Paragraphs { offset: usize, limit: usize },
     Tables { offset: usize, limit: usize },
+    TableRows { table_handle: String, row_offset: usize, row_limit: usize },
     Context(InspectTextContext),
 }
 
@@ -823,7 +824,12 @@ pub struct DocxBodyBlock {
     pub handle: String,
     pub kind: DocxBodyBlockKind,
     pub text: Option<String>,
+    pub style_name: Option<String>,
+    pub heading_level: Option<u8>,
     pub table_handle: Option<String>,
+    pub row_count: Option<usize>,
+    pub column_count: Option<usize>,
+    pub header_texts: Option<Vec<String>>,
     pub picture: Option<DocxPicture>,
     pub affordances: Vec<Affordance>,
 }
@@ -882,6 +888,22 @@ pub struct DocxTable {
     pub affordances: Vec<Affordance>,
     pub columns: Vec<DocxTableColumn>,
     pub rows: Vec<DocxTableRow>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxTableRowWindow {
+    pub table_handle: String,
+    pub row_count: usize,
+    pub column_count: usize,
+    pub header_texts: Vec<String>,
+    pub row_offset: usize,
+    pub rows: Vec<DocxTableRowWindowItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocxTableRowWindowItem {
+    pub index: usize,
+    pub cells: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -964,6 +986,7 @@ pub enum InspectDocxContent {
     Headings(InspectionPage<DocxHeading>),
     Paragraphs(InspectionPage<DocxParagraph>),
     Tables(InspectionPage<DocxTable>),
+    TableRows(DocxTableRowWindow),
     Context(InspectTextContextResult),
 }
 

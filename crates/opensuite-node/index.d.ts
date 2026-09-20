@@ -15,13 +15,14 @@ export interface FindTextResult { ok: boolean; query: string; matchCount: number
 export interface InspectionPage { total: number; offset: number; returned: number; hasMore: boolean }
 export interface Affordance { capability: string; supported: boolean; reason?: string }
 export interface Picture { handle: string; format: string; widthEmu: number; heightEmu: number; altText?: string; affordances: Affordance[] }
-export interface BodyBlock { handle: string; kind: string; text?: string; tableHandle?: string; picture?: Picture }
+export interface BodyBlock { handle: string; kind: string; text?: string; styleName?: string; headingLevel?: number; tableHandle?: string; rowCount?: number; columnCount?: number; headerTexts?: string[]; picture?: Picture }
 export interface Heading { occurrence: number; text: string; styleName: string; level?: number }
 export interface ParagraphList { kind: 'bullet' | 'decimal' | 'unknown'; level: number; supported: boolean }
 export interface Paragraph { occurrence: number; handle?: string; text: string; styleName?: string; list?: ParagraphList }
 export interface TableRow { handle: string; cells: string[]; cellHandles: string[]; cellAffordances: Affordance[][] }
 export interface TableColumn { occurrence: number; handle: string; text: string }
 export interface Table { occurrence: number; handle: string; rowCount: number; isRectangular: boolean; affordances: Affordance[]; columns: TableColumn[]; rows: TableRow[] }
+export interface TableRowWindow { tableHandle: string; rowCount: number; columnCount: number; headerTexts: string[]; rowOffset: number; rows: Array<{ index: number; cells: string[] }> }
 export interface TextContextContainer { relativePosition: number; text: string; container: string }
 export interface InspectDocxResult {
   ok: boolean; focus: string
@@ -30,11 +31,12 @@ export interface InspectDocxResult {
   headings?: { page: InspectionPage; items: Heading[] }
   paragraphs?: { page: InspectionPage; items: Paragraph[] }
   tables?: { page: InspectionPage; items: Table[] }
+  tableRows?: TableRowWindow
   context?: { target: TextTarget; container?: TextContextContainer; nearby: TextContextContainer[] }
   diagnostics: Diagnostic[]
 }
 export interface InspectDocxInput {
-  focus?: { kind: 'overview' | 'body_blocks' | 'headings' | 'paragraphs' | 'tables' | 'context'; offset?: number; limit?: number; text?: string; occurrence?: number; before?: number; after?: number }
+  focus?: { kind: 'overview' | 'body_blocks' | 'headings' | 'paragraphs' | 'tables' | 'table_rows' | 'context'; offset?: number; limit?: number; tableHandle?: string; text?: string; occurrence?: number; before?: number; after?: number }
   target?: TextTarget; before?: number; after?: number
 }
 

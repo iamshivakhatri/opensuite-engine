@@ -244,9 +244,24 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   assert.equal(paragraphs.paragraphs.items[0].text, 'old text')
   assert.equal(paragraphs.paragraphs.items[0].styleName, 'Body Text')
 
+  const bodyBlocks = await inspectDocx(input, { focus: { kind: 'body_blocks', offset: 0, limit: 20 } })
+  assert.deepEqual(bodyBlocks.bodyBlocks.items.map((item) => item.handle), ['b0', 'b1', 'b2', 'b3', 'b4', 'b5'])
+  assert.equal(bodyBlocks.bodyBlocks.items[0].styleName, 'Heading 1')
+  assert.equal(bodyBlocks.bodyBlocks.items[0].headingLevel, 1)
+  assert.equal(bodyBlocks.bodyBlocks.items[1].styleName, 'Body Text')
+  assert.equal(bodyBlocks.bodyBlocks.items[1].headingLevel, undefined)
+  assert.deepEqual(bodyBlocks.bodyBlocks.items[4], {
+    handle: 'b4', kind: 'table', tableHandle: 't0', rowCount: 2, columnCount: 2, headerTexts: ['table needle', 'second cell'],
+  })
+  assert.deepEqual((await inspectDocx(input, { focus: { kind: 'body_blocks', offset: 5, limit: 1 } })).bodyBlocks.items[0], {
+    handle: 'b5', kind: 'table', tableHandle: 't1', rowCount: 4, columnCount: 2, headerTexts: ['Name', 'Role'],
+  })
+
   const tables = await inspectDocx(input, { focus: { kind: 'tables', offset: 0, limit: 1 } })
   assert.equal(tables.tables.items[0].rows[0].cells[0], 'table needle')
   assert.equal(tables.tables.items[0].isRectangular, false)
+  const tableRows = await inspectDocx(input, { focus: { kind: 'table_rows', tableHandle: 't1', offset: 2, limit: 3 } })
+  assert.deepEqual(tableRows.tableRows.rows, [{ index: 2, cells: ['Bob', 'CTO'] }, { index: 3, cells: ['', ''] }])
 
   const namedTable = await inspectDocx(input, { focus: { kind: 'tables', offset: 1, limit: 1 } })
   const blankRow = namedTable.tables.items[0].rows.at(-1)

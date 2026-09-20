@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use quick_xml::{escape::escape, events::Event, reader::NsReader};
 
 use opensuite_opc::{Package, Part, PartName, RelationshipTarget};
@@ -63,9 +65,22 @@ pub struct ReplacePicture {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertPicture {
+    pub slide_handle: String,
+    pub image: Vec<u8>,
+    pub x: i64,
+    pub y: i64,
+    pub width: i64,
+    pub height: i64,
+    pub name: Option<String>,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PptxExecutionResult {
     pub operation: OperationResult,
     pub output_artifact: Option<Vec<u8>>,
+    pub created_picture_handle: Option<String>,
 }
 
 /// Replaces one directly present `a:r/a:t` value and returns reopened, verified PPTX bytes.
@@ -114,6 +129,7 @@ pub fn execute_pptx_replace_text_run(
             .with_operation("replace_text_run")
             .with_target_handle(operation.run_handle.clone()),
             output_artifact: None,
+            created_picture_handle: None,
         };
     }
     let mut patched = source;
@@ -134,6 +150,7 @@ pub fn execute_pptx_replace_text_run(
             operation.replacement_text.clone(),
         ),
         output_artifact: Some(output),
+        created_picture_handle: None,
     }
 }
 
@@ -273,6 +290,7 @@ pub fn execute_pptx_replace_paragraph_text_range(
             operation.replacement_text.clone(),
         ),
         output_artifact: Some(output),
+        created_picture_handle: None,
     }
 }
 
@@ -393,6 +411,7 @@ pub fn execute_pptx_set_shape_geometry(
     PptxExecutionResult {
         operation: OperationResult::applied("geometry".to_owned(), "geometry".to_owned()),
         output_artifact: Some(output),
+        created_picture_handle: None,
     }
 }
 
@@ -503,6 +522,7 @@ pub fn execute_pptx_set_text_run_formatting(
     PptxExecutionResult {
         operation: OperationResult::applied("formatting".to_owned(), "formatting".to_owned()),
         output_artifact: Some(output),
+        created_picture_handle: None,
     }
 }
 
@@ -608,7 +628,15 @@ pub fn execute_pptx_replace_picture(
         Ok(value) => value,
         Err(error) => return failed(error.code(), "could not read slide relationship part"),
     };
-    let rel_patched = insert_relationship(rel_source, &new_id, new_part.as_str());
+    let rel_patched = match insert_relationship(rel_source, &new_id, new_part.as_str()) {
+        Some(value) => value,
+        None => {
+            return failed(
+                "MALFORMED_RELATIONSHIPS",
+                "could not add picture relationship",
+            );
+        }
+    };
     let mut slide_patched = source;
     slide_patched.splice(embed_span.0..embed_span.1, new_id.bytes());
     let types_name = PartName::parse("/[Content_Types].xml").expect("constant part name");
@@ -648,6 +676,158 @@ pub fn execute_pptx_replace_picture(
             new_part.as_str().to_owned(),
         ),
         output_artifact: Some(output),
+        created_picture_handle: None,
+    }
+}
+
+/// Inserts one top-level picture as the last drawable child of a slide shape tree.
+pub fn execute_pptx_insert_picture(
+    input_artifact: Vec<u8>,
+    operation: &InsertPicture,
+) -> PptxExecutionResult {
+    let Some((extension, content_type)) = image_format(&operation.image) else {
+        return failed("UNSUPPORTED_IMAGE", "picture must be PNG or JPEG")
+            .with_target("insert_picture", &operation.slide_handle);
+    };
+    if operation.width <= 0 || operation.height <= 0 {
+        return failed("INVALID_GEOMETRY", "width and height must be positive")
+            .with_target("insert_picture", &operation.slide_handle);
+    }
+    if operation.name.as_deref().is_some_and(invalid_picture_name) {
+        return failed("INVALID_PICTURE_NAME", "picture name is invalid")
+            .with_target("insert_picture", &operation.slide_handle);
+    }
+    let package = match Package::from_bytes(input_artifact.clone()) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load PPTX artifact"),
+    };
+    if let Err(error) = package.verify() {
+        return failed(error.code(), "PPTX package failed validation");
+    }
+    let before = match inspection(input_artifact) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let Some(slide_index) = parse_slide_handle(&operation.slide_handle) else {
+        return insert_picture_target_not_found(operation);
+    };
+    let Some(before_slide) = before
+        .overview
+        .as_ref()
+        .and_then(|value| value.slides.get(slide_index))
+        .filter(|slide| slide.handle == operation.slide_handle)
+    else {
+        return insert_picture_target_not_found(operation);
+    };
+    let main = match package.main_office_document() {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not find main presentation part"),
+    };
+    let slide = match slide_part_for_index(&package, &main, slide_index) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let source = match package.read_part(&slide) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read slide part"),
+    };
+    let insertion = match slide_picture_insertion(&source) {
+        Some(value) => value,
+        None => {
+            return unsupported(
+                &operation.slide_handle,
+                "slide has no supported editable shape tree",
+            );
+        }
+    };
+    let metadata = match slide_nonvisual_metadata(&source) {
+        Some(value) => value,
+        None => {
+            return unsupported(
+                &operation.slide_handle,
+                "slide nonvisual properties cannot be read",
+            );
+        }
+    };
+    let object_id = allocate_object_id(&metadata.ids);
+    let name = operation
+        .name
+        .clone()
+        .unwrap_or_else(|| allocate_picture_name(&metadata.names));
+    let relationships = match package.part_relationships(&slide) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read slide relationships"),
+    };
+    let new_part = allocate_media_part(&package, extension);
+    let relationship_id = allocate_relationship_id(&relationships);
+    let rel_part = relationship_part_name(&slide.name);
+    let rel_source = match package
+        .part(&rel_part)
+        .and_then(|part| package.read_part(&part))
+    {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read slide relationship part"),
+    };
+    let rel_patched = match insert_relationship(rel_source, &relationship_id, new_part.as_str()) {
+        Some(value) => value,
+        None => {
+            return failed(
+                "MALFORMED_RELATIONSHIPS",
+                "could not add picture relationship",
+            );
+        }
+    };
+    let picture = picture_xml(
+        object_id,
+        &name,
+        &relationship_id,
+        operation.x,
+        operation.y,
+        operation.width,
+        operation.height,
+    );
+    let mut slide_patched = source;
+    slide_patched.splice(insertion.position..insertion.position, picture.bytes());
+    let types_name = PartName::parse("/[Content_Types].xml").expect("constant part name");
+    let types_part = match package.part(&types_name) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "content types part is missing"),
+    };
+    let types_source = match package.read_part(&types_part) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read content types"),
+    };
+    let types_patched = ensure_content_type(types_source, extension, content_type);
+    let output = match package.write_package_with_named_changes_to_vec(
+        &[
+            (slide.name.clone(), &slide_patched),
+            (rel_part, &rel_patched),
+            (types_name, &types_patched),
+        ],
+        &[(new_part.clone(), &operation.image)],
+    ) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), error.to_string()),
+    };
+    let handle = format!("s{slide_index}:sh{}", before_slide.shapes.len());
+    if !verify_inserted_picture(
+        &output,
+        &before,
+        operation,
+        &slide,
+        &new_part,
+        &relationship_id,
+        &handle,
+        object_id,
+        &name,
+        content_type,
+    ) {
+        return insert_picture_verification_failed(operation);
+    }
+    PptxExecutionResult {
+        operation: OperationResult::applied(operation.slide_handle.clone(), handle.clone()),
+        output_artifact: Some(output),
+        created_picture_handle: Some(handle),
     }
 }
 
@@ -798,17 +978,22 @@ fn relationship_part_name(part: &PartName) -> PartName {
     let (parent, name) = value.rsplit_once('/').unwrap_or(("", value));
     PartName::parse(format!("/{parent}/_rels/{name}.rels")).expect("known slide part")
 }
-fn insert_relationship(source: Vec<u8>, id: &str, media_part: &str) -> Vec<u8> {
-    let mut value = String::from_utf8(source).expect("relationship XML is UTF-8");
+fn insert_relationship(source: Vec<u8>, id: &str, media_part: &str) -> Option<Vec<u8>> {
+    let mut value = String::from_utf8(source).ok()?;
     let insertion = format!(
         "<Relationship Id=\"{id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/{}\"/>",
         media_part.rsplit('/').next().expect("media name")
     );
-    let position = value
-        .rfind("</Relationships>")
-        .expect("well-formed relationships");
-    value.insert_str(position, &insertion);
-    value.into_bytes()
+    if let Some(position) = value.rfind("</Relationships>") {
+        value.insert_str(position, &insertion);
+    } else {
+        let position = value.rfind("/>")?;
+        value.replace_range(
+            position..position + 2,
+            &format!(">{insertion}</Relationships>"),
+        );
+    }
+    Some(value.into_bytes())
 }
 fn ensure_content_type(source: Vec<u8>, extension: &str, content_type: &str) -> Vec<u8> {
     let value = String::from_utf8(source).expect("content types XML is UTF-8");
@@ -883,6 +1068,265 @@ fn find_picture_embed(
 fn picture_verification_failed(operation: &ReplacePicture) -> PptxExecutionResult {
     failed("DOCUMENT_INVALID", "output PPTX picture failed validation")
         .with_target("replace_picture", &operation.shape_handle)
+}
+
+fn parse_slide_handle(value: &str) -> Option<usize> {
+    value.strip_prefix('s')?.parse().ok()
+}
+
+fn invalid_picture_name(value: &str) -> bool {
+    value.is_empty() || value.chars().any(char::is_control)
+}
+
+struct SlideInsertion {
+    position: usize,
+}
+
+struct SlideNonvisualMetadata {
+    ids: HashSet<u32>,
+    names: HashSet<String>,
+}
+
+fn slide_picture_insertion(source: &[u8]) -> Option<SlideInsertion> {
+    let mut reader = NsReader::from_reader(source);
+    let mut buffer = Vec::new();
+    let mut depth = 0usize;
+    let mut tree = None;
+    let mut has_nonvisual_group = false;
+    let mut has_group_properties = false;
+    let mut extension_start = None;
+    let mut drawable_after_extension = false;
+    loop {
+        let (namespace, event) = reader.read_resolved_event_into(&mut buffer).ok()?;
+        let presentation = is_presentation_namespace(&namespace);
+        match event {
+            Event::Start(element) => {
+                depth += 1;
+                if presentation_element(presentation, &element, "spTree") {
+                    tree = Some(depth);
+                } else if tree == Some(depth - 1) {
+                    let end = reader.buffer_position() as usize;
+                    let start = end.checked_sub(element.as_ref().len() + 2)?;
+                    if presentation_element(presentation, &element, "nvGrpSpPr") {
+                        has_nonvisual_group = true;
+                    } else if presentation_element(presentation, &element, "grpSpPr") {
+                        has_group_properties = true;
+                    } else if presentation_element(presentation, &element, "extLst") {
+                        extension_start = Some(start);
+                    } else if extension_start.is_some() {
+                        drawable_after_extension = true;
+                    }
+                }
+            }
+            Event::Empty(element) if tree == Some(depth) => {
+                let end = reader.buffer_position() as usize;
+                let start = end.checked_sub(element.as_ref().len() + 3)?;
+                if presentation_element(presentation, &element, "nvGrpSpPr") {
+                    has_nonvisual_group = true;
+                } else if presentation_element(presentation, &element, "grpSpPr") {
+                    has_group_properties = true;
+                } else if presentation_element(presentation, &element, "extLst") {
+                    extension_start = Some(start);
+                } else if extension_start.is_some() {
+                    drawable_after_extension = true;
+                }
+            }
+            Event::End(element) => {
+                if tree == Some(depth) && presentation && element.local_name().as_ref() == b"spTree"
+                {
+                    let end = reader.buffer_position() as usize;
+                    let close_start = end.checked_sub(element.as_ref().len() + 3)?;
+                    return (has_nonvisual_group
+                        && has_group_properties
+                        && !drawable_after_extension)
+                        .then_some(SlideInsertion {
+                            position: extension_start.unwrap_or(close_start),
+                        });
+                }
+                if tree == Some(depth) {
+                    tree = None;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    None
+}
+
+fn slide_nonvisual_metadata(source: &[u8]) -> Option<SlideNonvisualMetadata> {
+    let mut reader = NsReader::from_reader(source);
+    let mut buffer = Vec::new();
+    let mut ids = HashSet::new();
+    let mut names = HashSet::new();
+    loop {
+        let (namespace, event) = reader.read_resolved_event_into(&mut buffer).ok()?;
+        let presentation = is_presentation_namespace(&namespace);
+        let element = match event {
+            Event::Start(element) | Event::Empty(element) => element,
+            Event::Eof => break,
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        if presentation_element(presentation, &element, "cNvPr") {
+            if let Some(id) = crate::optional_attribute(&element, b"id")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|value| *value > 0)
+            {
+                ids.insert(id);
+            }
+            if let Some(name) = crate::optional_attribute(&element, b"name") {
+                names.insert(name);
+            }
+        }
+        buffer.clear();
+    }
+    Some(SlideNonvisualMetadata { ids, names })
+}
+
+fn allocate_object_id(ids: &HashSet<u32>) -> u32 {
+    (1..).find(|value| !ids.contains(value)).unwrap_or(u32::MAX)
+}
+
+fn allocate_picture_name(names: &HashSet<String>) -> String {
+    for index in 1usize.. {
+        let name = format!("Picture {index}");
+        if !names.contains(&name) {
+            return name;
+        }
+    }
+    unreachable!()
+}
+
+fn picture_xml(
+    object_id: u32,
+    name: &str,
+    relationship_id: &str,
+    x: i64,
+    y: i64,
+    width: i64,
+    height: i64,
+) -> String {
+    let name = escape(name).into_owned();
+    format!(
+        "<p:pic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><p:nvPicPr><p:cNvPr id=\"{object_id}\" name=\"{name}\"/><p:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed=\"{relationship_id}\"/><a:srcRect/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{width}\" cy=\"{height}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr></p:pic>"
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_inserted_picture(
+    output: &[u8],
+    before: &PptxInspection,
+    operation: &InsertPicture,
+    slide: &Part,
+    media_part: &PartName,
+    relationship_id: &str,
+    handle: &str,
+    object_id: u32,
+    name: &str,
+    content_type: &str,
+) -> bool {
+    let Ok(package) = Package::from_bytes(output.to_vec()) else {
+        return false;
+    };
+    if package.verify().is_err() {
+        return false;
+    }
+    let Ok(after) = inspection(output.to_vec()) else {
+        return false;
+    };
+    let Some(before_overview) = before.overview.as_ref() else {
+        return false;
+    };
+    let Some(after_overview) = after.overview.as_ref() else {
+        return false;
+    };
+    if before_overview
+        .slides
+        .iter()
+        .map(|value| &value.part_name)
+        .ne(after_overview.slides.iter().map(|value| &value.part_name))
+    {
+        return false;
+    }
+    let Some(slide_index) = parse_slide_handle(&operation.slide_handle) else {
+        return false;
+    };
+    let Some(before_slide) = before_overview.slides.get(slide_index) else {
+        return false;
+    };
+    let Some(after_slide) = after_overview.slides.get(slide_index) else {
+        return false;
+    };
+    if after_slide.shapes.len() != before_slide.shapes.len() + 1
+        || after_slide.shapes[..before_slide.shapes.len()] != before_slide.shapes
+    {
+        return false;
+    }
+    let Some(picture) = after_slide.shapes.last() else {
+        return false;
+    };
+    if picture.handle != handle
+        || picture.kind != ShapeKind::Picture
+        || picture.object_id.as_deref() != Some(&object_id.to_string())
+        || picture.name.as_deref() != Some(name)
+        || picture.geometry
+            != Some(ShapeGeometry {
+                x: Some(operation.x),
+                y: Some(operation.y),
+                width: Some(operation.width),
+                height: Some(operation.height),
+                rotation: None,
+                flip_horizontal: None,
+                flip_vertical: None,
+            })
+    {
+        return false;
+    }
+    if package
+        .content_type(media_part)
+        .map(|value| value.as_str() == content_type)
+        .unwrap_or(false)
+        && package
+            .part(media_part)
+            .and_then(|part| package.read_part(&part))
+            .ok()
+            .as_deref()
+            == Some(operation.image.as_slice())
+        && package
+            .part_relationships(slide)
+            .ok()
+            .and_then(|items| {
+                items.into_iter().find(|item| {
+                    item.id.as_str() == relationship_id
+                        && matches!(
+                            &item.target,
+                            RelationshipTarget::Internal { part_name, .. } if part_name == media_part
+                        )
+                })
+            })
+            .is_some()
+    {
+        return true;
+    }
+    false
+}
+
+fn insert_picture_target_not_found(operation: &InsertPicture) -> PptxExecutionResult {
+    failed("TARGET_NOT_FOUND", "slide handle was not found")
+        .with_target("insert_picture", &operation.slide_handle)
+}
+
+fn insert_picture_verification_failed(operation: &InsertPicture) -> PptxExecutionResult {
+    failed(
+        "DOCUMENT_INVALID",
+        "output PPTX picture insertion failed validation",
+    )
+    .with_target("insert_picture", &operation.slide_handle)
 }
 
 fn requested_formatting(
@@ -1109,6 +1553,7 @@ fn precondition(operation: &ReplaceParagraphTextRange, reason: &str) -> PptxExec
         .with_operation("replace_paragraph_text_range")
         .with_target_handle(operation.paragraph_handle.clone()),
         output_artifact: None,
+        created_picture_handle: None,
     }
 }
 
@@ -1320,6 +1765,7 @@ fn failed(code: impl Into<String>, message: impl Into<String>) -> PptxExecutionR
     PptxExecutionResult {
         operation: OperationResult::failed(code, message),
         output_artifact: None,
+        created_picture_handle: None,
     }
 }
 

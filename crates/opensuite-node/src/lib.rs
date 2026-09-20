@@ -24,14 +24,14 @@ use opensuite_docx::{
 use opensuite_protocol::{
     Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, Diagnostic,
     DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxParagraphList, DocxPicture,
-    DocxTable, DocxTableRow, FindText, FindTextResult, InsertParagraph, InsertParagraphs,
-    InsertTableColumnAfter, InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult,
-    InspectTextContext, InspectTextContextResult, InspectionPage, OperationResult,
-    ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch, ReplaceText,
-    RuntimeCapabilities, SetParagraphFormatting, SetParagraphStyle, SetTableCellShading,
-    SetTableColumnWidths, SetTableFormatting, TableAlignment, TableBorders, TableCellMargins,
-    TableCellTarget, TableCellTextUpdate, TableFormattingPatch, TableRowTarget, TableTarget,
-    TextContainer, TextTarget,
+    DocxTable, DocxTableRow, DocxTableRowWindow, FindText, FindTextResult, InsertParagraph,
+    InsertParagraphs, InsertTableColumnAfter, InspectDocx, InspectDocxContent, InspectDocxFocus,
+    InspectDocxResult, InspectTextContext, InspectTextContextResult, InspectionPage,
+    OperationResult, ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement,
+    PropertyPatch, ReplaceText, RuntimeCapabilities, SetParagraphFormatting, SetParagraphStyle,
+    SetTableCellShading, SetTableColumnWidths, SetTableFormatting, TableAlignment, TableBorders,
+    TableCellMargins, TableCellTarget, TableCellTextUpdate, TableFormattingPatch, TableRowTarget,
+    TableTarget, TextContainer, TextTarget,
 };
 pub use page_composition::{
     execute_docx_delete_page_break_node, execute_docx_insert_page_break_node,
@@ -286,6 +286,7 @@ pub struct InspectDocxFocusInput {
     pub kind: String,
     pub offset: Option<u32>,
     pub limit: Option<u32>,
+    pub table_handle: Option<String>,
     pub text: Option<String>,
     pub occurrence: Option<u32>,
     pub before: Option<u32>,
@@ -339,7 +340,12 @@ pub struct BodyBlockOutput {
     pub handle: String,
     pub kind: String,
     pub text: Option<String>,
+    pub style_name: Option<String>,
+    pub heading_level: Option<u32>,
     pub table_handle: Option<String>,
+    pub row_count: Option<u32>,
+    pub column_count: Option<u32>,
+    pub header_texts: Option<Vec<String>>,
     pub picture: Option<PictureOutput>,
 }
 
@@ -419,6 +425,21 @@ pub struct TablePageOutput {
 }
 
 #[napi(object)]
+pub struct TableRowWindowItemOutput {
+    pub index: u32,
+    pub cells: Vec<String>,
+}
+#[napi(object)]
+pub struct TableRowWindowOutput {
+    pub table_handle: String,
+    pub row_count: u32,
+    pub column_count: u32,
+    pub header_texts: Vec<String>,
+    pub row_offset: u32,
+    pub rows: Vec<TableRowWindowItemOutput>,
+}
+
+#[napi(object)]
 pub struct TextContextContainerOutput {
     pub relative_position: i32,
     pub text: String,
@@ -434,6 +455,7 @@ pub struct InspectDocxOutput {
     pub headings: Option<HeadingPageOutput>,
     pub paragraphs: Option<ParagraphPageOutput>,
     pub tables: Option<TablePageOutput>,
+    pub table_rows: Option<TableRowWindowOutput>,
     pub context: Option<InspectContextOutput>,
     pub diagnostics: Vec<DiagnosticOutput>,
 }
@@ -1186,6 +1208,7 @@ fn inspect_request(
         kind: "context".to_owned(),
         offset: None,
         limit: None,
+        table_handle: None,
         text,
         occurrence,
         before,
@@ -1220,6 +1243,19 @@ fn inspect_request(
                 limit: focus.limit.unwrap_or(20) as usize,
             },
         }),
+        "table_rows" => match (focus.table_handle, focus.offset, focus.limit) {
+            (Some(table_handle), row_offset, row_limit) => Ok(InspectDocx {
+                focus: InspectDocxFocus::TableRows {
+                    table_handle,
+                    row_offset: row_offset.unwrap_or(0) as usize,
+                    row_limit: row_limit.unwrap_or(3) as usize,
+                },
+            }),
+            _ => Err(InspectDocxResult::failed(
+                "INVALID_INSPECTION_REQUEST",
+                "table_rows inspection requires tableHandle",
+            )),
+        },
         "context" => match focus.text {
             Some(text) => Ok(InspectDocx {
                 focus: InspectDocxFocus::Context(InspectTextContext {
@@ -1253,6 +1289,7 @@ fn inspect_docx_output(focus: String, result: InspectDocxResult) -> InspectDocxO
         headings: None,
         paragraphs: None,
         tables: None,
+        table_rows: None,
         context: None,
         diagnostics: result
             .diagnostics
@@ -1272,10 +1309,31 @@ fn inspect_docx_output(focus: String, result: InspectDocxResult) -> InspectDocxO
             output.paragraphs = Some(paragraph_page_output(value));
         }
         Some(InspectDocxContent::Tables(value)) => output.tables = Some(table_page_output(value)),
+        Some(InspectDocxContent::TableRows(value)) => {
+            output.table_rows = Some(table_row_window_output(value))
+        }
         Some(InspectDocxContent::Context(value)) => output.context = Some(context_output(value)),
         None => {}
     }
     output
+}
+
+fn table_row_window_output(value: DocxTableRowWindow) -> TableRowWindowOutput {
+    TableRowWindowOutput {
+        table_handle: value.table_handle,
+        row_count: value.row_count as u32,
+        column_count: value.column_count as u32,
+        header_texts: value.header_texts,
+        row_offset: value.row_offset as u32,
+        rows: value
+            .rows
+            .into_iter()
+            .map(|row| TableRowWindowItemOutput {
+                index: row.index as u32,
+                cells: row.cells,
+            })
+            .collect(),
+    }
 }
 
 fn overview_output(value: DocxOverview) -> OverviewOutput {
@@ -1348,7 +1406,12 @@ fn body_block_page_output(value: InspectionPage<DocxBodyBlock>) -> BodyBlockPage
                 handle: item.handle,
                 kind: item.kind.as_str().to_owned(),
                 text: item.text,
+                style_name: item.style_name,
+                heading_level: item.heading_level.map(u32::from),
                 table_handle: item.table_handle,
+                row_count: item.row_count.map(|value| value as u32),
+                column_count: item.column_count.map(|value| value as u32),
+                header_texts: item.header_texts,
                 picture: item.picture.map(picture_output),
             })
             .collect(),

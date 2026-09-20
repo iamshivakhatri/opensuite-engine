@@ -5,8 +5,9 @@
 OpenSuite is a preservation-first DOCX engine. The Rust workspace contains the
 OPC package layer, DOCX engine, stable protocol types, native CLI, and Node
 N-API adapter. PPTX currently has package validation, slide/shape inspection,
-cheap paragraph text search, and safe replacement of one directly present
-DrawingML text run; XLSX has not started.
+paragraph text search, safe direct text and picture replacement, top-level
+picture insertion, direct shape geometry, and direct run formatting; XLSX has
+not started.
 
 ## Current DOCX Engine
 

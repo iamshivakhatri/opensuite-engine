@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { Presentation, PresentationFile } from "@oai/artifact-tool";
 
 const output = new URL("./fixtures/realistic-presentation.pptx", import.meta.url);
@@ -22,6 +23,7 @@ const body = text(first, "Body placeholder", [
   [{ run: "Second paragraph remains unchanged." }],
 ], { left: 84, top: 160, width: 600, height: 160 }, "body");
 body.text.style = { fontSize: 22, color: "slate-800", typeface: "Aptos" };
+first.images.add({ blob: await fs.readFile(new URL("./fixtures/fixture-landscape.png", import.meta.url)), contentType: "image/png", alt: "Abstract landscape fixture", fit: "cover", position: { left: 84, top: 390, width: 300, height: 170 } });
 first.charts.add("bar", { position: { left: 730, top: 160, width: 420, height: 260 }, title: "Fixture values", categories: ["One", "Two"], series: [{ name: "Values", values: [2, 4], fill: "accent1" }], hasLegend: false });
 
 const second = deck.slides.add();
