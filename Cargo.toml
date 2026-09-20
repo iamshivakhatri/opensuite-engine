@@ -6,8 +6,9 @@ members = [
     "crates/opensuite-protocol",
     "crates/opensuite-node",
     "bins/opensuite",
-    "bins/opensuite-showcase",
 ]
+# Local-only demo binary; present on some checkouts but gitignored and not CI.
+exclude = ["bins/opensuite-showcase"]
 resolver = "2"
 
 [workspace.package]
