@@ -1,10 +1,10 @@
 use quick_xml::{escape::escape, events::Event, reader::NsReader};
 
-use opensuite_opc::{Package, Part};
+use opensuite_opc::{Package, Part, PartName, RelationshipTarget};
 use opensuite_protocol::OperationResult;
 
 use crate::{
-    PptxInspection, ShapeGeometry, ShapeKind,
+    DirectRunFormatting, PptxInspection, ShapeGeometry, ShapeKind,
     handles::{ParagraphHandle, RunHandle, parse_paragraph_handle, parse_run_handle},
     inspect_pptx, is_drawing_namespace, is_presentation_namespace, presentation_element,
     presentation_slide_ids, slide_part, top_level_shape_kind,
@@ -38,6 +38,27 @@ pub struct SetShapeGeometry {
     pub y: i64,
     pub width: i64,
     pub height: i64,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetTextRunFormatting {
+    pub run_handle: String,
+    pub expected_current_formatting: DirectRunFormatting,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub font_size: Option<i64>,
+    pub typeface: Option<String>,
+    pub color: Option<String>,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplacePicture {
+    pub shape_handle: String,
+    pub replacement_image: Vec<u8>,
+    pub expected_current_media_part: String,
+    pub expected_current_content_type: String,
     pub base_revision: Option<String>,
 }
 
@@ -380,6 +401,256 @@ fn verification_range_failed(operation: &ReplaceParagraphTextRange) -> PptxExecu
         .with_target("replace_paragraph_text_range", &operation.paragraph_handle)
 }
 
+pub fn execute_pptx_set_text_run_formatting(
+    input_artifact: Vec<u8>,
+    operation: &SetTextRunFormatting,
+) -> PptxExecutionResult {
+    if operation.font_size.is_some_and(|value| value <= 0)
+        || operation.color.as_deref().is_some_and(|value| {
+            value.len() != 6 || !value.bytes().all(|value| value.is_ascii_hexdigit())
+        })
+        || operation.typeface.as_deref().is_some_and(invalid_typeface)
+    {
+        return failed(
+            "INVALID_FORMATTING",
+            "requested direct formatting is invalid",
+        )
+        .with_target("set_text_run_formatting", &operation.run_handle);
+    }
+    let package = match Package::from_bytes(input_artifact.clone()) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load PPTX artifact"),
+    };
+    if let Err(error) = package.verify() {
+        return failed(error.code(), "PPTX package failed validation");
+    }
+    let before = match inspection(input_artifact) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let target = match semantic_target(&before, &operation.run_handle) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let run = &before.overview.as_ref().unwrap().slides[target.shape.slide_index].shapes
+        [target.shape.shape_index]
+        .text_frame
+        .as_ref()
+        .unwrap()
+        .paragraphs[target.paragraph_index]
+        .runs[target.run_index];
+    if run.formatting != operation.expected_current_formatting {
+        return failed(
+            "PRECONDITION_FAILED",
+            "run formatting does not match expected current formatting",
+        )
+        .with_target("set_text_run_formatting", &operation.run_handle);
+    }
+    let main = match package.main_office_document() {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not find main presentation part"),
+    };
+    let part = match slide_part_for_index(&package, &main, target.shape.slide_index) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let source = match package.read_part(&part) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read slide part"),
+    };
+    let found = match find_run(&source, &target) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    if found.text != run.text {
+        return unsupported(&operation.run_handle, "run has unsupported text structure");
+    }
+    let patched = match patch_run_formatting(source, &found, operation) {
+        Some(value) => value,
+        None => {
+            return unsupported(
+                &operation.run_handle,
+                "run formatting structure is unsupported",
+            );
+        }
+    };
+    let output = match package.write_replaced_part_to_vec(&part, &patched) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), error.to_string()),
+    };
+    if Package::from_bytes(output.clone())
+        .and_then(|value| value.verify())
+        .is_err()
+    {
+        return formatting_verification_failed(operation);
+    }
+    let after = match inspection(output.clone()) {
+        Ok(value) => value,
+        Err(_) => return formatting_verification_failed(operation),
+    };
+    let after_run = after
+        .overview
+        .as_ref()
+        .and_then(|value| value.slides.get(target.shape.slide_index))
+        .and_then(|slide| slide.shapes.get(target.shape.shape_index))
+        .and_then(|shape| shape.text_frame.as_ref())
+        .and_then(|frame| frame.paragraphs.get(target.paragraph_index))
+        .and_then(|paragraph| paragraph.runs.get(target.run_index));
+    let expected = requested_formatting(&operation.expected_current_formatting, operation);
+    if after_run.is_none_or(|value| value.text != run.text || value.formatting != expected) {
+        return formatting_verification_failed(operation);
+    }
+    PptxExecutionResult {
+        operation: OperationResult::applied("formatting".to_owned(), "formatting".to_owned()),
+        output_artifact: Some(output),
+    }
+}
+
+pub fn execute_pptx_replace_picture(
+    input_artifact: Vec<u8>,
+    operation: &ReplacePicture,
+) -> PptxExecutionResult {
+    let Some((extension, content_type)) = image_format(&operation.replacement_image) else {
+        return failed("UNSUPPORTED_IMAGE", "replacement image must be PNG or JPEG")
+            .with_target("replace_picture", &operation.shape_handle);
+    };
+    let package = match Package::from_bytes(input_artifact.clone()) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not load PPTX artifact"),
+    };
+    if let Err(error) = package.verify() {
+        return failed(error.code(), "PPTX package failed validation");
+    }
+    let before = match inspection(input_artifact) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let target = match crate::handles::parse_shape_handle(&operation.shape_handle) {
+        Some(value) => value,
+        None => return target_not_found(&operation.shape_handle),
+    };
+    let shape = match before
+        .overview
+        .as_ref()
+        .and_then(|value| value.slides.get(target.slide_index))
+        .and_then(|slide| slide.shapes.get(target.shape_index))
+    {
+        Some(value) => value,
+        None => return target_not_found(&operation.shape_handle),
+    };
+    if shape.kind != ShapeKind::Picture {
+        return unsupported(&operation.shape_handle, "target is not a top-level picture");
+    }
+    let main = match package.main_office_document() {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not find main presentation part"),
+    };
+    let slide = match slide_part_for_index(&package, &main, target.slide_index) {
+        Ok(value) => value,
+        Err(value) => return value,
+    };
+    let source = match package.read_part(&slide) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read slide part"),
+    };
+    let (embed_span, old_relationship) = match find_picture_embed(&source, target) {
+        Some(value) => value,
+        None => {
+            return unsupported(
+                &operation.shape_handle,
+                "picture has no direct embedded image reference",
+            );
+        }
+    };
+    let relationships = match package.part_relationships(&slide) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read slide relationships"),
+    };
+    let old = match relationships
+        .iter()
+        .find(|value| value.id.as_str() == old_relationship)
+    {
+        Some(value) => value,
+        None => {
+            return failed(
+                "MISSING_PICTURE_RELATIONSHIP",
+                "picture image relationship is missing",
+            );
+        }
+    };
+    let RelationshipTarget::Internal {
+        part_name: old_part,
+        ..
+    } = &old.target
+    else {
+        return unsupported(&operation.shape_handle, "linked pictures are unsupported");
+    };
+    let old_content_type = match package.content_type(old_part) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "picture media content type is missing"),
+    };
+    if old_part.as_str() != operation.expected_current_media_part
+        || old_content_type.as_str() != operation.expected_current_content_type
+    {
+        return failed(
+            "PRECONDITION_FAILED",
+            "picture media does not match expected current metadata",
+        )
+        .with_target("replace_picture", &operation.shape_handle);
+    }
+    let new_part = allocate_media_part(&package, extension);
+    let new_id = allocate_relationship_id(&relationships);
+    let rel_part = relationship_part_name(&slide.name);
+    let rel_source = match package
+        .part(&rel_part)
+        .and_then(|part| package.read_part(&part))
+    {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read slide relationship part"),
+    };
+    let rel_patched = insert_relationship(rel_source, &new_id, new_part.as_str());
+    let mut slide_patched = source;
+    slide_patched.splice(embed_span.0..embed_span.1, new_id.bytes());
+    let types_name = PartName::parse("/[Content_Types].xml").expect("constant part name");
+    let types_part = match package.part(&types_name) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "content types part is missing"),
+    };
+    let types_source = match package.read_part(&types_part) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), "could not read content types"),
+    };
+    let types_patched = ensure_content_type(types_source, extension, content_type);
+    let output = match package.write_package_with_named_changes_to_vec(
+        &[
+            (slide.name.clone(), &slide_patched),
+            (rel_part, &rel_patched),
+            (types_name, &types_patched),
+        ],
+        &[(new_part.clone(), &operation.replacement_image)],
+    ) {
+        Ok(value) => value,
+        Err(error) => return failed(error.code(), error.to_string()),
+    };
+    let reopened = match Package::from_bytes(output.clone()) {
+        Ok(value) if value.verify().is_ok() => value,
+        _ => return picture_verification_failed(operation),
+    };
+    let new_media = reopened
+        .part(&new_part)
+        .and_then(|part| reopened.read_part(&part));
+    if new_media.ok().as_deref() != Some(operation.replacement_image.as_slice()) {
+        return picture_verification_failed(operation);
+    }
+    PptxExecutionResult {
+        operation: OperationResult::applied(
+            operation.expected_current_media_part.clone(),
+            new_part.as_str().to_owned(),
+        ),
+        output_artifact: Some(output),
+    }
+}
+
 fn has_direct_geometry(value: &ShapeGeometry) -> bool {
     value.x.is_some() && value.y.is_some() && value.width.is_some() && value.height.is_some()
 }
@@ -488,6 +759,278 @@ fn raw_attribute_span(raw: &[u8], absolute: usize, name: &[u8]) -> Option<(usize
 fn geometry_verification_failed(operation: &SetShapeGeometry) -> PptxExecutionResult {
     failed("DOCUMENT_INVALID", "output PPTX geometry failed validation")
         .with_target("set_shape_geometry", &operation.shape_handle)
+}
+
+fn invalid_typeface(value: &str) -> bool {
+    value.is_empty()
+        || value
+            .chars()
+            .any(|value| value.is_control() || matches!(value, '<' | '>' | '&' | '\"' | '\''))
+}
+
+fn image_format(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
+    bytes
+        .starts_with(b"\x89PNG\r\n\x1a\n")
+        .then_some(("png", "image/png"))
+        .or_else(|| (bytes.starts_with(&[0xff, 0xd8, 0xff])).then_some(("jpeg", "image/jpeg")))
+}
+fn allocate_media_part(package: &Package, extension: &str) -> PartName {
+    for index in 1usize.. {
+        let name = PartName::parse(format!("/ppt/media/image{index}.{extension}"))
+            .expect("generated media name");
+        if package.part(&name).is_err() {
+            return name;
+        }
+    }
+    unreachable!()
+}
+fn allocate_relationship_id(relationships: &[opensuite_opc::Relationship]) -> String {
+    for index in 1usize.. {
+        let value = format!("rId{index}");
+        if relationships.iter().all(|item| item.id.as_str() != value) {
+            return value;
+        }
+    }
+    unreachable!()
+}
+fn relationship_part_name(part: &PartName) -> PartName {
+    let value = part.as_str().trim_start_matches('/');
+    let (parent, name) = value.rsplit_once('/').unwrap_or(("", value));
+    PartName::parse(format!("/{parent}/_rels/{name}.rels")).expect("known slide part")
+}
+fn insert_relationship(source: Vec<u8>, id: &str, media_part: &str) -> Vec<u8> {
+    let mut value = String::from_utf8(source).expect("relationship XML is UTF-8");
+    let insertion = format!(
+        "<Relationship Id=\"{id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/{}\"/>",
+        media_part.rsplit('/').next().expect("media name")
+    );
+    let position = value
+        .rfind("</Relationships>")
+        .expect("well-formed relationships");
+    value.insert_str(position, &insertion);
+    value.into_bytes()
+}
+fn ensure_content_type(source: Vec<u8>, extension: &str, content_type: &str) -> Vec<u8> {
+    let value = String::from_utf8(source).expect("content types XML is UTF-8");
+    if value.contains(&format!("Extension=\"{extension}\"")) {
+        return value.into_bytes();
+    }
+    let position = value.rfind("</Types>").expect("well-formed content types");
+    let mut result = value;
+    result.insert_str(
+        position,
+        &format!("<Default Extension=\"{extension}\" ContentType=\"{content_type}\"/>"),
+    );
+    result.into_bytes()
+}
+fn find_picture_embed(
+    source: &[u8],
+    target: crate::handles::ShapeHandle,
+) -> Option<((usize, usize), String)> {
+    let mut reader = NsReader::from_reader(source);
+    let mut buffer = Vec::new();
+    let mut depth = 0usize;
+    let mut tree = None;
+    let mut index = 0usize;
+    let mut picture = None;
+    loop {
+        let (namespace, event) = reader.read_resolved_event_into(&mut buffer).ok()?;
+        let presentation = is_presentation_namespace(&namespace);
+        let drawing = is_drawing_namespace(&namespace);
+        match event {
+            Event::Start(element) => {
+                depth += 1;
+                if presentation_element(presentation, &element, "spTree") {
+                    tree = Some(depth);
+                } else if tree == Some(depth - 1) {
+                    if let Some(kind) = top_level_shape_kind(presentation, &element) {
+                        if index == target.shape_index && kind == ShapeKind::Picture {
+                            picture = Some(depth);
+                        }
+                        index += 1;
+                    }
+                }
+            }
+            Event::Empty(element)
+                if picture.is_some() && drawing && element.local_name().as_ref() == b"blip" =>
+            {
+                let end = reader.buffer_position() as usize;
+                let start = end.checked_sub(element.as_ref().len())?;
+                let raw = &source[start..end];
+                let span = raw_attribute_span(raw, start, b"r:embed")
+                    .or_else(|| raw_attribute_span(raw, start, b"embed"))?;
+                return Some((
+                    span,
+                    String::from_utf8(raw[span.0 - start..span.1 - start].to_vec()).ok()?,
+                ));
+            }
+            Event::End(_) => {
+                if picture == Some(depth) {
+                    picture = None;
+                }
+                if tree == Some(depth) {
+                    tree = None;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    None
+}
+fn picture_verification_failed(operation: &ReplacePicture) -> PptxExecutionResult {
+    failed("DOCUMENT_INVALID", "output PPTX picture failed validation")
+        .with_target("replace_picture", &operation.shape_handle)
+}
+
+fn requested_formatting(
+    current: &DirectRunFormatting,
+    operation: &SetTextRunFormatting,
+) -> DirectRunFormatting {
+    DirectRunFormatting {
+        bold: operation.bold.or(current.bold),
+        italic: operation.italic.or(current.italic),
+        font_size: operation.font_size.or(current.font_size),
+        typeface: operation
+            .typeface
+            .clone()
+            .or_else(|| current.typeface.clone()),
+        color: operation
+            .color
+            .clone()
+            .map(|value| value.to_ascii_uppercase())
+            .or_else(|| current.color.clone()),
+    }
+}
+
+fn patch_run_formatting(
+    mut source: Vec<u8>,
+    found: &LocatedRun,
+    operation: &SetTextRunFormatting,
+) -> Option<Vec<u8>> {
+    let run_start = source[..found.start]
+        .windows(5)
+        .rposition(|value| value == b"<a:r>")?;
+    let text_start = source[..found.start]
+        .windows(5)
+        .rposition(|value| value == b"<a:t>")?;
+    let run = &source[run_start..text_start];
+    let requested = requested_formatting(&operation.expected_current_formatting, operation);
+    let rpr_start = run
+        .windows(6)
+        .position(|value| value == b"<a:rPr")
+        .map(|value| run_start + value);
+    if let Some(rpr_start) = rpr_start {
+        let open_end = source[rpr_start..]
+            .iter()
+            .position(|value| *value == b'>')?
+            + rpr_start;
+        let close_start = source[open_end + 1..text_start]
+            .windows(8)
+            .position(|value| value == b"</a:rPr>")
+            .map(|value| open_end + 1 + value)?;
+        let mut replacement = String::from_utf8(source[rpr_start..=open_end].to_vec()).ok()?;
+        if let Some(value) = requested.bold {
+            replacement = set_xml_attribute(replacement, "b", if value { "1" } else { "0" });
+        }
+        if let Some(value) = requested.italic {
+            replacement = set_xml_attribute(replacement, "i", if value { "1" } else { "0" });
+        }
+        if let Some(value) = requested.font_size {
+            replacement = set_xml_attribute(replacement, "sz", &value.to_string());
+        }
+        let mut children = String::from_utf8(source[open_end + 1..close_start].to_vec()).ok()?;
+        if operation.typeface.is_some() {
+            children = set_or_add_latin(children, requested.typeface.as_deref()?);
+        }
+        if operation.color.is_some() {
+            children = set_or_add_color(children, requested.color.as_deref()?);
+        }
+        source.splice(
+            rpr_start..close_start + 8,
+            format!("{replacement}{children}</a:rPr>").bytes(),
+        );
+    } else {
+        let mut attributes = String::new();
+        if let Some(value) = requested.bold {
+            attributes.push_str(if value { " b=\"1\"" } else { " b=\"0\"" });
+        }
+        if let Some(value) = requested.italic {
+            attributes.push_str(if value { " i=\"1\"" } else { " i=\"0\"" });
+        }
+        if let Some(value) = requested.font_size {
+            attributes.push_str(&format!(" sz=\"{value}\""));
+        }
+        let latin = requested
+            .typeface
+            .map(|value| format!("<a:latin typeface=\"{value}\"/> "))
+            .unwrap_or_default();
+        let color = requested
+            .color
+            .map(|value| {
+                format!(
+                    "<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>",
+                    value.to_ascii_uppercase()
+                )
+            })
+            .unwrap_or_default();
+        source.splice(
+            run_start + 5..run_start + 5,
+            format!("<a:rPr{attributes}>{latin}{color}</a:rPr>").bytes(),
+        );
+    }
+    Some(source)
+}
+
+fn set_xml_attribute(mut element: String, name: &str, value: &str) -> String {
+    let needle = format!(" {name}=\"");
+    if let Some(start) = element.find(&needle) {
+        let value_start = start + needle.len();
+        if let Some(end) = element[value_start..].find('\"') {
+            element.replace_range(value_start..value_start + end, value);
+            return element;
+        }
+    }
+    let position = element.rfind('>').unwrap_or(element.len());
+    element.insert_str(position, &format!(" {name}=\"{value}\""));
+    element
+}
+fn set_or_add_latin(mut children: String, value: &str) -> String {
+    if let Some(start) = children.find("<a:latin") {
+        if let Some(end) = children[start..].find('>') {
+            let item = set_xml_attribute(
+                children[start..start + end + 1].to_owned(),
+                "typeface",
+                value,
+            );
+            children.replace_range(start..start + end + 1, &item);
+            return children;
+        }
+    }
+    children.push_str(&format!("<a:latin typeface=\"{value}\"/>"));
+    children
+}
+fn set_or_add_color(mut children: String, value: &str) -> String {
+    if let Some(start) = children.find("<a:srgbClr") {
+        if let Some(end) = children[start..].find('>') {
+            let item = set_xml_attribute(children[start..start + end + 1].to_owned(), "val", value);
+            children.replace_range(start..start + end + 1, &item);
+            return children;
+        }
+    }
+    children.push_str(&format!(
+        "<a:solidFill><a:srgbClr val=\"{value}\"/></a:solidFill>"
+    ));
+    children
+}
+fn formatting_verification_failed(operation: &SetTextRunFormatting) -> PptxExecutionResult {
+    failed(
+        "DOCUMENT_INVALID",
+        "output PPTX formatting failed validation",
+    )
+    .with_target("set_text_run_formatting", &operation.run_handle)
 }
 
 fn semantic_target(

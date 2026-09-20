@@ -14,9 +14,10 @@ mod mutation;
 mod search;
 
 pub use mutation::{
-    PptxExecutionResult, ReplaceParagraphTextRange, ReplaceTextRun, SetShapeGeometry,
-    execute_pptx_replace_paragraph_text_range, execute_pptx_replace_text_run,
-    execute_pptx_set_shape_geometry,
+    PptxExecutionResult, ReplaceParagraphTextRange, ReplacePicture, ReplaceTextRun,
+    SetShapeGeometry, SetTextRunFormatting, execute_pptx_replace_paragraph_text_range,
+    execute_pptx_replace_picture, execute_pptx_replace_text_run, execute_pptx_set_shape_geometry,
+    execute_pptx_set_text_run_formatting,
 };
 pub use search::{
     FindPptxText, PptxShapeInspection, PptxTextMatch, PptxTextSearchResult, find_pptx_text,
@@ -1665,5 +1666,172 @@ mod tests {
                 "{part}"
             );
         }
+    }
+
+    #[test]
+    fn sets_direct_run_formatting_without_changing_text() {
+        let input = package(
+            &[("rId1", "")],
+            &rel("rId1", "slides/slide1.xml"),
+            &[(
+                "ppt/slides/slide1.xml",
+                &slide(
+                    "<p:sp><p:txBody><a:p><a:r><a:rPr b=\"1\"><a:latin typeface=\"Old\"/></a:rPr><a:t>keep</a:t></a:r></a:p></p:txBody></p:sp>",
+                ),
+            )],
+        );
+        let current = inspect_pptx(input.clone()).overview.unwrap().slides[0].shapes[0]
+            .text_frame
+            .as_ref()
+            .unwrap()
+            .paragraphs[0]
+            .runs[0]
+            .formatting
+            .clone();
+        let output = execute_pptx_set_text_run_formatting(
+            input,
+            &SetTextRunFormatting {
+                run_handle: "s0:sh0:p0:r0".to_owned(),
+                expected_current_formatting: current,
+                bold: Some(false),
+                italic: Some(true),
+                font_size: Some(1800),
+                typeface: Some("Aptos".to_owned()),
+                color: Some("112233".to_owned()),
+                base_revision: None,
+            },
+        )
+        .output_artifact
+        .unwrap();
+        let overview = inspect_pptx(output).overview.unwrap();
+        let run = &overview.slides[0].shapes[0]
+            .text_frame
+            .as_ref()
+            .unwrap()
+            .paragraphs[0]
+            .runs[0];
+        assert_eq!(run.text, "keep");
+        assert_eq!(run.formatting.bold, Some(false));
+        assert_eq!(run.formatting.italic, Some(true));
+        assert_eq!(run.formatting.font_size, Some(1800));
+        assert_eq!(run.formatting.typeface.as_deref(), Some("Aptos"));
+        assert_eq!(run.formatting.color.as_deref(), Some("112233"));
+    }
+
+    #[test]
+    fn creates_run_properties_and_rejects_invalid_formatting() {
+        let input = package(
+            &[("rId1", "")],
+            &rel("rId1", "slides/slide1.xml"),
+            &[(
+                "ppt/slides/slide1.xml",
+                &slide("<p:sp><p:txBody><a:p><a:r><a:t>plain</a:t></a:r></a:p></p:txBody></p:sp>"),
+            )],
+        );
+        let operation = SetTextRunFormatting {
+            run_handle: "s0:sh0:p0:r0".to_owned(),
+            expected_current_formatting: DirectRunFormatting::default(),
+            bold: Some(true),
+            italic: None,
+            font_size: None,
+            typeface: None,
+            color: None,
+            base_revision: None,
+        };
+        let output = execute_pptx_set_text_run_formatting(input.clone(), &operation)
+            .output_artifact
+            .unwrap();
+        assert_eq!(
+            inspect_pptx(output).overview.unwrap().slides[0].shapes[0]
+                .text_frame
+                .as_ref()
+                .unwrap()
+                .paragraphs[0]
+                .runs[0]
+                .formatting
+                .bold,
+            Some(true)
+        );
+        let invalid = SetTextRunFormatting {
+            font_size: Some(0),
+            ..operation
+        };
+        assert!(
+            execute_pptx_set_text_run_formatting(input, &invalid)
+                .output_artifact
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn replaces_one_picture_without_overwriting_shared_media() {
+        let original = b"\x89PNG\r\n\x1a\noriginal";
+        let replacement = b"\x89PNG\r\n\x1a\nreplacement";
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        for (name, value) in [
+            (
+                "[Content_Types].xml",
+                "<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/></Types>",
+            ),
+            (
+                "_rels/.rels",
+                &format!(
+                    "<Relationships><Relationship Id=\"rId1\" Type=\"{OFFICE}\" Target=\"ppt/presentation.xml\"/></Relationships>"
+                ),
+            ),
+            (
+                "ppt/presentation.xml",
+                &format!(
+                    "<p:presentation xmlns:p=\"{P}\" xmlns:r=\"{R}\"><p:sldIdLst><p:sldId r:id=\"rId1\"/></p:sldIdLst></p:presentation>"
+                ),
+            ),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                &rel("rId1", "slides/slide1.xml"),
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                &slide(
+                    "<p:pic><p:nvPicPr><p:cNvPr id=\"2\" name=\"Photo\"/></p:nvPicPr><p:blipFill><a:blip r:embed=\"rId1\"/></p:blipFill><p:spPr><a:xfrm><a:off x=\"1\" y=\"2\"/><a:ext cx=\"3\" cy=\"4\"/></a:xfrm></p:spPr></p:pic><p:pic><p:blipFill><a:blip r:embed=\"rId1\"/></p:blipFill></p:pic>",
+                ),
+            ),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                "<Relationships><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/image1.png\"/></Relationships>",
+            ),
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(value.as_bytes()).unwrap();
+        }
+        zip.start_file("ppt/media/image1.png", options).unwrap();
+        zip.write_all(original).unwrap();
+        let input = zip.finish().unwrap().into_inner();
+        let result = execute_pptx_replace_picture(
+            input.clone(),
+            &ReplacePicture {
+                shape_handle: "s0:sh0".to_owned(),
+                replacement_image: replacement.to_vec(),
+                expected_current_media_part: "/ppt/media/image1.png".to_owned(),
+                expected_current_content_type: "image/png".to_owned(),
+                base_revision: None,
+            },
+        );
+        assert!(
+            result.output_artifact.is_some(),
+            "{:?}",
+            result.operation.diagnostics
+        );
+        let output = result.output_artifact.unwrap();
+        assert_eq!(entry_bytes(&output, "ppt/media/image1.png"), original);
+        assert_eq!(entry_bytes(&output, "ppt/media/image2.png"), replacement);
+        assert_eq!(
+            inspect_pptx(output).overview.unwrap().slides[0].shapes[0]
+                .geometry
+                .as_ref()
+                .unwrap()
+                .x,
+            Some(1)
+        );
     }
 }
