@@ -1,5 +1,5 @@
-# Build + publish @opensuite/engine (N-API) for linux-x64-gnu and darwin-arm64.
-# Requires repo secret NPM_TOKEN (automation token for @opensuite scope).
+# Build @opensuite/engine (N-API) native bindings for the five initial platforms.
+# Publish remains gated on repo secret NPM_TOKEN (skipped when unset).
 #
 # Triggers:
 # - workflow_dispatch (manual)
@@ -24,12 +24,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - host: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            build: npm run build -- --target x86_64-unknown-linux-gnu --use-napi-cross
           - host: macos-latest
             target: aarch64-apple-darwin
+            artifact: opensuite_node.darwin-arm64.node
             build: npm run build -- --target aarch64-apple-darwin
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            artifact: opensuite_node.darwin-x64.node
+            build: npm run build -- --target x86_64-apple-darwin
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: opensuite_node.linux-x64-gnu.node
+            build: npm run build -- --target x86_64-unknown-linux-gnu --use-napi-cross
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact: opensuite_node.linux-arm64-gnu.node
+            build: npm run build -- --target aarch64-unknown-linux-gnu --use-napi-cross
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: opensuite_node.win32-x64-msvc.node
+            build: npm run build -- --target x86_64-pc-windows-msvc
     name: build-${{ matrix.target }}
     runs-on: ${{ matrix.host }}
     defaults:
@@ -65,12 +79,21 @@ jobs:
       - name: Build native binding
         run: ${{ matrix.build }}
 
+      - name: Verify artifact exists
+        shell: bash
+        run: |
+          if [ ! -f "${{ matrix.artifact }}" ]; then
+            echo "Missing expected artifact: ${{ matrix.artifact }}"
+            ls -la . || true
+            exit 1
+          fi
+          echo "Found ${{ matrix.artifact }} ($(wc -c < "${{ matrix.artifact }}") bytes)"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: bindings-${{ matrix.target }}
-          path: |
-            ${{ env.WORKING_DIRECTORY }}/${{ env.APP_NAME }}.*.node
+          path: ${{ env.WORKING_DIRECTORY }}/${{ matrix.artifact }}
           if-no-files-found: error
 
   publish:
