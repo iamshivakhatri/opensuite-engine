@@ -58,7 +58,8 @@ jobs:
           cache: npm
           cache-dependency-path: crates/opensuite-node/package-lock.json
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Must match rust-toolchain.toml so matrix targets land on the toolchain cargo actually uses.
+      - uses: dtolnay/rust-toolchain@1.85.0
         with:
           targets: ${{ matrix.target }}
 
