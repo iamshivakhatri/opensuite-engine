@@ -1,5 +1,5 @@
 {
-  "name": "@opensuite/engine",
+  "name": "@opensuitehq/engine",
   "version": "0.1.0",
   "description": "OpenSuite native DOCX engine (N-API). Platform binaries ship as optionalDependencies.",
   "main": "index.js",
@@ -15,7 +15,7 @@
   ],
   "napi": {
     "binaryName": "opensuite_node",
-    "packageName": "@opensuite/engine",
+    "packageName": "@opensuitehq/engine",
     "targets": [
       "x86_64-apple-darwin",
       "aarch64-apple-darwin",
@@ -37,11 +37,20 @@
     "build:debug": "node ./scripts/build-native.mjs --debug",
     "create-npm-dirs": "napi create-npm-dirs",
     "generate-loader": "node ./scripts/generate-loader.mjs",
+    "pack:dry-run": "node ./scripts/pack-dry-run.mjs",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "node --test test/*.test.mjs",
+    "validate:packages": "node ./scripts/validate-packages.mjs",
     "version": "napi version"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.9.0"
+  },
+  "optionalDependencies": {
+    "@opensuitehq/engine-darwin-x64": "0.1.0",
+    "@opensuitehq/engine-darwin-arm64": "0.1.0",
+    "@opensuitehq/engine-linux-x64-gnu": "0.1.0",
+    "@opensuitehq/engine-linux-arm64-gnu": "0.1.0",
+    "@opensuitehq/engine-win32-x64-msvc": "0.1.0"
   }
 }

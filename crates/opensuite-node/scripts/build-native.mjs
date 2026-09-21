@@ -1,5 +1,5 @@
 /**
- * Native build wrapper for @opensuite/engine.
+ * Native build wrapper for @opensuitehq/engine.
  *
  * `napi build` (CLI 3.x + napi-derive 2.16) currently emits an empty index.d.ts
  * because type-def env vars disagree (NAPI_TYPE_DEF_TMP_FOLDER vs TYPE_DEF_TMP_PATH).

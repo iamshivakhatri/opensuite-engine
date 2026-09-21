@@ -1,14 +1,20 @@
-# Build @opensuite/engine (N-API) native bindings for the five initial platforms.
-# Publish remains gated on repo secret NPM_TOKEN (skipped when unset).
+# Build @opensuitehq/engine (N-API) native bindings for the five initial platforms.
+# Assembles npm packages, packs tarballs, and publishes via npm Trusted Publishing (OIDC).
+# No long-lived NPM_TOKEN — publish uses GitHub Actions OIDC only.
 #
 # Triggers:
-# - workflow_dispatch (manual)
-# - push of tags matching v*.*.* (e.g. v0.1.0)
+# - workflow_dispatch (manual; dry_run=true by default skips npm publish)
+# - push of tags matching v*.*.* (e.g. v0.1.1) — always publishes
 
 name: Publish engine
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Assemble and pack only; skip npm publish (safe default)
+        type: boolean
+        default: true
   push:
     tags:
       - "v*.*.*"
@@ -102,7 +108,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       id-token: write
     defaults:
       run:
@@ -110,12 +116,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 24 ships npm ≥ 11.5.1 required for Trusted Publishing / OIDC.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: crates/opensuite-node/package-lock.json
           registry-url: https://registry.npmjs.org
+
+      - name: Verify npm supports Trusted Publishing
+        run: |
+          node --version
+          npm --version
+          npm --version | awk -F. '{ if ($1 < 11 || ($1 == 11 && $2 < 5) || ($1 == 11 && $2 == 5 && $3 < 1)) { print "npm >= 11.5.1 required for Trusted Publishing"; exit 1 } }'
 
       - name: Install npm deps
         run: npm ci
@@ -134,15 +147,46 @@ jobs:
       - name: List packages
         run: ls -R ./npm
 
-      - name: Publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Pack tarballs (dry-run validation, no publish)
+        run: npm run pack:dry-run
+
+      - name: Upload npm tarballs
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs
+          path: ${{ env.WORKING_DIRECTORY }}/dist-tarballs/*.tgz
+          if-no-files-found: error
+
+      # setup-node writes `:_authToken=${NODE_AUTH_TOKEN}` when registry-url is set.
+      # An empty token blocks OIDC Trusted Publishing; remove it before publish.
+      - name: Prepare npmrc for OIDC
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
         run: |
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "NPM_TOKEN secret is not set — skipping publish (artifacts built OK)."
-            exit 0
+          NPMRC="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          if [ -f "$NPMRC" ]; then
+            sed -i '/_authToken/d' "$NPMRC"
+            echo "npmrc after stripping _authToken:"
+            cat "$NPMRC" || true
           fi
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
-          npm config set provenance true
-          npm publish --access public
+
+      - name: Publish platform packages then root (OIDC)
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        run: |
+          set -euo pipefail
+          for dir in npm/*/; do
+            name="$(node -p "require('./${dir}package.json').name")"
+            version="$(node -p "require('./${dir}package.json').version")"
+            echo "Publishing ${name}@${version} from ${dir}"
+            npm publish "${dir}" --access public
+          done
+          root_name="$(node -p "require('./package.json').name")"
+          root_version="$(node -p "require('./package.json').version")"
+          echo "Publishing ${root_name}@${root_version} (root, ignore-scripts)"
+          # Platforms already published; skip prepublishOnly to avoid republishing them.
+          npm publish --access public --ignore-scripts
+
+      - name: Skip publish (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run != false }}
+        run: |
+          echo "dry_run=true — assembled packages and uploaded tarballs; skipped npm publish."
+          echo "Re-run with dry_run=false or push a new v*.*.* tag to publish via OIDC."

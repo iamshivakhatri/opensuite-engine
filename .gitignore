@@ -2,6 +2,8 @@
 crates/opensuite-node/node_modules/
 crates/opensuite-node/*.node
 crates/opensuite-node/npm/
+crates/opensuite-node/artifacts/
+crates/opensuite-node/dist-tarballs/
 *.docx
 !tests/fixtures/numbering.docx
 !tests/fixtures/sections.docx
