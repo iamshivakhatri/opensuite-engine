@@ -1,6 +1,7 @@
 /target/
 crates/opensuite-node/node_modules/
 crates/opensuite-node/*.node
+crates/opensuite-node/npm/
 *.docx
 !tests/fixtures/numbering.docx
 !tests/fixtures/sections.docx

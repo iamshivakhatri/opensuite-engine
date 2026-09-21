@@ -33,9 +33,10 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release --dts index.d.ts",
-    "build:debug": "napi build --platform --dts index.d.ts",
+    "build": "node ./scripts/build-native.mjs",
+    "build:debug": "node ./scripts/build-native.mjs --debug",
     "create-npm-dirs": "napi create-npm-dirs",
+    "generate-loader": "node ./scripts/generate-loader.mjs",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "node --test test/*.test.mjs",
     "version": "napi version"
