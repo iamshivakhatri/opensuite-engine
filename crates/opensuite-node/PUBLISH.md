@@ -49,7 +49,7 @@ TMP=$(mktemp -d)
 cd "$TMP"
 npm init -y
 npm install \
-  /path/to/opensuitehq-engine-0.1.0.tgz \
-  /path/to/opensuitehq-engine-darwin-arm64-0.1.0.tgz
+  /path/to/opensuitehq-engine-0.1.1.tgz \
+  /path/to/opensuitehq-engine-darwin-arm64-0.1.1.tgz
 node -e 'require("@opensuitehq/engine").getDocxCapabilities()'
 ```

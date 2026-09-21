@@ -1,6 +1,6 @@
 {
   "name": "@opensuitehq/engine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenSuite native DOCX engine (N-API). Platform binaries ship as optionalDependencies.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -47,10 +47,10 @@
     "@napi-rs/cli": "^3.9.0"
   },
   "optionalDependencies": {
-    "@opensuitehq/engine-darwin-x64": "0.1.0",
-    "@opensuitehq/engine-darwin-arm64": "0.1.0",
-    "@opensuitehq/engine-linux-x64-gnu": "0.1.0",
-    "@opensuitehq/engine-linux-arm64-gnu": "0.1.0",
-    "@opensuitehq/engine-win32-x64-msvc": "0.1.0"
+    "@opensuitehq/engine-darwin-x64": "0.1.1",
+    "@opensuitehq/engine-darwin-arm64": "0.1.1",
+    "@opensuitehq/engine-linux-x64-gnu": "0.1.1",
+    "@opensuitehq/engine-linux-arm64-gnu": "0.1.1",
+    "@opensuitehq/engine-win32-x64-msvc": "0.1.1"
   }
 }
