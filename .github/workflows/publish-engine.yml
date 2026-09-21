@@ -179,10 +179,14 @@ jobs:
             echo "Publishing ${name}@${version} from ${dir}"
             npm publish "${dir}" --access public
           done
+          # Inject platform optionalDependencies into package.json (napi-rs standard).
+          # pack:dry-run restores the committed manifest afterward, so re-inject here
+          # before publishing the root. Platforms are already on the registry.
+          npx napi prepublish -t npm --skip-optional-publish
           root_name="$(node -p "require('./package.json').name")"
           root_version="$(node -p "require('./package.json').version")"
           echo "Publishing ${root_name}@${root_version} (root, ignore-scripts)"
-          # Platforms already published; skip prepublishOnly to avoid republishing them.
+          # Skip prepublishOnly — platforms already published; optionals just injected.
           npm publish --access public --ignore-scripts
 
       - name: Skip publish (dry run)

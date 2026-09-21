@@ -28,6 +28,17 @@ npm run build
 
 Produces `opensuite_node.<platform>.node` next to `index.js` for local `link:` / pnpm override consumers.
 
+## Platform optionalDependencies (release-time only)
+
+Committed `package.json` / `package-lock.json` do **not** list the five
+`@opensuitehq/engine-*` optionalDependencies. Those packages only exist on npm
+*after* a release, so locking them at the next version breaks `npm ci` (bootstrap).
+
+`napi prepublish` injects exact same-version optionalDependencies into the root
+manifest during pack/publish (`pack:dry-run` does this, then restores the
+committed `package.json`). The packed/published `@opensuitehq/engine` still
+declares all five platform packages.
+
 ## Dry-run pack (local, no publish)
 
 After a green **Publish engine** build (or with all five `.node` artifacts under `artifacts/`):
@@ -41,6 +52,8 @@ npm run pack:dry-run
 ```
 
 Creates `dist-tarballs/*.tgz` for the root package and all five platform packages.
+The root tarball includes injected `optionalDependencies`; the working-tree
+`package.json` is restored afterward.
 
 Local install smoke (current platform only):
 
