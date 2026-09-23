@@ -1,8 +1,9 @@
 use opensuite_opc::{Package, Part};
 use opensuite_protocol::{
     Affordance, AffordanceReason, DocxBodyBlock, DocxBodyBlockKind, DocxHeading, DocxOverview,
-    DocxParagraph, DocxPicture, DocxPictureFormat, DocxTable, DocxTableColumn, DocxTableRow, DocxTableRowWindow, DocxTableRowWindowItem,
-    InspectDocx, InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectionPage,
+    DocxParagraph, DocxPicture, DocxPictureFormat, DocxTable, DocxTableColumn, DocxTableRow,
+    DocxTableRowWindow, DocxTableRowWindowItem, InspectDocx, InspectDocxContent, InspectDocxFocus,
+    InspectDocxResult, InspectionPage,
 };
 use std::collections::HashMap;
 
@@ -86,7 +87,11 @@ pub fn inspect_docx_document(
             )
         }
         InspectDocxFocus::Tables { offset, limit } => tables(source, document, *offset, *limit),
-        InspectDocxFocus::TableRows { table_handle, row_offset, row_limit } => table_rows(document, table_handle, *row_offset, *row_limit),
+        InspectDocxFocus::TableRows {
+            table_handle,
+            row_offset,
+            row_limit,
+        } => table_rows(document, table_handle, *row_offset, *row_limit),
         InspectDocxFocus::Context(request) => {
             let result = match crate::inspect_text_context(source, request) {
                 Ok(result) => result,
@@ -648,29 +653,62 @@ fn tables(
     InspectDocxResult::success(InspectDocxContent::Tables(page_result(total, page, items)))
 }
 
-fn table_rows(document: DocxDocument<'_>, handle: &str, row_offset: usize, row_limit: usize) -> InspectDocxResult {
+fn table_rows(
+    document: DocxDocument<'_>,
+    handle: &str,
+    row_offset: usize,
+    row_limit: usize,
+) -> InspectDocxResult {
     if row_limit == 0 || row_limit > 10 {
-        return InspectDocxResult::failed("INVALID_TABLE_ROW_LIMIT", "table row limit must be between 1 and 10");
+        return InspectDocxResult::failed(
+            "INVALID_TABLE_ROW_LIMIT",
+            "table row limit must be between 1 and 10",
+        );
     }
-    let Some(index) = handle.strip_prefix('t').and_then(|value| value.parse::<usize>().ok()) else {
+    let Some(index) = handle
+        .strip_prefix('t')
+        .and_then(|value| value.parse::<usize>().ok())
+    else {
         return InspectDocxResult::failed("PRECONDITION_FAILED", "table handle is malformed");
     };
-    let Some(table) = document.blocks().filter_map(|block| match block { BodyBlock::Table(table) => Some(table), BodyBlock::Paragraph(_) => None }).nth(index) else {
+    let Some(table) = document
+        .blocks()
+        .filter_map(|block| match block {
+            BodyBlock::Table(table) => Some(table),
+            BodyBlock::Paragraph(_) => None,
+        })
+        .nth(index)
+    else {
         return InspectDocxResult::failed("TARGET_NOT_FOUND", "table handle was not found");
     };
     let (row_count, column_count, header_texts) = match table_summary(&table) {
         Ok(summary) => summary,
-        Err(error) => return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact"),
+        Err(error) => {
+            return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact");
+        }
     };
     let mut rows = Vec::new();
     for (index, row) in table.rows().enumerate().skip(row_offset).take(row_limit) {
-        let cells = match row.cells().map(|cell| cell.text_for_view(RevisionView::Current)).collect::<Result<Vec<_>, _>>() {
+        let cells = match row
+            .cells()
+            .map(|cell| cell.text_for_view(RevisionView::Current))
+            .collect::<Result<Vec<_>, _>>()
+        {
             Ok(cells) => cells,
-            Err(error) => return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact"),
+            Err(error) => {
+                return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact");
+            }
         };
         rows.push(DocxTableRowWindowItem { index, cells });
     }
-    InspectDocxResult::success(InspectDocxContent::TableRows(DocxTableRowWindow { table_handle: handle.to_owned(), row_count, column_count, header_texts, row_offset, rows }))
+    InspectDocxResult::success(InspectDocxContent::TableRows(DocxTableRowWindow {
+        table_handle: handle.to_owned(),
+        row_count,
+        column_count,
+        header_texts,
+        row_offset,
+        rows,
+    }))
 }
 
 fn affordance(capability: &'static str, reason: Option<AffordanceReason>) -> Affordance {
@@ -970,9 +1008,13 @@ mod tests {
 
     #[test]
     fn table_rows_returns_a_bounded_current_view_window() {
-        let source = source("<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Header</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>One</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:ins><w:r><w:t>Two</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Other</w:t></w:r></w:p></w:tc></w:tr></w:tbl>");
+        let source = source(
+            "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Header</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>One</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:ins><w:r><w:t>Two</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Other</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+        );
         let result = table_rows(DocxDocument::new(&source).unwrap(), "t0", 1, 10);
-        let Some(InspectDocxContent::TableRows(rows)) = result.content else { panic!("expected table rows") };
+        let Some(InspectDocxContent::TableRows(rows)) = result.content else {
+            panic!("expected table rows")
+        };
         assert_eq!(rows.row_count, 3);
         assert_eq!(rows.column_count, 1);
         assert_eq!(rows.header_texts, ["Header"]);
@@ -981,11 +1023,22 @@ mod tests {
         assert_eq!(rows.rows[1].index, 2);
         assert_eq!(rows.rows[1].cells, ["Two"]);
         let empty = table_rows(DocxDocument::new(&source).unwrap(), "t0", 3, 1);
-        let Some(InspectDocxContent::TableRows(empty)) = empty.content else { panic!("expected table rows") };
+        let Some(InspectDocxContent::TableRows(empty)) = empty.content else {
+            panic!("expected table rows")
+        };
         assert!(empty.rows.is_empty());
-        assert_eq!(table_rows(DocxDocument::new(&source).unwrap(), "bad", 0, 1).diagnostics[0].code, "PRECONDITION_FAILED");
-        assert_eq!(table_rows(DocxDocument::new(&source).unwrap(), "t9", 0, 1).diagnostics[0].code, "TARGET_NOT_FOUND");
-        assert_eq!(table_rows(DocxDocument::new(&source).unwrap(), "t0", 0, 11).diagnostics[0].code, "INVALID_TABLE_ROW_LIMIT");
+        assert_eq!(
+            table_rows(DocxDocument::new(&source).unwrap(), "bad", 0, 1).diagnostics[0].code,
+            "PRECONDITION_FAILED"
+        );
+        assert_eq!(
+            table_rows(DocxDocument::new(&source).unwrap(), "t9", 0, 1).diagnostics[0].code,
+            "TARGET_NOT_FOUND"
+        );
+        assert_eq!(
+            table_rows(DocxDocument::new(&source).unwrap(), "t0", 0, 11).diagnostics[0].code,
+            "INVALID_TABLE_ROW_LIMIT"
+        );
     }
 
     #[test]

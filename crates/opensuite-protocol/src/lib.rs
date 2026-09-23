@@ -761,11 +761,27 @@ pub struct InspectDocx {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InspectDocxFocus {
     Overview,
-    BodyBlocks { offset: usize, limit: usize },
-    Headings { offset: usize, limit: usize },
-    Paragraphs { offset: usize, limit: usize },
-    Tables { offset: usize, limit: usize },
-    TableRows { table_handle: String, row_offset: usize, row_limit: usize },
+    BodyBlocks {
+        offset: usize,
+        limit: usize,
+    },
+    Headings {
+        offset: usize,
+        limit: usize,
+    },
+    Paragraphs {
+        offset: usize,
+        limit: usize,
+    },
+    Tables {
+        offset: usize,
+        limit: usize,
+    },
+    TableRows {
+        table_handle: String,
+        row_offset: usize,
+        row_limit: usize,
+    },
     Context(InspectTextContext),
 }
 
