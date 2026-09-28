@@ -10,6 +10,7 @@ mod paragraph_formatting;
 mod picture;
 mod support;
 mod table_cell;
+mod table_cell_formatting;
 mod table_column;
 mod table_lifecycle;
 mod table_quality;

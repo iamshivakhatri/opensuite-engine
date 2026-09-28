@@ -6,8 +6,9 @@ use opensuite_protocol::{
     InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
     InspectTextContextResult, OperationResult, ReplacePicture, ReplaceText, SetContentControlText,
     SetHeaderFooterText, SetHyperlink, SetPageNumber, SetPageSetup, SetParagraphFormatting,
-    SetParagraphStyle, SetParagraphsList, SetPictureSize, SetTableCellShading, SetTableCellsText,
-    SetTableColumnWidths, SetTableFormatting, SetTextFormatting,
+    SetParagraphStyle, SetParagraphsList, SetPictureSize, SetTableCellShading,
+    SetTableCellsFormatting, SetTableCellsText, SetTableColumnWidths, SetTableFormatting,
+    SetTextFormatting,
 };
 
 use crate::{
@@ -19,8 +20,8 @@ use crate::{
     set_content_control_text_to_vec, set_header_footer_text_to_vec, set_hyperlink_to_vec,
     set_page_number_to_vec, set_page_setup_to_vec, set_paragraph_formatting_to_vec,
     set_paragraph_style_to_vec, set_paragraphs_list_to_vec, set_picture_size_to_vec,
-    set_table_cell_shading_to_vec, set_table_cells_text_to_vec, set_table_column_widths_to_vec,
-    set_table_formatting_to_vec, set_text_formatting_to_vec,
+    set_table_cell_shading_to_vec, set_table_cells_formatting_to_vec, set_table_cells_text_to_vec,
+    set_table_column_widths_to_vec, set_table_formatting_to_vec, set_text_formatting_to_vec,
 };
 
 /// The result of executing one DOCX operation against an immutable artifact.
@@ -416,6 +417,12 @@ execute_paragraph_mutation!(
     SetTableCellShading,
     set_table_cell_shading_to_vec,
     "set_table_cell_shading"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_table_cells_formatting,
+    SetTableCellsFormatting,
+    set_table_cells_formatting_to_vec,
+    "set_table_cells_formatting"
 );
 execute_paragraph_mutation!(
     execute_docx_set_paragraph_formatting,

@@ -5,6 +5,7 @@ mod text;
 
 pub(super) use paragraph::simple_property;
 pub use paragraph::*;
+pub(super) use text::table_cell_text_formatting_patches;
 pub use text::*;
 
 pub(super) fn edit_attribute(mut tag: String, key: &str, value: Option<&str>) -> String {

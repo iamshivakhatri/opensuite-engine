@@ -59,6 +59,8 @@ export interface InsertTableRowInput { table: TableTarget; after: TableRowTarget
 export interface InsertTableRowsInput { table: TableTarget; after: TableRowTarget; rows: string[][]; baseRevision?: string }
 export interface InsertTableColumnInput { table: TableTarget; afterColumnHeader?: string; afterColumnHandle?: string; header: string; cells: string[]; baseRevision?: string }
 export interface SetTableCellsTextInput { table: TableTarget; updates: Array<{ target: TableCellTarget; expectedCurrentText: string; replacement: string }>; baseRevision?: string }
+export interface TableCellTextFormattingInput { bold?: boolean; italic?: boolean; fontFamily?: string; fontSizeHalfPoints?: number; color?: string }
+export interface SetTableCellsFormattingInput { table: TableTarget; updates: Array<{ target: TableCellTarget; fill?: string; textFormatting?: TableCellTextFormattingInput }>; baseRevision?: string }
 export interface SetTableFormattingInput {
   table: TableTarget; alignment?: 'left' | 'center' | 'right' | 'clear'; cellMarginTopTwips?: number; cellMarginRightTwips?: number
   cellMarginBottomTwips?: number; cellMarginLeftTwips?: number; borders?: 'grid' | 'none' | 'clear'; baseRevision?: string
@@ -102,6 +104,7 @@ export function executeDocxInsertTableColumn(input: Buffer, operation: InsertTab
 export function executeDocxDeleteTableRow(input: Buffer, operation: { table: TableTarget; row: TableRowTarget; baseRevision?: string }): Promise<ExecuteDocxResult>
 export function executeDocxDeleteTableColumn(input: Buffer, operation: { table: TableTarget; columnHeader?: string; columnHandle?: string; baseRevision?: string }): Promise<ExecuteDocxResult>
 export function executeDocxSetTableCellsText(input: Buffer, operation: SetTableCellsTextInput): Promise<ExecuteDocxResult>
+export function executeDocxSetTableCellsFormatting(input: Buffer, operation: SetTableCellsFormattingInput): Promise<ExecuteDocxResult>
 export function executeDocxSetTableFormatting(input: Buffer, operation: SetTableFormattingInput): Promise<ExecuteDocxResult>
 export function executeDocxSetTableColumnWidths(input: Buffer, operation: SetTableColumnWidthsInput): Promise<ExecuteDocxResult>
 export function executeDocxSetTableCellShading(input: Buffer, operation: SetTableCellShadingInput): Promise<ExecuteDocxResult>

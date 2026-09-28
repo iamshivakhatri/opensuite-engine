@@ -1,6 +1,7 @@
 use super::*;
 
 mod cell;
+mod cell_formatting;
 mod column;
 mod formatting;
 mod lifecycle;
@@ -10,6 +11,7 @@ mod width;
 
 pub(crate) use cell::table_cell_text_reason;
 pub use cell::*;
+pub use cell_formatting::*;
 pub(crate) use column::table_grid_reason;
 pub use column::*;
 pub use formatting::*;

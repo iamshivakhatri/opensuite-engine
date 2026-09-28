@@ -23,7 +23,7 @@ not started.
   direct paragraph and text formatting, including color, underline, highlight,
   strikethrough, and superscript/subscript.
 - Creates, deletes, and safely edits simple direct-body tables, including rows,
-  columns, cells, explicit column widths, cell shading, and basic table formatting.
+  columns, cells, explicit column widths, cell shading, atomic structural formatting of several simple cells, and basic table formatting.
 - Supports simple text content controls and typed bullet or decimal lists at
   levels zero through two, including safe continuation and restart; one bullet
   request may safely target separate source-ordered direct-body runs,

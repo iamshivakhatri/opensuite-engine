@@ -22,14 +22,7 @@ pub fn set_table_cell_shading_to_vec(
     let mut cells = HashSet::new();
     let mut targets = Vec::new();
     for update in &operation.updates {
-        if update.fill.as_deref().is_some_and(|fill| {
-            fill.len() != 6 || !fill.bytes().all(|byte| byte.is_ascii_hexdigit())
-        }) {
-            return Err(OperationResult::failed(
-                "INVALID_OPERATION",
-                "cell shading fill must be a 6-digit RGB hex value",
-            ));
-        }
+        validate_shading_fill(update.fill.as_deref())?;
         let target =
             resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)?;
         if !cells.insert(target.cell) {
@@ -47,7 +40,19 @@ pub fn set_table_cell_shading_to_vec(
     write_patches_to_vec(package, main, source, patches)
 }
 
-fn shading_patch(
+pub(super) fn validate_shading_fill(fill: Option<&str>) -> Result<(), OperationResult> {
+    if fill.is_some_and(|value| {
+        value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return Err(OperationResult::failed(
+            "INVALID_OPERATION",
+            "cell shading fill must be a 6-digit RGB hex value",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn shading_patch(
     source: &SourceDocument,
     cell: NodeId,
     fill: Option<&str>,

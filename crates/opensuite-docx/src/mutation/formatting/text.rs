@@ -1,5 +1,5 @@
 use super::*;
-use opensuite_protocol::VerticalAlignment;
+use opensuite_protocol::{TableCellTextFormatting, VerticalAlignment};
 
 /// Sets direct formatting on one complete, ordinary visible text run.
 pub fn set_text_formatting(
@@ -58,6 +58,72 @@ pub fn set_text_formatting_to_vec(
         source,
         range_text_formatting_patches(source, &runs, &operation.formatting)?,
     )
+}
+
+pub(in crate::mutation) fn table_cell_text_formatting_patches(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    formatting: &TableCellTextFormatting,
+) -> Result<Vec<Patch>, OperationResult> {
+    let patch = TextFormattingPatch {
+        bold: formatting.bold.map(PropertyPatch::Set),
+        italic: formatting.italic.map(PropertyPatch::Set),
+        font_family: formatting.font_family.clone().map(PropertyPatch::Set),
+        font_size_half_points: formatting
+            .font_size_half_points
+            .map(|value| {
+                u16::try_from(value).map(PropertyPatch::Set).map_err(|_| {
+                    OperationResult::failed("INVALID_OPERATION", "font size is too large")
+                })
+            })
+            .transpose()?,
+        color: formatting.color.clone().map(PropertyPatch::Set),
+        ..Default::default()
+    };
+    validate_text_formatting(&patch)?;
+    let runs = source
+        .children(paragraph)
+        .filter(|id| word(source, *id, "r"))
+        .collect::<Vec<_>>();
+    if runs.is_empty()
+        || source.children(paragraph).any(|id| {
+            !word(source, id, "pPr")
+                && !word(source, id, "r")
+                && !matches!(
+                    source.node(id).map(|node| node.kind()),
+                    Some(SourceNodeKind::Text)
+                )
+        })
+        || runs.iter().any(|run| {
+            !source.children(*run).any(|id| word(source, id, "t"))
+                || source.children(*run).any(|id| {
+                    (!word(source, id, "rPr") && !word(source, id, "t"))
+                        || (word(source, id, "rPr")
+                            && source
+                                .children(id)
+                                .any(|child| word(source, child, "rPrChange")))
+                        || (word(source, id, "t")
+                            && (source.children(id).next().is_none()
+                                || source.children(id).nth(1).is_some()
+                                || source.children(id).any(|text| {
+                                    !matches!(
+                                        source.node(text).map(|node| node.kind()),
+                                        Some(SourceNodeKind::Text)
+                                    )
+                                })
+                                || source.children(id).any(|text| is_cdata(source, text))))
+                })
+        })
+    {
+        return Err(
+            unsupported("table cell text formatting requires simple direct runs")
+                .with_reason_code("UNSAFE_PARAGRAPH_STRUCTURE"),
+        );
+    }
+    runs.into_iter().try_fold(Vec::new(), |mut patches, run| {
+        patches.extend(text_formatting_patches(source, run, &patch)?);
+        Ok(patches)
+    })
 }
 
 type FormattingRangeRun = (NodeId, usize, usize, String);

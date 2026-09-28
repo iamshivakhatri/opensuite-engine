@@ -132,7 +132,7 @@ pub fn set_table_cell_text(
 
 pub(super) struct ResolvedTableCell {
     pub(super) cell: NodeId,
-    paragraph: NodeId,
+    pub(super) paragraph: NodeId,
     text: String,
     table_index: usize,
     row_index: usize,
