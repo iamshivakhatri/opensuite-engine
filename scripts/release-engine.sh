@@ -238,17 +238,44 @@ run_checks() {
     npm test
   )
 
-  info "assemble + pack dry-run (no npm publish)"
-  (
-    cd "$NODE_DIR"
-    if [[ ! -d artifacts ]]; then
-      die "missing ${NODE_DIR}/artifacts — download a Publish engine dry-run or place platform bindings there"
+  assert_no_optional_deps
+  maybe_pack_dry_run
+}
+
+# Expected CI artifact layout from publish-engine.yml (download-artifact).
+PLATFORM_BINDING_ARTIFACTS=(
+  artifacts/bindings-aarch64-apple-darwin/opensuite_node.darwin-arm64.node
+  artifacts/bindings-x86_64-apple-darwin/opensuite_node.darwin-x64.node
+  artifacts/bindings-x86_64-unknown-linux-gnu/opensuite_node.linux-x64-gnu.node
+  artifacts/bindings-aarch64-unknown-linux-gnu/opensuite_node.linux-arm64-gnu.node
+  artifacts/bindings-x86_64-pc-windows-msvc/opensuite_node.win32-x64-msvc.node
+)
+
+have_all_platform_artifacts() {
+  local rel
+  for rel in "${PLATFORM_BINDING_ARTIFACTS[@]}"; do
+    if [[ ! -f "${NODE_DIR}/${rel}" ]]; then
+      return 1
     fi
-    npm run create-npm-dirs
-    npm run artifacts -- --output-dir artifacts --npm-dir npm
-    npm run pack:dry-run
-    assert_no_optional_deps
-  )
+  done
+  return 0
+}
+
+maybe_pack_dry_run() {
+  if have_all_platform_artifacts; then
+    info "all five platform artifacts present — running full pack dry-run"
+    (
+      cd "$NODE_DIR"
+      npm run create-npm-dirs
+      npm run artifacts -- --output-dir artifacts --npm-dir npm
+      npm run pack:dry-run
+      assert_no_optional_deps
+    )
+  else
+    info "skipping full six-package pack dry-run (cross-platform artifacts not present locally)"
+    echo "    Cross-platform build, package assembly, and publish validation run in"
+    echo "    .github/workflows/publish-engine.yml after the v${VERSION} tag is pushed."
+  fi
 }
 
 assert_only_release_paths_dirty() {
@@ -284,6 +311,9 @@ Release plan for ${PACKAGE_NAME}@${VERSION}
 
   npm publisher:    .github/workflows/publish-engine.yml (on tag push)
   app install pin:  ${PACKAGE_NAME}@${VERSION}
+
+  Cross-platform native builds and full npm package validation happen in
+  publish-engine.yml (not required locally for a normal Mac release).
 
 EOF
   if [[ "$DO_PUBLISH" -eq 0 ]]; then

@@ -74,4 +74,6 @@ npm run artifacts -- --output-dir artifacts --npm-dir npm
 npm run pack:dry-run
 ```
 
-The release script runs this pack dry-run automatically when artifacts are present.
+The release script runs this pack dry-run opportunistically when all five
+bindings are already under `artifacts/`; a normal Mac release does not require
+them — `publish-engine.yml` is authoritative for multi-platform packaging.
