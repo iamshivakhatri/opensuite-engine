@@ -2,6 +2,51 @@ use super::super::*;
 use super::support::*;
 
 #[test]
+fn formats_simple_table_header_text_without_changing_cells() {
+    let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let bytes = create_table_to_vec(
+        &package,
+        &main,
+        &source,
+        &CreateTable {
+            rows: vec![
+                vec!["Option".into(), "Scope".into()],
+                vec!["A".into(), "Pilot".into()],
+            ],
+            placement: ParagraphPlacement::End,
+            base_revision: None,
+        },
+    )
+    .unwrap();
+    let package = Package::from_bytes(bytes).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    let bytes = set_text_formatting_to_vec(
+        &package,
+        &main,
+        &source,
+        &SetTextFormatting {
+            target: TextTarget {
+                text: "Option".into(),
+                occurrence: None,
+            },
+            formatting: TextFormattingPatch {
+                bold: Some(PropertyPatch::Set(true)),
+                ..Default::default()
+            },
+            base_revision: None,
+        },
+    )
+    .unwrap();
+    let package = Package::from_bytes(bytes).unwrap();
+    package.verify().unwrap();
+    let xml = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
+    assert!(xml.contains("<w:b />"));
+    assert!(xml.contains("<w:t>Option</w:t>"));
+    assert!(xml.contains("<w:t>Pilot</w:t>"));
+}
+
+#[test]
 fn sets_text_formatting_without_rewriting_text_or_unknown_run_properties() {
     let input = table_fixture(&format!(
         "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:r><w:rPr><w:unknown w:value=\"stay\"/><w:rFonts w:eastAsia=\"Keep\"/></w:rPr><w:t>Format run</w:t></w:r></w:p></w:body></w:document>"

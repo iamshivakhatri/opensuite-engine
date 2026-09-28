@@ -12,3 +12,21 @@ test('maps explicit widths and batch header shading', async () => {
   ] })
   assert.equal(shaded.result.ok, true)
 })
+
+test('shades and bolds a table header, then sizes its columns', async () => {
+  const { createBlankDocx, executeDocxCreateTable, executeDocxSetTableCellShading, executeDocxSetTextFormatting, executeDocxSetTableColumnWidths, inspectDocx } = binding
+  let bytes = (await executeDocxCreateTable(createBlankDocx(), { rows: [['Option', 'Scope'], ['A', 'Pilot']], placement: { kind: 'end' } })).output
+  const inspected = await inspectDocx(bytes, { focus: { kind: 'tables' } })
+  const table = inspected.tables.items[0]
+  const updates = table.rows[0].cellHandles.map(handle => ({ target: { handle }, fill: '17365D' }))
+  let result = await executeDocxSetTableCellShading(bytes, { table: { handle: table.handle }, updates })
+  assert.equal(result.result.ok, true, JSON.stringify(result.result.diagnostics))
+  bytes = result.output
+  for (const text of ['Option', 'Scope']) {
+    result = await executeDocxSetTextFormatting(bytes, { target: { text }, bold: true })
+    assert.equal(result.result.ok, true, JSON.stringify(result.result.diagnostics))
+    bytes = result.output
+  }
+  result = await executeDocxSetTableColumnWidths(bytes, { table: { headerCells: ['Option', 'Scope'] }, widthsTwips: [3000, 3000] })
+  assert.equal(result.result.ok, true, JSON.stringify(result.result.diagnostics))
+})

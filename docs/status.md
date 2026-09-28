@@ -23,7 +23,8 @@ not started.
   direct paragraph and text formatting, including color, underline, highlight,
   strikethrough, and superscript/subscript.
 - Creates, deletes, and safely edits simple direct-body tables, including rows,
-  columns, cells, explicit column widths, cell shading, atomic structural formatting of several simple cells, and basic table formatting.
+  columns, cells, explicit column widths, cell shading, direct formatting of simple cell text,
+  atomic structural formatting of several simple cells, and basic table formatting.
 - Supports simple text content controls and typed bullet or decimal lists at
   levels zero through two, including safe continuation and restart; one bullet
   request may safely target separate source-ordered direct-body runs,
@@ -45,10 +46,11 @@ content-control text updates. DOCX mutation capabilities are Node-exposed.
 
 ## Immediate Direction
 
-1. Validate complete application and agent workflows.
-2. Compare benchmark documents with current capabilities and identify real gaps.
-3. Add remaining DOCX P0 capabilities only when those workflows require them.
-4. Freeze DOCX V1 once benchmark and interoperability criteria are met, then
+1. Publish `@opensuitehq/engine@0.1.2` (table-cell `set_text_formatting`) and bump app pins off local binaries.
+2. Validate complete application and agent workflows.
+3. Compare benchmark documents with current capabilities and identify real gaps.
+4. Add remaining DOCX P0 capabilities only when those workflows require them.
+5. Freeze DOCX V1 once benchmark and interoperability criteria are met, then
    begin PPTX.
 
 See [the DOCX engine reference](docx-engine.md) for product scope and the DOCX

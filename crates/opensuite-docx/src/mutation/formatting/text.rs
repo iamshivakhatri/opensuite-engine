@@ -184,7 +184,7 @@ fn resolve_formatting_runs(
         runs.push((run, start, end, segment.source_text.clone()));
     }
     let paragraph = paragraph.ok_or_else(|| unsupported("text range has no paragraph"))?;
-    if !safe_body_paragraph(source, paragraph)
+    if !safe_body_paragraph(source, paragraph) && !safe_table_text_paragraph(source, paragraph)
         || source.children(paragraph).any(|child| {
             word(source, child, "bookmarkStart")
                 || word(source, child, "bookmarkEnd")
@@ -194,10 +194,30 @@ fn resolve_formatting_runs(
         })
     {
         return Err(unsupported(
-            "set_text_formatting supports only an ordinary direct body run without ranges or wrappers",
+            "set_text_formatting supports only an ordinary direct body or simple table-cell run without ranges or wrappers",
         ));
     }
     Ok((matched.text, runs))
+}
+
+fn safe_table_text_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
+    let Some(cell) = source.node(paragraph).and_then(|node| node.parent()) else {
+        return false;
+    };
+    if !word(source, cell, "tc") {
+        return false;
+    }
+    let Some(row) = source.node(cell).and_then(|node| node.parent()) else {
+        return false;
+    };
+    let Some(table) = source.node(row).and_then(|node| node.parent()) else {
+        return false;
+    };
+    word(source, row, "tr")
+        && word(source, table, "tbl")
+        && is_direct_body_table(source, table)
+        && table_mutation_reason(source, table).is_none()
+        && table_cell_text_reason(source, cell).is_none()
 }
 
 fn range_text_formatting_patches(
