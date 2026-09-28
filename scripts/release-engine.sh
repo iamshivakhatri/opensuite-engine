@@ -155,11 +155,15 @@ bump_versions() {
     const path = process.argv[1];
     const version = process.argv[2];
     const text = fs.readFileSync(path, "utf8");
-    const updated = text.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`);
-    if (updated === text) {
-      console.error("failed to update version in", path);
+    const match = text.match(/^version\s*=\s*"([^"]+)"/m);
+    if (!match) {
+      console.error("failed to find version in", path);
       process.exit(1);
     }
+    if (match[1] === version) {
+      process.exit(0);
+    }
+    const updated = text.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`);
     fs.writeFileSync(path, updated);
   ' "$NODE_DIR/Cargo.toml" "$VERSION"
 
@@ -335,11 +339,15 @@ do_publish() {
   (
     cd "$ROOT"
     git add -- "${RELEASE_PATHS[@]}"
-    git commit -m "$(cat <<EOF
+    if git diff --cached --quiet; then
+      info "release files already at ${VERSION}; skipping prepare commit"
+    else
+      git commit -m "$(cat <<EOF
 release: prepare ${VERSION}
 
 EOF
 )"
+    fi
   )
 
   info "creating annotated tag ${tag}"
