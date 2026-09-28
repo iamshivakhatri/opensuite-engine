@@ -39,6 +39,11 @@ fn inserts_a_safe_row_after_a_semantic_anchor_and_preserves_tables() {
     assert!(output_xml.contains("xml:space=\"preserve\"> Charlie </w:t>"));
     assert!(output_xml.contains("CFO &amp; &lt; &gt;"));
     assert!(output_xml.contains("<w:shd w:fill=\"EEEEEE\"/>"));
+    let inserted = &table_row_xml(&output)[3];
+    assert!(inserted.contains("<w:shd w:fill=\"EEEEEE\"/>"));
+    assert!(inserted.contains("<w:i/>"));
+    assert!(!inserted.contains("<w:b/>"));
+    assert!(!inserted.contains("<w:shd w:fill=\"DDDDDD\"/>"));
     assert_eq!(entry(&input, "word/media/image.bin"), vec![1, 2, 3]);
     fs::remove_file(input).unwrap();
 }
@@ -136,6 +141,117 @@ fn rejects_unsafe_or_ambiguous_row_insertions() {
     );
     fs::remove_file(input).unwrap();
     fs::remove_file(single).unwrap();
+}
+
+#[test]
+fn inserted_rows_copy_the_nearest_body_formatting() {
+    let rows = [
+        styled_row("Header", "001F3F", true),
+        styled_row("Body A", "FFFFFF", false),
+        styled_row("Body B", "DDDDDD", false),
+        styled_row("Final", "FFFF00", true),
+    ];
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl>{}</w:tbl></w:body></w:document>",
+        rows.join("")
+    ));
+    let original = table_row_xml(&fs::read(&input).unwrap());
+
+    for (anchor_index, template, inserted_index) in [(1, 1, 2), (0, 1, 1), (2, 2, 3)] {
+        let output = row_execute(&input, &row_operation_by_index(anchor_index, &["New"])).unwrap();
+        let actual = table_row_xml(&output);
+        assert_eq!(
+            actual[inserted_index],
+            original[template].replace(anchor_text(template), "New")
+        );
+        let mut expected = original.clone();
+        expected.insert(inserted_index, actual[inserted_index].clone());
+        assert_eq!(actual, expected);
+    }
+
+    let operation = InsertTableRowsAfter {
+        table: TableTarget {
+            header_cells: Vec::new(),
+            occurrence: None,
+            handle: Some("t0".to_owned()),
+        },
+        after: TableRowTarget {
+            first_cell_text: String::new(),
+            occurrence: None,
+            handle: Some("t0:r2".to_owned()),
+        },
+        rows: vec![vec!["New 1".to_owned()], vec!["New 2".to_owned()]],
+        base_revision: None,
+    };
+    let actual = table_row_xml(&rows_execute(&input, &operation).unwrap());
+    let mut expected = original.clone();
+    expected.insert(3, original[2].replace("Body B", "New 1"));
+    expected.insert(4, original[2].replace("Body B", "New 2"));
+    assert_eq!(actual, expected);
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
+fn unsafe_anchor_uses_nearby_safe_row_and_header_only_table_uses_minimal_row() {
+    let unsafe_row = "<w:tr><w:tc><w:p><w:r><w:t>Unsafe</w:t></w:r></w:p><w:p><w:r><w:t>second paragraph</w:t></w:r></w:p></w:tc></w:tr>";
+    let header = styled_row("Header", "001F3F", true);
+    let body_a = styled_row("Body A", "EEEEEE", false);
+    let body_c = styled_row("Body C", "DDDDDD", false);
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl>{header}{body_a}{unsafe_row}{body_c}</w:tbl></w:body></w:document>"
+    ));
+    let original = table_row_xml(&fs::read(&input).unwrap());
+    let actual = table_row_xml(&row_execute(&input, &row_operation_by_index(2, &["New"])).unwrap());
+    assert_eq!(actual[3], original[3].replace("Body C", "New"));
+    assert_eq!(actual[0..3], original[0..3]);
+    assert_eq!(actual[4], original[3]);
+    fs::remove_file(input).unwrap();
+
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl>{header}</w:tbl></w:body></w:document>"
+    ));
+    let actual = table_row_xml(&row_execute(&input, &row_operation_by_index(0, &["New"])).unwrap());
+    assert_eq!(actual[0], header);
+    assert_eq!(
+        actual[1],
+        "<w:tr><w:tc><w:p><w:r><w:t>New</w:t></w:r></w:p></w:tc></w:tr>"
+    );
+    fs::remove_file(input).unwrap();
+}
+
+fn styled_row(text: &str, shading: &str, bold: bool) -> String {
+    let run_properties = if bold { "<w:rPr><w:b/></w:rPr>" } else { "" };
+    format!(
+        "<w:tr><w:tc><w:tcPr><w:shd w:fill=\"{shading}\"/></w:tcPr><w:p><w:r>{run_properties}<w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>"
+    )
+}
+
+fn anchor_text(index: usize) -> &'static str {
+    ["Header", "Body A", "Body B", "Final"][index]
+}
+
+fn row_operation_by_index(index: usize, cells: &[&str]) -> InsertTableRowAfter {
+    let mut operation = row_operation(&["Header"], "", cells);
+    operation.table.handle = Some("t0".to_owned());
+    operation.after.handle = Some(format!("t0:r{index}"));
+    operation
+}
+
+fn table_row_xml(bytes: &[u8]) -> Vec<String> {
+    let package = Package::from_bytes(bytes.to_vec()).unwrap();
+    let (_, source) = crate::open_main_source(&package).unwrap();
+    let (_, _, rows, _) = resolve_table(
+        &source,
+        &TableTarget {
+            header_cells: Vec::new(),
+            occurrence: None,
+            handle: Some("t0".to_owned()),
+        },
+    )
+    .unwrap();
+    rows.iter()
+        .map(|row| String::from_utf8(source_bytes(&source, row.source_id()).unwrap()).unwrap())
+        .collect()
 }
 
 fn row_operation(headers: &[&str], after: &str, cells: &[&str]) -> InsertTableRowAfter {

@@ -175,11 +175,7 @@ fn resolve_table_row(
         let row = rows.get(row_index).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "table row handle was not found")
         })?;
-        let template = rows
-            .iter()
-            .filter(|candidate| candidate.source_id() != row.source_id())
-            .find(|candidate| safe_table_row(source, candidate.source_id()))
-            .map(crate::Row::source_id);
+        let template = row_template_near_anchor(source, &rows, row_index);
         return Ok(ResolvedTableRow {
             row: row.source_id(),
             template,
@@ -200,17 +196,27 @@ fn resolve_table_row(
         }
     }
     let (row_index, row) = select_row(matches, after)?;
-    let template = rows
-        .iter()
-        .filter(|candidate| candidate.source_id() != row)
-        .find(|candidate| safe_table_row(source, candidate.source_id()))
-        .map(crate::Row::source_id);
+    let template = row_template_near_anchor(source, &rows, row_index);
     Ok(ResolvedTableRow {
         row,
         template,
         table_index,
         row_index,
     })
+}
+
+fn row_template_near_anchor(
+    source: &SourceDocument,
+    rows: &[crate::Row<'_>],
+    anchor: usize,
+) -> Option<NodeId> {
+    // The first row is header-position; on equal distance, prefer the following row.
+    rows.iter()
+        .enumerate()
+        .skip(1)
+        .filter(|(_, row)| safe_table_row(source, row.source_id()))
+        .min_by_key(|(index, _)| (index.abs_diff(anchor), *index < anchor))
+        .map(|(_, row)| row.source_id())
 }
 
 fn select_row(
