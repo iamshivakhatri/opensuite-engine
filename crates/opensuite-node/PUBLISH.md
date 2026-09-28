@@ -1,4 +1,30 @@
-# Local notes for publishing @opensuitehq/engine (N-API).
+# Publishing `@opensuitehq/engine` (N-API)
+
+## Normal release path
+
+From a clean worktree at repo root:
+
+```bash
+# Prepare + verify only (no commit/tag/push)
+./scripts/release-engine.sh X.Y.Z
+
+# Prepare + verify + commit + annotated tag + push
+# (tag push triggers GitHub Actions npm publish)
+./scripts/release-engine.sh X.Y.Z --publish
+```
+
+The script bumps only the Node package versions, regenerates `index.js`, runs
+checks, and (with `--publish`) pushes `vX.Y.Z`. It never runs `npm publish`.
+
+`.github/workflows/publish-engine.yml` remains the only npm publisher: it builds
+the five platform binaries, publishes platform packages first, then the root
+package via npm Trusted Publishing (OIDC).
+
+After the workflow succeeds, install in the main `opensuite` repo:
+
+```text
+@opensuitehq/engine@X.Y.Z
+```
 
 ## One-time setup
 
@@ -9,16 +35,7 @@
    - Workflow: `publish-engine.yml`
 3. No long-lived `NPM_TOKEN` is required for CI publishes (OIDC only).
 
-## Release triggers
-
-- **Manual dry-run (default):** Actions → Publish engine → Run workflow (`dry_run=true`).
-  Builds, assembles, packs tarballs; does **not** publish.
-- **Manual publish:** same workflow with `dry_run=false` (only after bumping version).
-- **Tag release:** `git tag vX.Y.Z && git push origin vX.Y.Z` always publishes.
-
-Ordinary branch pushes never publish.
-
-## Local build
+## Local build (development)
 
 ```bash
 cd crates/opensuite-node
@@ -26,7 +43,7 @@ npm ci
 npm run build
 ```
 
-Produces `opensuite_node.<platform>.node` next to `index.js` for local `link:` / pnpm override consumers.
+Produces `opensuite_node.<platform>.node` next to `index.js` for local dogfood.
 
 ## Platform optionalDependencies (release-time only)
 
@@ -39,9 +56,15 @@ manifest during pack/publish (`pack:dry-run` does this, then restores the
 committed `package.json`). The packed/published `@opensuitehq/engine` still
 declares all five platform packages.
 
-## Dry-run pack (local, no publish)
+## Manual CI dry-run (optional)
 
-After a green **Publish engine** build (or with all five `.node` artifacts under `artifacts/`):
+Actions → Publish engine → Run workflow (`dry_run=true`) builds and packs
+tarballs without publishing. Ordinary branch pushes never publish.
+
+## Local pack dry-run (optional)
+
+After a green **Publish engine** build (or with all five bindings under
+`crates/opensuite-node/artifacts/`):
 
 ```bash
 cd crates/opensuite-node
@@ -51,18 +74,4 @@ npm run artifacts -- --output-dir artifacts --npm-dir npm
 npm run pack:dry-run
 ```
 
-Creates `dist-tarballs/*.tgz` for the root package and all five platform packages.
-The root tarball includes injected `optionalDependencies`; the working-tree
-`package.json` is restored afterward.
-
-Local install smoke (current platform only):
-
-```bash
-TMP=$(mktemp -d)
-cd "$TMP"
-npm init -y
-npm install \
-  /path/to/opensuitehq-engine-0.1.1.tgz \
-  /path/to/opensuitehq-engine-darwin-arm64-0.1.1.tgz
-node -e 'require("@opensuitehq/engine").getDocxCapabilities()'
-```
+The release script runs this pack dry-run automatically when artifacts are present.
