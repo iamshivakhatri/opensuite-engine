@@ -264,7 +264,7 @@ pub struct SetTableColumnWidthsInput {
 }
 #[napi(object)]
 pub struct TableCellShadingUpdateInput {
-    pub target: TableCellTargetInput,
+    pub target: SemanticTableCellTargetInput,
     pub fill: Option<String>,
 }
 #[napi(object)]
@@ -926,29 +926,25 @@ pub fn execute_docx_set_table_column_widths_node(
 pub fn execute_docx_set_table_cell_shading_node(
     input: Buffer,
     operation: SetTableCellShadingInput,
-) -> AsyncTask<SetTableCellShadingTask> {
-    AsyncTask::new(SetTableCellShadingTask {
+) -> Result<AsyncTask<SetTableCellShadingTask>> {
+    let updates = operation
+        .updates
+        .into_iter()
+        .map(|update| {
+            Ok(opensuite_protocol::TableCellShadingUpdate {
+                target: semantic_cell_target(update.target)?,
+                fill: update.fill,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(AsyncTask::new(SetTableCellShadingTask {
         input: input.to_vec(),
         operation: SetTableCellShading {
             table: table_target(operation.table),
-            updates: operation
-                .updates
-                .into_iter()
-                .map(|update| opensuite_protocol::TableCellShadingUpdate {
-                    target: TableCellTarget {
-                        row: None,
-                        column: None,
-                        row_label: update.target.row_label.unwrap_or_default(),
-                        column_header: update.target.column_header.unwrap_or_default(),
-                        occurrence: update.target.occurrence.map(|value| value as usize),
-                        handle: update.target.handle,
-                    },
-                    fill: update.fill,
-                })
-                .collect(),
+            updates,
             base_revision: operation.base_revision,
         },
-    })
+    }))
 }
 
 #[napi(js_name = "executeDocxCreateTable")]
@@ -1169,7 +1165,9 @@ fn table_target(target: TableTargetInput) -> TableTarget {
     }
 }
 
-fn semantic_cell_target(target: SemanticTableCellTargetInput) -> Result<TableCellTarget> {
+pub(crate) fn semantic_cell_target(
+    target: SemanticTableCellTargetInput,
+) -> Result<TableCellTarget> {
     let row = target
         .row
         .map(|row| match row.kind.as_str() {

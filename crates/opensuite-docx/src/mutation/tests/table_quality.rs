@@ -1,5 +1,5 @@
 use super::super::*;
-use opensuite_protocol::TableCellShadingUpdate;
+use opensuite_protocol::{TableCellColumn, TableCellRow, TableCellShadingUpdate};
 
 #[test]
 fn sets_widths_and_header_shading_without_rewriting_other_properties() {
@@ -48,23 +48,26 @@ fn sets_widths_and_header_shading_without_rewriting_other_properties() {
             updates: vec![
                 TableCellShadingUpdate {
                     target: TableCellTarget {
-                        row: None,
-                        column: None,
+                        row: Some(TableCellRow::Header),
+                        column: Some(TableCellColumn::First),
                         row_label: String::new(),
                         column_header: String::new(),
                         occurrence: None,
-                        handle: Some("t0:r0:c0".into()),
+                        handle: None,
                     },
                     fill: Some("e9eef5".into()),
                 },
                 TableCellShadingUpdate {
                     target: TableCellTarget {
-                        row: None,
-                        column: None,
+                        row: Some(TableCellRow::Header),
+                        column: Some(TableCellColumn::Header {
+                            text: "Notes".into(),
+                            occurrence: None,
+                        }),
                         row_label: String::new(),
                         column_header: String::new(),
                         occurrence: None,
-                        handle: Some("t0:r0:c1".into()),
+                        handle: None,
                     },
                     fill: Some("E9EEF5".into()),
                 },

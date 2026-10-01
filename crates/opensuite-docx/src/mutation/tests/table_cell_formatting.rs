@@ -1,6 +1,8 @@
 use super::super::*;
 use super::support::*;
-use opensuite_protocol::{TableCellFormattingUpdate, TableCellTextFormatting};
+use opensuite_protocol::{
+    TableCellColumn, TableCellFormattingUpdate, TableCellRow, TableCellTextFormatting,
+};
 
 fn input() -> std::path::PathBuf {
     table_fixture(&format!(
@@ -27,6 +29,22 @@ fn update(handle: &str, fill: Option<&str>, bold: bool) -> TableCellFormattingUp
             color: Some("FFFFFF".to_owned()),
         }),
     }
+}
+
+fn semantic_update(
+    row: TableCellRow,
+    column: TableCellColumn,
+    fill: Option<&str>,
+    bold: bool,
+) -> TableCellFormattingUpdate {
+    let mut update = update("", fill, bold);
+    update.target = TableCellTarget {
+        row: Some(row),
+        column: Some(column),
+        handle: None,
+        ..update.target
+    };
+    update
 }
 
 fn operation(updates: Vec<TableCellFormattingUpdate>) -> SetTableCellsFormatting {
@@ -63,7 +81,21 @@ fn formats_three_header_cells_without_touching_repeated_text_elsewhere() {
     let original = fs::read(&path).unwrap();
     let operation = operation(
         (0..3)
-            .map(|column| update(&format!("t0:r0:c{column}"), Some("17365d"), true))
+            .map(|column| {
+                semantic_update(
+                    TableCellRow::Header,
+                    if column == 0 {
+                        TableCellColumn::First
+                    } else {
+                        TableCellColumn::Header {
+                            text: ["", "Owner", "Actual"][column].into(),
+                            occurrence: None,
+                        }
+                    },
+                    Some("17365d"),
+                    true,
+                )
+            })
             .collect(),
     );
     let result = crate::execute_docx_set_table_cells_formatting(original.clone(), &operation);
@@ -96,6 +128,76 @@ fn formats_three_header_cells_without_touching_repeated_text_elsewhere() {
     )
     .unwrap();
     assert!(xml.contains("<w:body><w:p><w:r><w:t>Status</w:t></w:r></w:p>"));
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn semantic_cells_require_occurrences_for_duplicate_labels_and_headers() {
+    let path = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Metric</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>10</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>20</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>30</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>40</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+    ));
+    let original = fs::read(&path).unwrap();
+    let row = TableCellRow::Label {
+        text: "Total".into(),
+        occurrence: Some(1),
+    };
+    let column = TableCellColumn::Header {
+        text: "Value".into(),
+        occurrence: Some(1),
+    };
+    let updates = vec![
+        semantic_update(row.clone(), TableCellColumn::First, Some("ABCDEF"), true),
+        semantic_update(row.clone(), column.clone(), None, true),
+    ];
+    let result = crate::execute_docx_set_table_cells_formatting(
+        original.clone(),
+        &operation(updates.clone()),
+    );
+    assert_eq!(
+        result.operation.status,
+        opensuite_protocol::OperationStatus::Applied
+    );
+    let output = result.output_artifact.unwrap();
+    assert!(cell_xml(&output, 0, 2, 0).contains("w:fill=\"ABCDEF\""));
+    assert!(cell_xml(&output, 0, 2, 2).contains("<w:b"));
+    assert_eq!(cell_xml(&output, 0, 1, 0), cell_xml(&original, 0, 1, 0));
+    assert_eq!(cell_xml(&output, 0, 2, 1), cell_xml(&original, 0, 2, 1));
+    for ambiguous in [
+        semantic_update(
+            TableCellRow::Label {
+                text: "Total".into(),
+                occurrence: None,
+            },
+            TableCellColumn::First,
+            None,
+            true,
+        ),
+        semantic_update(
+            row.clone(),
+            TableCellColumn::Header {
+                text: "Value".into(),
+                occurrence: None,
+            },
+            None,
+            true,
+        ),
+    ] {
+        let failed = crate::execute_docx_set_table_cells_formatting(
+            original.clone(),
+            &operation(vec![updates[0].clone(), ambiguous]),
+        );
+        assert!(failed.output_artifact.is_none());
+        assert_eq!(failed.operation.diagnostics[0].code, "TARGET_AMBIGUOUS");
+    }
+    let duplicate = crate::execute_docx_set_table_cells_formatting(
+        original,
+        &operation(vec![updates[0].clone(), updates[0].clone()]),
+    );
+    assert!(duplicate.output_artifact.is_none());
+    assert_eq!(
+        duplicate.operation.diagnostics[0].code,
+        "PRECONDITION_FAILED"
+    );
     fs::remove_file(path).unwrap();
 }
 

@@ -2,10 +2,12 @@ use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi_derive::napi;
 use opensuite_docx::execute_docx_set_table_cells_formatting;
 use opensuite_protocol::{
-    SetTableCellsFormatting, TableCellFormattingUpdate, TableCellTarget, TableCellTextFormatting,
+    SetTableCellsFormatting, TableCellFormattingUpdate, TableCellTextFormatting,
 };
 
-use crate::{SimpleTask, TableCellTargetInput, TableTargetInput, table_target};
+use crate::{
+    SemanticTableCellTargetInput, SimpleTask, TableTargetInput, semantic_cell_target, table_target,
+};
 
 #[napi(object)]
 pub struct TableCellTextFormattingInput {
@@ -18,7 +20,7 @@ pub struct TableCellTextFormattingInput {
 
 #[napi(object)]
 pub struct TableCellFormattingUpdateInput {
-    pub target: TableCellTargetInput,
+    pub target: SemanticTableCellTargetInput,
     pub fill: Option<String>,
     pub text_formatting: Option<TableCellTextFormattingInput>,
 }
@@ -34,37 +36,33 @@ pub struct SetTableCellsFormattingInput {
 pub fn execute_docx_set_table_cells_formatting_node(
     input: Buffer,
     operation: SetTableCellsFormattingInput,
-) -> AsyncTask<SimpleTask<SetTableCellsFormatting>> {
-    AsyncTask::new(SimpleTask {
+) -> napi::Result<AsyncTask<SimpleTask<SetTableCellsFormatting>>> {
+    let updates = operation
+        .updates
+        .into_iter()
+        .map(|update| {
+            Ok(TableCellFormattingUpdate {
+                target: semantic_cell_target(update.target)?,
+                fill: update.fill,
+                text_formatting: update
+                    .text_formatting
+                    .map(|formatting| TableCellTextFormatting {
+                        bold: formatting.bold,
+                        italic: formatting.italic,
+                        font_family: formatting.font_family,
+                        font_size_half_points: formatting.font_size_half_points,
+                        color: formatting.color,
+                    }),
+            })
+        })
+        .collect::<napi::Result<Vec<_>>>()?;
+    Ok(AsyncTask::new(SimpleTask {
         input: input.to_vec(),
         operation: SetTableCellsFormatting {
             table: table_target(operation.table),
-            updates: operation
-                .updates
-                .into_iter()
-                .map(|update| TableCellFormattingUpdate {
-                    target: TableCellTarget {
-                        row: None,
-                        column: None,
-                        row_label: update.target.row_label.unwrap_or_default(),
-                        column_header: update.target.column_header.unwrap_or_default(),
-                        occurrence: update.target.occurrence.map(|value| value as usize),
-                        handle: update.target.handle,
-                    },
-                    fill: update.fill,
-                    text_formatting: update.text_formatting.map(|formatting| {
-                        TableCellTextFormatting {
-                            bold: formatting.bold,
-                            italic: formatting.italic,
-                            font_family: formatting.font_family,
-                            font_size_half_points: formatting.font_size_half_points,
-                            color: formatting.color,
-                        }
-                    }),
-                })
-                .collect(),
+            updates,
             base_revision: operation.base_revision,
         },
         run: execute_docx_set_table_cells_formatting,
-    })
+    }))
 }

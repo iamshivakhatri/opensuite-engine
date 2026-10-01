@@ -63,13 +63,13 @@ export interface InsertTableRowsInput { table: TableTarget; after: TableRowTarge
 export interface InsertTableColumnInput { table: TableTarget; afterColumnHeader?: string; afterColumnHandle?: string; header: string; cells: string[]; baseRevision?: string }
 export interface SetTableCellsTextInput { table: TableTarget; updates: Array<{ target: SemanticTableCellTarget; expectedCurrentText: string; replacement: string }>; baseRevision?: string }
 export interface TableCellTextFormattingInput { bold?: boolean; italic?: boolean; fontFamily?: string; fontSizeHalfPoints?: number; color?: string }
-export interface SetTableCellsFormattingInput { table: TableTarget; updates: Array<{ target: TableCellTarget; fill?: string; textFormatting?: TableCellTextFormattingInput }>; baseRevision?: string }
+export interface SetTableCellsFormattingInput { table: TableTarget; updates: Array<{ target: SemanticTableCellTarget; fill?: string; textFormatting?: TableCellTextFormattingInput }>; baseRevision?: string }
 export interface SetTableFormattingInput {
   table: TableTarget; alignment?: 'left' | 'center' | 'right' | 'clear'; cellMarginTopTwips?: number; cellMarginRightTwips?: number
   cellMarginBottomTwips?: number; cellMarginLeftTwips?: number; borders?: 'grid' | 'none' | 'clear'; baseRevision?: string
 }
 export interface SetTableColumnWidthsInput { table: TableTarget; widthsTwips: number[]; baseRevision?: string }
-export interface TableCellShadingUpdate { target: TableCellTarget; /** Omit to clear. */ fill?: string }
+export interface TableCellShadingUpdate { target: SemanticTableCellTarget; /** Omit to clear. */ fill?: string }
 export interface SetTableCellShadingInput { table: TableTarget; updates: TableCellShadingUpdate[]; baseRevision?: string }
 
 export interface SetContentControlTextInput { target: { tag?: string; alias?: string; occurrence?: number }; expectedCurrentText: string; replacement: string; baseRevision?: string }
