@@ -268,6 +268,50 @@ fn resolve_table_cell(
     })
 }
 
+pub(super) fn resolve_semantic_row_index(
+    rows: &[crate::Row<'_>],
+    row: &TableCellRow,
+) -> Result<usize, OperationResult> {
+    match row {
+        TableCellRow::Header => Ok(0),
+        TableCellRow::Label { text, occurrence } => select_cell_axis(
+            rows.iter()
+                .enumerate()
+                .skip(1)
+                .filter_map(|(index, row)| {
+                    row.cells().next().and_then(|cell| {
+                        cell.text_for_view(RevisionView::Current)
+                            .ok()
+                            .filter(|actual| label_matches(actual, text))
+                            .map(|_| index)
+                    })
+                })
+                .collect(),
+            *occurrence,
+            "TABLE_ROW_NOT_FOUND",
+        ),
+        TableCellRow::Index {
+            index,
+            expected_first_cell_text,
+        } => {
+            let actual = rows
+                .get(*index)
+                .and_then(|row| row.cells().next())
+                .map(|cell| cell.text_for_view(RevisionView::Current))
+                .transpose()
+                .map_err(document_invalid)?;
+            if actual.as_deref() != Some(expected_first_cell_text.as_str()) {
+                return Err(OperationResult::failed(
+                    "PRECONDITION_FAILED",
+                    "indexed row first cell does not match expected text",
+                )
+                .with_reason_code("EXPECTED_TEXT_MISMATCH"));
+            }
+            Ok(*index)
+        }
+    }
+}
+
 fn select_cell_axis(
     matches: Vec<usize>,
     occurrence: Option<usize>,
@@ -354,44 +398,7 @@ pub(super) fn resolve_table_cell_in_table(
                 "cell target needs both row and column selectors",
             ));
         };
-        let row_index = match row {
-            TableCellRow::Header => 0,
-            TableCellRow::Label { text, occurrence } => select_cell_axis(
-                rows.iter()
-                    .enumerate()
-                    .skip(1)
-                    .filter_map(|(index, row)| {
-                        row.cells().next().and_then(|cell| {
-                            cell.text_for_view(RevisionView::Current)
-                                .ok()
-                                .filter(|actual| label_matches(actual, text))
-                                .map(|_| index)
-                        })
-                    })
-                    .collect(),
-                *occurrence,
-                "TABLE_ROW_NOT_FOUND",
-            )?,
-            TableCellRow::Index {
-                index,
-                expected_first_cell_text,
-            } => {
-                let actual = rows
-                    .get(*index)
-                    .and_then(|row| row.cells().next())
-                    .map(|cell| cell.text_for_view(RevisionView::Current))
-                    .transpose()
-                    .map_err(document_invalid)?;
-                if actual.as_deref() != Some(expected_first_cell_text.as_str()) {
-                    return Err(OperationResult::failed(
-                        "PRECONDITION_FAILED",
-                        "indexed row first cell does not match expected text",
-                    )
-                    .with_reason_code("EXPECTED_TEXT_MISMATCH"));
-                }
-                *index
-            }
-        };
+        let row_index = resolve_semantic_row_index(rows, row)?;
         let column_index = match column {
             TableCellColumn::First => 0,
             TableCellColumn::Header { text, occurrence } => select_cell_axis(

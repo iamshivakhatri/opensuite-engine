@@ -5,10 +5,10 @@ use quick_xml::escape::escape;
 use opensuite_opc::{Package, PackageError, Part, PartName, RelationshipTarget};
 use opensuite_protocol::{
     AffordanceReason, ContentControlTarget, CreateTable, DeletePageBreak, DeleteParagraph,
-    DeletePicture, DeleteTable, DeleteTableColumn, DeleteTableRow, HeaderFooterKind,
-    InsertPageBreak, InsertParagraph, InsertParagraphAfter, InsertParagraphs, InsertPicture,
-    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, OperationResult,
-    PageBreakTarget, PageMargins, PageNumberAlignment, PageOrientation, PaperSize,
+    DeletePicture, DeleteTable, DeleteTableColumn, DeleteTableRow, DeleteTableRowTarget,
+    HeaderFooterKind, InsertPageBreak, InsertParagraph, InsertParagraphAfter, InsertParagraphs,
+    InsertPicture, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
+    OperationResult, PageBreakTarget, PageMargins, PageNumberAlignment, PageOrientation, PaperSize,
     ParagraphFormattingPatch, ParagraphListKind, ParagraphPlacement, PropertyPatch, ReplacePicture,
     ReplaceText, SetContentControlText, SetHeaderFooterText, SetHyperlink, SetPageNumber,
     SetPageSetup, SetParagraphFormatting, SetParagraphStyle, SetParagraphsList, SetPictureSize,

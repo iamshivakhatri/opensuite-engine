@@ -23,16 +23,17 @@ use opensuite_docx::{
     inspect_docx,
 };
 use opensuite_protocol::{
-    Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, Diagnostic,
-    DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxParagraphList, DocxPicture,
-    DocxTable, DocxTableRow, DocxTableRowWindow, FindText, FindTextResult, InsertParagraph,
-    InsertParagraphs, InsertTableColumnAfter, InspectDocx, InspectDocxContent, InspectDocxFocus,
-    InspectDocxResult, InspectTextContext, InspectTextContextResult, InspectionPage,
-    OperationResult, ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement,
-    PropertyPatch, ReplaceText, RuntimeCapabilities, SetParagraphFormatting, SetParagraphStyle,
-    SetTableCellShading, SetTableColumnWidths, SetTableFormatting, TableAlignment, TableBorders,
-    TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget, TableCellTextUpdate,
-    TableFormattingPatch, TableRowTarget, TableTarget, TextContainer, TextTarget,
+    Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, DeleteTableRowTarget,
+    Diagnostic, DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxParagraphList,
+    DocxPicture, DocxTable, DocxTableRow, DocxTableRowWindow, FindText, FindTextResult,
+    InsertParagraph, InsertParagraphs, InsertTableColumnAfter, InspectDocx, InspectDocxContent,
+    InspectDocxFocus, InspectDocxResult, InspectTextContext, InspectTextContextResult,
+    InspectionPage, OperationResult, ParagraphAlignment, ParagraphFormattingPatch,
+    ParagraphPlacement, PropertyPatch, ReplaceText, RuntimeCapabilities, SetParagraphFormatting,
+    SetParagraphStyle, SetTableCellShading, SetTableColumnWidths, SetTableFormatting,
+    TableAlignment, TableBorders, TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget,
+    TableCellTextUpdate, TableFormattingPatch, TableRowTarget, TableTarget, TextContainer,
+    TextTarget,
 };
 pub use page_composition::{
     execute_docx_delete_page_break_node, execute_docx_insert_page_break_node,
@@ -146,6 +147,17 @@ pub struct TableRowTargetInput {
 }
 
 #[napi(object)]
+pub struct DeleteTableRowTargetInput {
+    pub kind: Option<String>,
+    pub text: Option<String>,
+    pub index: Option<u32>,
+    pub expected_first_cell_text: Option<String>,
+    pub first_cell_text: Option<String>,
+    pub occurrence: Option<u32>,
+    pub handle: Option<String>,
+}
+
+#[napi(object)]
 pub struct InsertTableRowInput {
     pub table: TableTargetInput,
     pub after: TableRowTargetInput,
@@ -235,7 +247,7 @@ pub struct DeleteTableInput {
 #[napi(object)]
 pub struct DeleteTableRowInput {
     pub table: TableTargetInput,
-    pub row: TableRowTargetInput,
+    pub row: DeleteTableRowTargetInput,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
@@ -992,15 +1004,16 @@ pub fn execute_docx_delete_table_node(
 pub fn execute_docx_delete_table_row_node(
     input: Buffer,
     operation: DeleteTableRowInput,
-) -> AsyncTask<DeleteTableRowTask> {
-    AsyncTask::new(DeleteTableRowTask {
+) -> Result<AsyncTask<DeleteTableRowTask>> {
+    let row = delete_row_target(operation.row)?;
+    Ok(AsyncTask::new(DeleteTableRowTask {
         input: input.to_vec(),
         operation: DeleteTableRow {
             table: table_target(operation.table),
-            row: row_target(operation.row),
+            row,
             base_revision: operation.base_revision,
         },
-    })
+    }))
 }
 #[napi(js_name = "executeDocxDeleteTableColumn")]
 pub fn execute_docx_delete_table_column_node(
@@ -1168,28 +1181,7 @@ fn table_target(target: TableTargetInput) -> TableTarget {
 pub(crate) fn semantic_cell_target(
     target: SemanticTableCellTargetInput,
 ) -> Result<TableCellTarget> {
-    let row = target
-        .row
-        .map(|row| match row.kind.as_str() {
-            "header" => Ok(TableCellRow::Header),
-            "label" => Ok(TableCellRow::Label {
-                text: row
-                    .text
-                    .ok_or_else(|| napi::Error::from_reason("row.text is required"))?,
-                occurrence: row.occurrence.map(|value| value as usize),
-            }),
-            "index" => Ok(TableCellRow::Index {
-                index: row
-                    .index
-                    .ok_or_else(|| napi::Error::from_reason("row.index is required"))?
-                    as usize,
-                expected_first_cell_text: row.expected_first_cell_text.ok_or_else(|| {
-                    napi::Error::from_reason("row.expectedFirstCellText is required")
-                })?,
-            }),
-            _ => Err(napi::Error::from_reason("unknown row selector kind")),
-        })
-        .transpose()?;
+    let row = target.row.map(semantic_row_target).transpose()?;
     let column = target
         .column
         .map(|column| match column.kind.as_str() {
@@ -1235,6 +1227,59 @@ pub(crate) fn semantic_cell_target(
         occurrence: target.occurrence.map(|value| value as usize),
         handle: target.handle,
     })
+}
+
+fn semantic_row_target(row: TableCellRowInput) -> Result<TableCellRow> {
+    match row.kind.as_str() {
+        "header" => Ok(TableCellRow::Header),
+        "label" => Ok(TableCellRow::Label {
+            text: row
+                .text
+                .ok_or_else(|| napi::Error::from_reason("row.text is required"))?,
+            occurrence: row.occurrence.map(|value| value as usize),
+        }),
+        "index" => Ok(TableCellRow::Index {
+            index: row
+                .index
+                .ok_or_else(|| napi::Error::from_reason("row.index is required"))?
+                as usize,
+            expected_first_cell_text: row
+                .expected_first_cell_text
+                .ok_or_else(|| napi::Error::from_reason("row.expectedFirstCellText is required"))?,
+        }),
+        _ => Err(napi::Error::from_reason("unknown row selector kind")),
+    }
+}
+
+fn delete_row_target(row: DeleteTableRowTargetInput) -> Result<DeleteTableRowTarget> {
+    if let Some(kind) = row.kind {
+        if row.handle.is_some() || row.first_cell_text.is_some() {
+            return Err(napi::Error::from_reason(
+                "use either a semantic row selector or a legacy row target",
+            ));
+        }
+        return semantic_row_target(TableCellRowInput {
+            kind,
+            text: row.text,
+            occurrence: row.occurrence,
+            index: row.index,
+            expected_first_cell_text: row.expected_first_cell_text,
+        })
+        .map(DeleteTableRowTarget::Semantic);
+    }
+    if row.text.is_some() || row.index.is_some() || row.expected_first_cell_text.is_some() {
+        return Err(napi::Error::from_reason("row.kind is required"));
+    }
+    if row.handle.is_none() && row.first_cell_text.is_none() {
+        return Err(napi::Error::from_reason(
+            "row needs kind, firstCellText, or handle",
+        ));
+    }
+    Ok(DeleteTableRowTarget::Legacy(TableRowTarget {
+        first_cell_text: row.first_cell_text.unwrap_or_default(),
+        occurrence: row.occurrence.map(|value| value as usize),
+        handle: row.handle,
+    }))
 }
 
 fn row_target(target: TableRowTargetInput) -> TableRowTarget {

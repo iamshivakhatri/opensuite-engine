@@ -44,6 +44,7 @@ export interface TableTarget { headerCells?: string[]; occurrence?: number; hand
 export interface TableRowTarget { firstCellText?: string; occurrence?: number; handle?: string }
 export interface TableCellTarget { rowLabel?: string; columnHeader?: string; occurrence?: number; handle?: string }
 export type TableCellRow = { kind: 'header' } | { kind: 'label'; text: string; occurrence?: number } | { kind: 'index'; index: number; expectedFirstCellText: string }
+export type DeleteTableRowTarget = TableCellRow | TableRowTarget
 export type TableCellColumn = { kind: 'first' } | { kind: 'header'; text: string; occurrence?: number } | { kind: 'index'; index: number; expectedHeaderText: string }
 export type SemanticTableCellTarget = TableCellTarget | { row: TableCellRow; column: TableCellColumn }
 export interface ReplaceTextInput { target: TextTarget; expectedCurrentText: string; replacement: string; baseRevision?: string }
@@ -104,7 +105,7 @@ export function executeDocxDeleteTable(input: Buffer, operation: { table: TableT
 export function executeDocxInsertTableRow(input: Buffer, operation: InsertTableRowInput): Promise<ExecuteDocxResult>
 export function executeDocxInsertTableRows(input: Buffer, operation: InsertTableRowsInput): Promise<ExecuteDocxResult>
 export function executeDocxInsertTableColumn(input: Buffer, operation: InsertTableColumnInput): Promise<ExecuteDocxResult>
-export function executeDocxDeleteTableRow(input: Buffer, operation: { table: TableTarget; row: TableRowTarget; baseRevision?: string }): Promise<ExecuteDocxResult>
+export function executeDocxDeleteTableRow(input: Buffer, operation: { table: TableTarget; row: DeleteTableRowTarget; baseRevision?: string }): Promise<ExecuteDocxResult>
 export function executeDocxDeleteTableColumn(input: Buffer, operation: { table: TableTarget; columnHeader?: string; columnHandle?: string; baseRevision?: string }): Promise<ExecuteDocxResult>
 export function executeDocxSetTableCellsText(input: Buffer, operation: SetTableCellsTextInput): Promise<ExecuteDocxResult>
 export function executeDocxSetTableCellsFormatting(input: Buffer, operation: SetTableCellsFormattingInput): Promise<ExecuteDocxResult>

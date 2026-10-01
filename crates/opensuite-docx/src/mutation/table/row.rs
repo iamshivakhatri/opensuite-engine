@@ -99,24 +99,29 @@ pub fn delete_table_row_to_vec(
         )
         .with_reason_code("LAST_TABLE_ROW"));
     }
-    let (handle_table, row_index) = operation
-        .row
-        .handle
-        .as_deref()
-        .map(parse_row_handle)
-        .transpose()?
-        .ok_or_else(|| {
-            OperationResult::failed(
-                "PRECONDITION_FAILED",
-                "delete_table_row requires a row handle",
-            )
-        })?;
-    if handle_table != table_index || row_index >= rows.len() {
-        return Err(OperationResult::failed(
-            "TARGET_NOT_FOUND",
-            "table row handle was not found",
-        ));
-    }
+    let row_index = match &operation.row {
+        DeleteTableRowTarget::Semantic(row) => cell::resolve_semantic_row_index(&rows, row)?,
+        DeleteTableRowTarget::Legacy(row) => {
+            if let Some(handle) = &row.handle {
+                let (handle_table, row_index) = parse_row_handle(handle)?;
+                if handle_table != table_index || row_index >= rows.len() {
+                    return Err(OperationResult::failed(
+                        "TARGET_NOT_FOUND",
+                        "table row handle was not found",
+                    ));
+                }
+                row_index
+            } else {
+                cell::resolve_semantic_row_index(
+                    &rows,
+                    &TableCellRow::Label {
+                        text: row.first_cell_text.clone(),
+                        occurrence: row.occurrence,
+                    },
+                )?
+            }
+        }
+    };
     let mut expected = all_table_rows(source)?;
     expected[table_index].remove(row_index);
     write_patches_to_vec(

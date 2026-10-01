@@ -219,6 +219,144 @@ fn unsafe_anchor_uses_nearby_safe_row_and_header_only_table_uses_minimal_row() {
     fs::remove_file(input).unwrap();
 }
 
+#[test]
+fn deletes_semantic_rows_in_the_selected_table_and_keeps_legacy_targets() {
+    let table = format!(
+        "<w:tbl>{}</w:tbl>",
+        [
+            styled_row("Header", "001F3F", true),
+            styled_row("Total", "EEEEEE", false),
+            styled_row("Total", "DDDDDD", false),
+        ]
+        .join("")
+    );
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body>{table}{table}</w:body></w:document>"
+    ));
+    let mut operation = DeleteTableRow {
+        table: TableTarget {
+            header_cells: vec!["Header".into()],
+            occurrence: Some(1),
+            handle: None,
+        },
+        row: DeleteTableRowTarget::Semantic(TableCellRow::Label {
+            text: "Total".into(),
+            occurrence: Some(1),
+        }),
+        base_revision: None,
+    };
+    let output = delete_row_execute(&input, &operation).unwrap();
+    let package = Package::from_bytes(output).unwrap();
+    let (_, source) = crate::open_main_source(&package).unwrap();
+    let rows = all_table_rows(&source).unwrap();
+    assert_eq!(rows[0].len(), 3);
+    assert_eq!(rows[1], vec![vec!["Header"], vec!["Total"]]);
+    assert_eq!(entry(&input, "word/media/image.bin"), vec![1, 2, 3]);
+
+    operation.row = DeleteTableRowTarget::Semantic(TableCellRow::Label {
+        text: "Total".into(),
+        occurrence: None,
+    });
+    assert_eq!(
+        delete_row_execute(&input, &operation)
+            .unwrap_err()
+            .diagnostics[0]
+            .code,
+        "TARGET_AMBIGUOUS"
+    );
+    operation.table.occurrence = None;
+    assert_eq!(
+        delete_row_execute(&input, &operation)
+            .unwrap_err()
+            .diagnostics[0]
+            .code,
+        "TARGET_AMBIGUOUS"
+    );
+    operation.table.occurrence = Some(1);
+
+    operation.row = DeleteTableRowTarget::Semantic(TableCellRow::Index {
+        index: 2,
+        expected_first_cell_text: "Wrong".into(),
+    });
+    let error = delete_row_execute(&input, &operation).unwrap_err();
+    assert_eq!(
+        error.diagnostics[0].reason_code.as_deref(),
+        Some("EXPECTED_TEXT_MISMATCH")
+    );
+    operation.row = DeleteTableRowTarget::Semantic(TableCellRow::Index {
+        index: 2,
+        expected_first_cell_text: "Total".into(),
+    });
+    assert!(delete_row_execute(&input, &operation).is_ok());
+
+    operation.row = DeleteTableRowTarget::Legacy(TableRowTarget {
+        first_cell_text: "Total".into(),
+        occurrence: Some(1),
+        handle: None,
+    });
+    assert!(delete_row_execute(&input, &operation).is_ok());
+    operation.row = DeleteTableRowTarget::Legacy(TableRowTarget {
+        first_cell_text: String::new(),
+        occurrence: None,
+        handle: Some("t1:r2".into()),
+    });
+    assert!(delete_row_execute(&input, &operation).is_ok());
+    operation.row = DeleteTableRowTarget::Semantic(TableCellRow::Header);
+    assert!(delete_row_execute(&input, &operation).is_ok());
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
+fn semantic_row_delete_keeps_last_row_and_unsafe_table_checks() {
+    let row = styled_row("Header", "001F3F", true);
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl>{row}</w:tbl></w:body></w:document>"
+    ));
+    let operation = DeleteTableRow {
+        table: TableTarget {
+            header_cells: vec!["Header".into()],
+            occurrence: None,
+            handle: None,
+        },
+        row: DeleteTableRowTarget::Semantic(TableCellRow::Header),
+        base_revision: None,
+    };
+    assert_eq!(
+        delete_row_execute(&input, &operation)
+            .unwrap_err()
+            .diagnostics[0]
+            .reason_code
+            .as_deref(),
+        Some("LAST_TABLE_ROW")
+    );
+    fs::remove_file(input).unwrap();
+
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Header</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+    ));
+    assert_eq!(
+        delete_row_execute(&input, &operation)
+            .unwrap_err()
+            .diagnostics[0]
+            .code,
+        "UNSUPPORTED_OPERATION"
+    );
+    let mut handle_operation = operation;
+    handle_operation.row = DeleteTableRowTarget::Legacy(TableRowTarget {
+        first_cell_text: String::new(),
+        occurrence: None,
+        handle: Some("t0:r0".into()),
+    });
+    assert_eq!(
+        delete_row_execute(&input, &handle_operation)
+            .unwrap_err()
+            .diagnostics[0]
+            .code,
+        "UNSUPPORTED_OPERATION"
+    );
+    fs::remove_file(input).unwrap();
+}
+
 fn styled_row(text: &str, shading: &str, bold: bool) -> String {
     let run_properties = if bold { "<w:rPr><w:b/></w:rPr>" } else { "" };
     format!(
@@ -287,4 +425,13 @@ fn rows_execute(
     let package = Package::open(input).unwrap();
     let (main, source) = crate::open_main_source(&package).unwrap();
     insert_table_rows_after_to_vec(&package, &main, &source, operation)
+}
+
+fn delete_row_execute(
+    input: &std::path::Path,
+    operation: &DeleteTableRow,
+) -> Result<Vec<u8>, OperationResult> {
+    let package = Package::open(input).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    delete_table_row_to_vec(&package, &main, &source, operation)
 }

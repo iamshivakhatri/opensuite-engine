@@ -1,9 +1,9 @@
 use opensuite_opc::Package;
 use opensuite_protocol::{
     CreateTable, DeletePageBreak, DeleteParagraph, DeletePicture, DeleteTable, DeleteTableColumn,
-    DeleteTableRow, Diagnostic, DiagnosticSeverity, FindText, FindTextResult, InsertPageBreak,
-    InsertParagraph, InsertParagraphs, InsertPicture, InsertTableColumnAfter, InsertTableRowAfter,
-    InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
+    DeleteTableRow, DeleteTableRowTarget, Diagnostic, DiagnosticSeverity, FindText, FindTextResult,
+    InsertPageBreak, InsertParagraph, InsertParagraphs, InsertPicture, InsertTableColumnAfter,
+    InsertTableRowAfter, InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
     InspectTextContextResult, OperationResult, ReplacePicture, ReplaceText, SetContentControlText,
     SetHeaderFooterText, SetHyperlink, SetPageNumber, SetPageSetup, SetParagraphFormatting,
     SetParagraphStyle, SetParagraphsList, SetPictureSize, SetTableCellShading,
@@ -501,11 +501,10 @@ execute_table_mutation!(
     DeleteTableRow,
     delete_table_row_to_vec,
     "delete_table_row",
-    |operation: &DeleteTableRow| operation
-        .row
-        .handle
-        .clone()
-        .or(operation.table.handle.clone())
+    |operation: &DeleteTableRow| match &operation.row {
+        DeleteTableRowTarget::Legacy(row) => row.handle.clone().or(operation.table.handle.clone()),
+        DeleteTableRowTarget::Semantic(_) => operation.table.handle.clone(),
+    }
 );
 execute_table_mutation!(
     execute_docx_delete_table_column,
