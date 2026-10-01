@@ -1128,6 +1128,8 @@ mod tests {
             updates: vec![
                 TableCellTextUpdate {
                     target: TableCellTarget {
+                        row: None,
+                        column: None,
                         row_label: String::new(),
                         column_header: String::new(),
                         occurrence: None,
@@ -1138,6 +1140,8 @@ mod tests {
                 },
                 TableCellTextUpdate {
                     target: TableCellTarget {
+                        row: None,
+                        column: None,
                         row_label: String::new(),
                         column_header: String::new(),
                         occurrence: None,
@@ -1156,6 +1160,8 @@ mod tests {
                 table: table_target.clone(),
                 updates: vec![TableCellTextUpdate {
                     target: TableCellTarget {
+                        row: None,
+                        column: None,
                         row_label: String::new(),
                         column_header: String::new(),
                         occurrence: None,

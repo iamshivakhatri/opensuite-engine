@@ -11,6 +11,8 @@ fn input() -> std::path::PathBuf {
 fn update(handle: &str, fill: Option<&str>, bold: bool) -> TableCellFormattingUpdate {
     TableCellFormattingUpdate {
         target: TableCellTarget {
+            row: None,
+            column: None,
             row_label: String::new(),
             column_header: String::new(),
             occurrence: None,

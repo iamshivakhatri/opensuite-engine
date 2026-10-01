@@ -48,6 +48,8 @@ fn sets_widths_and_header_shading_without_rewriting_other_properties() {
             updates: vec![
                 TableCellShadingUpdate {
                     target: TableCellTarget {
+                        row: None,
+                        column: None,
                         row_label: String::new(),
                         column_header: String::new(),
                         occurrence: None,
@@ -57,6 +59,8 @@ fn sets_widths_and_header_shading_without_rewriting_other_properties() {
                 },
                 TableCellShadingUpdate {
                     target: TableCellTarget {
+                        row: None,
+                        column: None,
                         row_label: String::new(),
                         column_header: String::new(),
                         occurrence: None,
@@ -78,6 +82,8 @@ fn sets_widths_and_header_shading_without_rewriting_other_properties() {
     for (target, reason_code) in [
         (
             TableCellTarget {
+                row: None,
+                column: None,
                 row_label: "Missing".into(),
                 column_header: "Notes".into(),
                 occurrence: None,
@@ -87,6 +93,8 @@ fn sets_widths_and_header_shading_without_rewriting_other_properties() {
         ),
         (
             TableCellTarget {
+                row: None,
+                column: None,
                 row_label: "A".into(),
                 column_header: "Missing".into(),
                 occurrence: None,
@@ -148,6 +156,8 @@ fn sets_widths_and_header_shading_without_rewriting_other_properties() {
             table,
             updates: vec![TableCellShadingUpdate {
                 target: TableCellTarget {
+                    row: None,
+                    column: None,
                     row_label: String::new(),
                     column_header: String::new(),
                     occurrence: None,

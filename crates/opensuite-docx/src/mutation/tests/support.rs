@@ -257,6 +257,8 @@ pub(super) fn table_operation(
 ) -> SetTableCellText {
     SetTableCellText {
         target: TableCellTarget {
+            row: None,
+            column: None,
             row_label: row_label.to_owned(),
             column_header: column_header.to_owned(),
             occurrence: None,

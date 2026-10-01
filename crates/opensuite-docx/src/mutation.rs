@@ -14,8 +14,8 @@ use opensuite_protocol::{
     SetPageSetup, SetParagraphFormatting, SetParagraphStyle, SetParagraphsList, SetPictureSize,
     SetTableCellShading, SetTableCellText, SetTableCellsFormatting, SetTableCellsText,
     SetTableColumnWidths, SetTableFormatting, SetTextFormatting, TableAlignment, TableBorders,
-    TableCellMargins, TableCellTarget, TableFormattingPatch, TableRowTarget, TableTarget,
-    TextFormattingPatch, TextTarget,
+    TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget, TableFormattingPatch,
+    TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};

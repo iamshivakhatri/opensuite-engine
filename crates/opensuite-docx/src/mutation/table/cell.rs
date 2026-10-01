@@ -268,6 +268,30 @@ fn resolve_table_cell(
     })
 }
 
+fn select_cell_axis(
+    matches: Vec<usize>,
+    occurrence: Option<usize>,
+    not_found_reason: &str,
+) -> Result<usize, OperationResult> {
+    if let Some(occurrence) = occurrence {
+        return matches.into_iter().nth(occurrence).ok_or_else(|| {
+            OperationResult::failed("TARGET_NOT_FOUND", "cell selector occurrence was not found")
+                .with_reason_code(not_found_reason)
+        });
+    }
+    match matches.as_slice() {
+        [index] => Ok(*index),
+        [] => Err(
+            OperationResult::failed("TARGET_NOT_FOUND", "cell selector was not found")
+                .with_reason_code(not_found_reason),
+        ),
+        _ => Err(OperationResult::failed(
+            "TARGET_AMBIGUOUS",
+            "cell selector matches more than one row or column",
+        )),
+    }
+}
+
 pub(super) fn resolve_table_cell_in_table(
     source: &SourceDocument,
     table_index: usize,
@@ -275,6 +299,17 @@ pub(super) fn resolve_table_cell_in_table(
     headers: &[String],
     target: &TableCellTarget,
 ) -> Result<ResolvedTableCell, OperationResult> {
+    if (target.row.is_some() || target.column.is_some())
+        && (target.handle.is_some()
+            || !target.row_label.is_empty()
+            || !target.column_header.is_empty()
+            || target.occurrence.is_some())
+    {
+        return Err(OperationResult::failed(
+            "PRECONDITION_FAILED",
+            "use either row and column or a legacy cell target",
+        ));
+    }
     if let Some(handle) = &target.handle {
         let (handle_table, row_index, column_index) = parse_cell_handle(handle)?;
         if handle_table != table_index {
@@ -295,6 +330,98 @@ pub(super) fn resolve_table_cell_in_table(
                     "table cell handle column was not found",
                 )
             })?
+            .source_id();
+        let paragraphs = direct_cell_paragraphs(source, cell);
+        if let Some(reason) = table_cell_text_reason(source, cell) {
+            return Err(unsupported(
+                "set_table_cells_text requires one ordinary paragraph with direct runs",
+            )
+            .with_reason_code(reason.as_str()));
+        }
+        return Ok(ResolvedTableCell {
+            cell,
+            paragraph: paragraphs[0],
+            text: cell_current_text(source, cell)?,
+            table_index,
+            row_index,
+            column_index,
+        });
+    }
+    if target.row.is_some() || target.column.is_some() {
+        let (Some(row), Some(column)) = (&target.row, &target.column) else {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "cell target needs both row and column selectors",
+            ));
+        };
+        let row_index = match row {
+            TableCellRow::Header => 0,
+            TableCellRow::Label { text, occurrence } => select_cell_axis(
+                rows.iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter_map(|(index, row)| {
+                        row.cells().next().and_then(|cell| {
+                            cell.text_for_view(RevisionView::Current)
+                                .ok()
+                                .filter(|actual| label_matches(actual, text))
+                                .map(|_| index)
+                        })
+                    })
+                    .collect(),
+                *occurrence,
+                "TABLE_ROW_NOT_FOUND",
+            )?,
+            TableCellRow::Index {
+                index,
+                expected_first_cell_text,
+            } => {
+                let actual = rows
+                    .get(*index)
+                    .and_then(|row| row.cells().next())
+                    .map(|cell| cell.text_for_view(RevisionView::Current))
+                    .transpose()
+                    .map_err(document_invalid)?;
+                if actual.as_deref() != Some(expected_first_cell_text.as_str()) {
+                    return Err(OperationResult::failed(
+                        "PRECONDITION_FAILED",
+                        "indexed row first cell does not match expected text",
+                    )
+                    .with_reason_code("EXPECTED_TEXT_MISMATCH"));
+                }
+                *index
+            }
+        };
+        let column_index = match column {
+            TableCellColumn::First => 0,
+            TableCellColumn::Header { text, occurrence } => select_cell_axis(
+                headers
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter_map(|(index, actual)| label_matches(actual, text).then_some(index))
+                    .collect(),
+                *occurrence,
+                "TABLE_COLUMN_NOT_FOUND",
+            )?,
+            TableCellColumn::Index {
+                index,
+                expected_header_text,
+            } => {
+                if headers.get(*index).map(String::as_str) != Some(expected_header_text.as_str()) {
+                    return Err(OperationResult::failed(
+                        "PRECONDITION_FAILED",
+                        "indexed column header does not match expected text",
+                    )
+                    .with_reason_code("EXPECTED_TEXT_MISMATCH"));
+                }
+                *index
+            }
+        };
+        let cell = rows[row_index]
+            .cells()
+            .nth(column_index)
+            .ok_or_else(|| OperationResult::failed("TARGET_NOT_FOUND", "table cell was not found"))?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
         if let Some(reason) = table_cell_text_reason(source, cell) {

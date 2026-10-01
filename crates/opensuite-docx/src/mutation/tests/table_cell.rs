@@ -36,6 +36,8 @@ fn sets_multiple_table_cells_atomically() {
     let input = table_fixture(&xml);
     let update = |row: &str, column: &str, expected: &str, replacement: &str| TableCellTextUpdate {
         target: TableCellTarget {
+            row: None,
+            column: None,
             row_label: row.to_owned(),
             column_header: column.to_owned(),
             occurrence: None,
@@ -83,6 +85,115 @@ fn sets_multiple_table_cells_atomically() {
 }
 
 #[test]
+fn semantic_cell_coordinates_cover_headers_labels_and_duplicate_names() {
+    let xml = format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>One</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Two</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Three</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Four</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+    );
+    let input = table_fixture(&xml);
+    let cell = |row, column| TableCellTarget {
+        row: Some(row),
+        column: Some(column),
+        row_label: String::new(),
+        column_header: String::new(),
+        occurrence: None,
+        handle: None,
+    };
+    let header = cell(
+        TableCellRow::Header,
+        TableCellColumn::Header {
+            text: "Role".into(),
+            occurrence: Some(1),
+        },
+    );
+    let label = cell(
+        TableCellRow::Label {
+            text: "Bob".into(),
+            occurrence: Some(1),
+        },
+        TableCellColumn::First,
+    );
+    let data = cell(
+        TableCellRow::Index {
+            index: 2,
+            expected_first_cell_text: "Bob".into(),
+        },
+        TableCellColumn::Index {
+            index: 2,
+            expected_header_text: "Role".into(),
+        },
+    );
+    let operation = SetTableCellsText {
+        table: TableTarget {
+            header_cells: vec!["Name".into(), "Role".into(), "Role".into()],
+            occurrence: None,
+            handle: None,
+        },
+        updates: vec![
+            TableCellTextUpdate {
+                target: header,
+                expected_current_text: "Role".into(),
+                replacement: "Title".into(),
+            },
+            TableCellTextUpdate {
+                target: label,
+                expected_current_text: "Bob".into(),
+                replacement: "Robert".into(),
+            },
+            TableCellTextUpdate {
+                target: data,
+                expected_current_text: "Four".into(),
+                replacement: "Lead".into(),
+            },
+        ],
+        base_revision: None,
+    };
+    let output = cells_execute(&input, &operation).unwrap();
+    let package = Package::from_bytes(output).unwrap();
+    let (_, source) = crate::open_main_source(&package).unwrap();
+    let rows = &all_table_rows(&source).unwrap()[0];
+    assert_eq!(rows[0], ["Name", "Role", "Title"]);
+    assert_eq!(rows[2], ["Robert", "Three", "Lead"]);
+
+    let mut ambiguous = operation.clone();
+    ambiguous.updates[1].target.row = Some(TableCellRow::Label {
+        text: "Bob".into(),
+        occurrence: None,
+    });
+    assert_eq!(
+        cells_execute(&input, &ambiguous).unwrap_err().diagnostics[0].code,
+        "TARGET_AMBIGUOUS"
+    );
+    let mut ambiguous = operation.clone();
+    ambiguous.updates[0].target.column = Some(TableCellColumn::Header {
+        text: "Role".into(),
+        occurrence: None,
+    });
+    assert_eq!(
+        cells_execute(&input, &ambiguous).unwrap_err().diagnostics[0].code,
+        "TARGET_AMBIGUOUS"
+    );
+    let mut shifted = operation.clone();
+    shifted.updates[1].target.row = Some(TableCellRow::Index {
+        index: 2,
+        expected_first_cell_text: "Alice".into(),
+    });
+    assert_eq!(
+        cells_execute(&input, &shifted).unwrap_err().diagnostics[0].code,
+        "PRECONDITION_FAILED"
+    );
+    let mut shifted = operation;
+    shifted.updates[2].target.column = Some(TableCellColumn::Index {
+        index: 2,
+        expected_header_text: "Wrong".into(),
+    });
+    assert_eq!(
+        cells_execute(&input, &shifted).unwrap_err().diagnostics[0].code,
+        "PRECONDITION_FAILED"
+    );
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
 fn fills_a_blank_trailing_row_by_inspected_cell_handles() {
     let xml = format!(
         "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Executive Role</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Meeting Access Level</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>CFO</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Full access</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>CHRO</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Limited access</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>"
@@ -97,6 +208,8 @@ fn fills_a_blank_trailing_row_by_inspected_cell_handles() {
         updates: vec![
             TableCellTextUpdate {
                 target: TableCellTarget {
+                    row: None,
+                    column: None,
                     row_label: String::new(),
                     column_header: String::new(),
                     occurrence: None,
@@ -107,6 +220,8 @@ fn fills_a_blank_trailing_row_by_inspected_cell_handles() {
             },
             TableCellTextUpdate {
                 target: TableCellTarget {
+                    row: None,
+                    column: None,
                     row_label: String::new(),
                     column_header: String::new(),
                     occurrence: None,

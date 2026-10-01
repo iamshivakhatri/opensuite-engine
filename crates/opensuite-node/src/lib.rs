@@ -31,8 +31,8 @@ use opensuite_protocol::{
     OperationResult, ParagraphAlignment, ParagraphFormattingPatch, ParagraphPlacement,
     PropertyPatch, ReplaceText, RuntimeCapabilities, SetParagraphFormatting, SetParagraphStyle,
     SetTableCellShading, SetTableColumnWidths, SetTableFormatting, TableAlignment, TableBorders,
-    TableCellMargins, TableCellTarget, TableCellTextUpdate, TableFormattingPatch, TableRowTarget,
-    TableTarget, TextContainer, TextTarget,
+    TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget, TableCellTextUpdate,
+    TableFormattingPatch, TableRowTarget, TableTarget, TextContainer, TextTarget,
 };
 pub use page_composition::{
     execute_docx_delete_page_break_node, execute_docx_insert_page_break_node,
@@ -180,8 +180,36 @@ pub struct TableCellTargetInput {
 }
 
 #[napi(object)]
+pub struct TableCellRowInput {
+    pub kind: String,
+    pub text: Option<String>,
+    pub occurrence: Option<u32>,
+    pub index: Option<u32>,
+    pub expected_first_cell_text: Option<String>,
+}
+
+#[napi(object)]
+pub struct TableCellColumnInput {
+    pub kind: String,
+    pub text: Option<String>,
+    pub occurrence: Option<u32>,
+    pub index: Option<u32>,
+    pub expected_header_text: Option<String>,
+}
+
+#[napi(object)]
+pub struct SemanticTableCellTargetInput {
+    pub row: Option<TableCellRowInput>,
+    pub column: Option<TableCellColumnInput>,
+    pub row_label: Option<String>,
+    pub column_header: Option<String>,
+    pub occurrence: Option<u32>,
+    pub handle: Option<String>,
+}
+
+#[napi(object)]
 pub struct TableCellTextUpdateInput {
-    pub target: TableCellTargetInput,
+    pub target: SemanticTableCellTargetInput,
     pub expected_current_text: String,
     pub replacement: String,
 }
@@ -811,28 +839,26 @@ pub fn execute_docx_insert_table_column_node(
 pub fn execute_docx_set_table_cells_text_node(
     input: Buffer,
     operation: SetTableCellsTextInput,
-) -> AsyncTask<SetTableCellsTextTask> {
-    AsyncTask::new(SetTableCellsTextTask {
+) -> Result<AsyncTask<SetTableCellsTextTask>> {
+    let updates = operation
+        .updates
+        .into_iter()
+        .map(|update| {
+            Ok(TableCellTextUpdate {
+                target: semantic_cell_target(update.target)?,
+                expected_current_text: update.expected_current_text,
+                replacement: update.replacement,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(AsyncTask::new(SetTableCellsTextTask {
         input: input.to_vec(),
         operation: opensuite_protocol::SetTableCellsText {
             table: table_target(operation.table),
-            updates: operation
-                .updates
-                .into_iter()
-                .map(|update| TableCellTextUpdate {
-                    target: TableCellTarget {
-                        row_label: update.target.row_label.unwrap_or_default(),
-                        column_header: update.target.column_header.unwrap_or_default(),
-                        occurrence: update.target.occurrence.map(|value| value as usize),
-                        handle: update.target.handle,
-                    },
-                    expected_current_text: update.expected_current_text,
-                    replacement: update.replacement,
-                })
-                .collect(),
+            updates,
             base_revision: operation.base_revision,
         },
-    })
+    }))
 }
 
 #[napi(js_name = "executeDocxSetTableFormatting")]
@@ -910,6 +936,8 @@ pub fn execute_docx_set_table_cell_shading_node(
                 .into_iter()
                 .map(|update| opensuite_protocol::TableCellShadingUpdate {
                     target: TableCellTarget {
+                        row: None,
+                        column: None,
                         row_label: update.target.row_label.unwrap_or_default(),
                         column_header: update.target.column_header.unwrap_or_default(),
                         occurrence: update.target.occurrence.map(|value| value as usize),
@@ -1139,6 +1167,76 @@ fn table_target(target: TableTargetInput) -> TableTarget {
         occurrence: target.occurrence.map(|value| value as usize),
         handle: target.handle,
     }
+}
+
+fn semantic_cell_target(target: SemanticTableCellTargetInput) -> Result<TableCellTarget> {
+    let row = target
+        .row
+        .map(|row| match row.kind.as_str() {
+            "header" => Ok(TableCellRow::Header),
+            "label" => Ok(TableCellRow::Label {
+                text: row
+                    .text
+                    .ok_or_else(|| napi::Error::from_reason("row.text is required"))?,
+                occurrence: row.occurrence.map(|value| value as usize),
+            }),
+            "index" => Ok(TableCellRow::Index {
+                index: row
+                    .index
+                    .ok_or_else(|| napi::Error::from_reason("row.index is required"))?
+                    as usize,
+                expected_first_cell_text: row.expected_first_cell_text.ok_or_else(|| {
+                    napi::Error::from_reason("row.expectedFirstCellText is required")
+                })?,
+            }),
+            _ => Err(napi::Error::from_reason("unknown row selector kind")),
+        })
+        .transpose()?;
+    let column = target
+        .column
+        .map(|column| match column.kind.as_str() {
+            "first" => Ok(TableCellColumn::First),
+            "header" => Ok(TableCellColumn::Header {
+                text: column
+                    .text
+                    .ok_or_else(|| napi::Error::from_reason("column.text is required"))?,
+                occurrence: column.occurrence.map(|value| value as usize),
+            }),
+            "index" => Ok(TableCellColumn::Index {
+                index: column
+                    .index
+                    .ok_or_else(|| napi::Error::from_reason("column.index is required"))?
+                    as usize,
+                expected_header_text: column.expected_header_text.ok_or_else(|| {
+                    napi::Error::from_reason("column.expectedHeaderText is required")
+                })?,
+            }),
+            _ => Err(napi::Error::from_reason("unknown column selector kind")),
+        })
+        .transpose()?;
+    if row.is_some() != column.is_some() {
+        return Err(napi::Error::from_reason(
+            "cell target needs both row and column",
+        ));
+    }
+    if row.is_some()
+        && (target.handle.is_some()
+            || target.row_label.is_some()
+            || target.column_header.is_some()
+            || target.occurrence.is_some())
+    {
+        return Err(napi::Error::from_reason(
+            "use either row and column or a legacy cell target",
+        ));
+    }
+    Ok(TableCellTarget {
+        row,
+        column,
+        row_label: target.row_label.unwrap_or_default(),
+        column_header: target.column_header.unwrap_or_default(),
+        occurrence: target.occurrence.map(|value| value as usize),
+        handle: target.handle,
+    })
 }
 
 fn row_target(target: TableRowTargetInput) -> TableRowTarget {

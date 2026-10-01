@@ -43,6 +43,9 @@ export interface InspectDocxInput {
 export interface TableTarget { headerCells?: string[]; occurrence?: number; handle?: string }
 export interface TableRowTarget { firstCellText?: string; occurrence?: number; handle?: string }
 export interface TableCellTarget { rowLabel?: string; columnHeader?: string; occurrence?: number; handle?: string }
+export type TableCellRow = { kind: 'header' } | { kind: 'label'; text: string; occurrence?: number } | { kind: 'index'; index: number; expectedFirstCellText: string }
+export type TableCellColumn = { kind: 'first' } | { kind: 'header'; text: string; occurrence?: number } | { kind: 'index'; index: number; expectedHeaderText: string }
+export type SemanticTableCellTarget = TableCellTarget | { row: TableCellRow; column: TableCellColumn }
 export interface ReplaceTextInput { target: TextTarget; expectedCurrentText: string; replacement: string; baseRevision?: string }
 export interface InsertParagraphInput { text: string; placement: ParagraphPlacement; baseRevision?: string }
 export interface InsertParagraphsInput { texts: string[]; placement: ParagraphPlacement; baseRevision?: string }
@@ -58,7 +61,7 @@ export interface CreateTableInput { rows: string[][]; placement: ParagraphPlacem
 export interface InsertTableRowInput { table: TableTarget; after: TableRowTarget; cells: string[]; baseRevision?: string }
 export interface InsertTableRowsInput { table: TableTarget; after: TableRowTarget; rows: string[][]; baseRevision?: string }
 export interface InsertTableColumnInput { table: TableTarget; afterColumnHeader?: string; afterColumnHandle?: string; header: string; cells: string[]; baseRevision?: string }
-export interface SetTableCellsTextInput { table: TableTarget; updates: Array<{ target: TableCellTarget; expectedCurrentText: string; replacement: string }>; baseRevision?: string }
+export interface SetTableCellsTextInput { table: TableTarget; updates: Array<{ target: SemanticTableCellTarget; expectedCurrentText: string; replacement: string }>; baseRevision?: string }
 export interface TableCellTextFormattingInput { bold?: boolean; italic?: boolean; fontFamily?: string; fontSizeHalfPoints?: number; color?: string }
 export interface SetTableCellsFormattingInput { table: TableTarget; updates: Array<{ target: TableCellTarget; fill?: string; textFormatting?: TableCellTextFormattingInput }>; baseRevision?: string }
 export interface SetTableFormattingInput {

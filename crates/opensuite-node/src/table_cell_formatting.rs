@@ -44,6 +44,8 @@ pub fn execute_docx_set_table_cells_formatting_node(
                 .into_iter()
                 .map(|update| TableCellFormattingUpdate {
                     target: TableCellTarget {
+                        row: None,
+                        column: None,
                         row_label: update.target.row_label.unwrap_or_default(),
                         column_header: update.target.column_header.unwrap_or_default(),
                         occurrence: update.target.occurrence.map(|value| value as usize),
