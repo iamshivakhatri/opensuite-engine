@@ -1,6 +1,6 @@
 {
   "name": "@opensuitehq/engine",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "OpenSuite native DOCX engine (N-API). Platform binaries ship as optionalDependencies.",
   "main": "index.js",
   "types": "index.d.ts",
