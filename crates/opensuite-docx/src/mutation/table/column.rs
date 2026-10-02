@@ -39,18 +39,31 @@ pub fn insert_table_column_after_to_vec(
             return Err(OperationResult::failed(
                 "TARGET_NOT_FOUND",
                 "table column handle was not found",
-            ));
+            )
+            .with_target_type("column"));
         }
         column
     } else if columns.len() != 1 {
-        return Err(OperationResult::failed(
+        let error = OperationResult::failed(
             if columns.is_empty() {
                 "TARGET_NOT_FOUND"
             } else {
                 "TARGET_AMBIGUOUS"
             },
             "column header does not resolve to one current table column",
-        ));
+        );
+        return Err(if columns.is_empty() {
+            error.with_target_type("column")
+        } else {
+            error.with_candidates(
+                "column",
+                columns
+                    .iter()
+                    .map(|index| format!("column handle t{table_index}:c{index}")),
+                columns.len(),
+                "afterColumnHandle",
+            )
+        });
     } else {
         columns[0]
     };
@@ -155,14 +168,26 @@ pub fn delete_table_column_to_vec(
             .filter_map(|(i, text)| label_matches(text, &operation.column_header).then_some(i))
             .collect::<Vec<_>>();
         if found.len() != 1 {
-            return Err(OperationResult::failed(
+            let error = OperationResult::failed(
                 if found.is_empty() {
                     "TARGET_NOT_FOUND"
                 } else {
                     "TARGET_AMBIGUOUS"
                 },
                 "column header does not resolve to one current table column",
-            ));
+            );
+            return Err(if found.is_empty() {
+                error.with_target_type("column")
+            } else {
+                error.with_candidates(
+                    "column",
+                    found
+                        .iter()
+                        .map(|index| format!("column handle t{table_index}:c{index}")),
+                    found.len(),
+                    "columnHandle",
+                )
+            });
         }
         found[0]
     };
@@ -170,7 +195,8 @@ pub fn delete_table_column_to_vec(
         return Err(OperationResult::failed(
             "TARGET_NOT_FOUND",
             "table column handle was not found",
-        ));
+        )
+        .with_target_type("column"));
     }
     let grid = explicit_table_grid(source, table, headers.len())?;
     let mut patches = vec![Patch {

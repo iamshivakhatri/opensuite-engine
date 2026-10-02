@@ -105,13 +105,16 @@ pub(super) fn select_table<'a>(
     if tables.is_empty() {
         return Err(
             OperationResult::failed("TARGET_NOT_FOUND", "table header row was not found")
-                .with_reason_code("TABLE_NOT_FOUND"),
+                .with_reason_code("TABLE_NOT_FOUND")
+                .with_target_type("table"),
         );
     }
     if let Some(occurrence) = target.occurrence {
         return tables.into_iter().nth(occurrence).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "table target occurrence was not found")
                 .with_reason_code("TABLE_NOT_FOUND")
+                .with_target_type("table")
+                .with_target_description(format!("table occurrence {occurrence}"))
         });
     }
     if tables.len() != 1 {
@@ -119,9 +122,64 @@ pub(super) fn select_table<'a>(
             "TARGET_AMBIGUOUS",
             "table header row matches more than one table",
         )
-        .with_reason_code("TABLE_AMBIGUOUS"));
+        .with_reason_code("TABLE_AMBIGUOUS")
+        .with_candidates(
+            "table",
+            tables
+                .iter()
+                .enumerate()
+                .map(|(occurrence, (index, _, _, _))| {
+                    format!("tableOccurrence {occurrence} (table index {index})")
+                }),
+            tables.len(),
+            "tableOccurrence",
+        ));
     }
     Ok(tables.pop().expect("one table"))
+}
+
+pub(super) fn cell_update_failure(
+    result: OperationResult,
+    index: usize,
+    target: &TableCellTarget,
+) -> OperationResult {
+    let mut result = result.with_update_index(index).with_target_type("cell");
+    if let Some(handle) = &target.handle {
+        return result.with_target_handle(handle);
+    }
+    let short = |value: &str| {
+        value
+            .chars()
+            .take(60)
+            .map(|ch| if ch.is_control() { ' ' } else { ch })
+            .collect::<String>()
+    };
+    let row = match &target.row {
+        Some(TableCellRow::Header) => "header row".to_owned(),
+        Some(TableCellRow::Label { text, occurrence }) => format!(
+            "row label '{}'{}",
+            short(text),
+            occurrence
+                .map(|n| format!(" occurrence {n}"))
+                .unwrap_or_default()
+        ),
+        Some(TableCellRow::Index { index, .. }) => format!("row index {index}"),
+        None => format!("row label '{}'", short(&target.row_label)),
+    };
+    let column = match &target.column {
+        Some(TableCellColumn::First) => "first column".to_owned(),
+        Some(TableCellColumn::Header { text, occurrence }) => format!(
+            "column header '{}'{}",
+            short(text),
+            occurrence
+                .map(|n| format!(" occurrence {n}"))
+                .unwrap_or_default()
+        ),
+        Some(TableCellColumn::Index { index, .. }) => format!("column index {index}"),
+        None => format!("column header '{}'", short(&target.column_header)),
+    };
+    result = result.with_target_description(format!("{row}, {column}"));
+    result
 }
 
 pub(super) fn safe_template_cell(source: &SourceDocument, cell: NodeId) -> bool {

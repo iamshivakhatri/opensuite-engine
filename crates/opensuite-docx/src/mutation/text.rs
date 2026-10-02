@@ -103,6 +103,12 @@ pub(super) fn resolve_target(
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "text target matches more than one current semantic range",
+        )
+        .with_candidates(
+            "text",
+            (0..matches.len()).map(|index| format!("text occurrence {index}")),
+            matches.len(),
+            "occurrence",
         ));
     } else {
         matches.into_iter().next().expect("one match")

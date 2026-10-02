@@ -1136,6 +1136,9 @@ impl OperationResult {
         let reason_code = reason_code.into();
         for diagnostic in &mut self.diagnostics {
             diagnostic.reason_code = Some(reason_code.clone());
+            if diagnostic.code == "UNSUPPORTED_OPERATION" {
+                diagnostic.recovery_kind = unsupported_recovery_kind(&reason_code);
+            }
         }
         self
     }
@@ -1158,6 +1161,55 @@ impl OperationResult {
                     handle: handle.clone(),
                 });
             }
+        }
+        self
+    }
+
+    pub fn with_target_type(mut self, target_type: impl Into<String>) -> Self {
+        let target_type = target_type.into();
+        for diagnostic in &mut self.diagnostics {
+            if diagnostic.target_type.is_none() {
+                diagnostic.target_type = Some(target_type.clone());
+            }
+        }
+        self
+    }
+
+    pub fn with_target_description(mut self, description: impl Into<String>) -> Self {
+        let description = description.into();
+        for diagnostic in &mut self.diagnostics {
+            diagnostic.target_description = Some(description.clone());
+        }
+        self
+    }
+
+    pub fn with_update_index(mut self, index: usize) -> Self {
+        for diagnostic in &mut self.diagnostics {
+            diagnostic.update_index = Some(index as u32);
+        }
+        self
+    }
+
+    pub fn with_candidates(
+        mut self,
+        target_type: &str,
+        candidates: impl IntoIterator<Item = String>,
+        candidate_count: usize,
+        required_selector_kind: &str,
+    ) -> Self {
+        let candidate_targets = candidates.into_iter().take(5).collect::<Vec<_>>();
+        for diagnostic in &mut self.diagnostics {
+            diagnostic.target_type = Some(target_type.to_owned());
+            diagnostic.candidate_count = Some(candidate_count as u32);
+            diagnostic.candidate_targets = candidate_targets.clone();
+            diagnostic.required_selector_kind = Some(required_selector_kind.to_owned());
+        }
+        self
+    }
+
+    pub fn with_retryable(mut self, retryable: bool) -> Self {
+        for diagnostic in &mut self.diagnostics {
+            diagnostic.retryable = Some(retryable);
         }
         self
     }
@@ -1379,6 +1431,14 @@ pub struct Diagnostic {
     pub reason_code: Option<String>,
     pub operation: Option<String>,
     pub target: Option<DiagnosticTarget>,
+    pub target_type: Option<String>,
+    pub target_description: Option<String>,
+    pub update_index: Option<u32>,
+    pub candidate_count: Option<u32>,
+    pub candidate_targets: Vec<String>,
+    pub required_selector_kind: Option<String>,
+    pub retryable: Option<bool>,
+    pub recovery_kind: Option<String>,
 }
 
 /// Public, opaque context for a diagnostic target.
@@ -1400,11 +1460,23 @@ impl Diagnostic {
             reason_code: None,
             operation: None,
             target: None,
+            target_type: None,
+            target_description: None,
+            update_index: None,
+            candidate_count: None,
+            candidate_targets: Vec::new(),
+            required_selector_kind: None,
+            retryable: None,
+            recovery_kind: None,
         }
     }
 
     pub fn with_reason_code(mut self, reason_code: impl Into<String>) -> Self {
-        self.reason_code = Some(reason_code.into());
+        let reason_code = reason_code.into();
+        if self.code == "UNSUPPORTED_OPERATION" {
+            self.recovery_kind = unsupported_recovery_kind(&reason_code);
+        }
+        self.reason_code = Some(reason_code);
         self
     }
 
@@ -1439,7 +1511,50 @@ impl Diagnostic {
                 serde_json::json!({ "handle": target.handle }),
             );
         }
+        if let Some(target_type) = &self.target_type {
+            object.insert("target_type".to_owned(), target_type.clone().into());
+        }
+        if let Some(description) = &self.target_description {
+            object.insert("target_description".to_owned(), description.clone().into());
+        }
+        if let Some(index) = self.update_index {
+            object.insert("update_index".to_owned(), index.into());
+        }
+        if let Some(count) = self.candidate_count {
+            object.insert("candidate_count".to_owned(), count.into());
+        }
+        if !self.candidate_targets.is_empty() {
+            object.insert(
+                "candidate_targets".to_owned(),
+                self.candidate_targets.clone().into(),
+            );
+        }
+        if let Some(kind) = &self.required_selector_kind {
+            object.insert("required_selector_kind".to_owned(), kind.clone().into());
+        }
+        if let Some(retryable) = self.retryable {
+            object.insert("retryable".to_owned(), retryable.into());
+        }
+        if let Some(kind) = &self.recovery_kind {
+            object.insert("recovery_kind".to_owned(), kind.clone().into());
+        }
         value
+    }
+}
+
+fn unsupported_recovery_kind(reason_code: &str) -> Option<String> {
+    match reason_code {
+        "UNSUPPORTED_WRAPPER" => Some("unsupported_target_type".to_owned()),
+        "MULTIPLE_PARAGRAPHS"
+        | "UNSAFE_CELL_STRUCTURE"
+        | "UNSAFE_PARAGRAPH_STRUCTURE"
+        | "UNSAFE_RUN_STRUCTURE"
+        | "NON_RECTANGULAR_TABLE"
+        | "MERGED_TABLE_STRUCTURE"
+        | "NESTED_TABLE_STRUCTURE"
+        | "REVISION_WRAPPER"
+        | "INVALID_TABLE_GRID" => Some("unsafe_source".to_owned()),
+        _ => None,
     }
 }
 
@@ -1519,5 +1634,23 @@ mod tests {
         assert_eq!(structured["reason_code"], "MULTIPLE_PARAGRAPHS");
         assert_eq!(structured["operation"], "set_table_cells_text");
         assert_eq!(structured["target"]["handle"], "t0:r1:c1");
+        assert_eq!(structured["recovery_kind"], "unsafe_source");
+        let wrapper = OperationResult::failed("UNSUPPORTED_OPERATION", "wrapper")
+            .with_reason_code("UNSUPPORTED_WRAPPER");
+        assert_eq!(
+            wrapper.diagnostics[0].recovery_kind.as_deref(),
+            Some("unsupported_target_type")
+        );
+        let ambiguous = OperationResult::failed("TARGET_AMBIGUOUS", "two rows matched")
+            .with_candidates(
+                "row",
+                (0..10).map(|index| format!("row index {index}")),
+                10,
+                "rowOccurrence",
+            );
+        let json = ambiguous.diagnostics[0].to_json();
+        assert_eq!(json["candidate_count"], 10);
+        assert_eq!(json["candidate_targets"].as_array().unwrap().len(), 5);
+        assert_eq!(json["required_selector_kind"], "rowOccurrence");
     }
 }

@@ -159,27 +159,90 @@ fn semantic_cell_coordinates_cover_headers_labels_and_duplicate_names() {
         text: "Bob".into(),
         occurrence: None,
     });
+    let failed = cells_execute(&input, &ambiguous).unwrap_err();
+    let diagnostic = &failed.diagnostics[0];
+    assert_eq!(diagnostic.code, "TARGET_AMBIGUOUS");
+    assert_eq!(diagnostic.target_type.as_deref(), Some("row"));
+    assert_eq!(diagnostic.candidate_count, Some(2));
     assert_eq!(
-        cells_execute(&input, &ambiguous).unwrap_err().diagnostics[0].code,
-        "TARGET_AMBIGUOUS"
+        diagnostic.required_selector_kind.as_deref(),
+        Some("rowOccurrence")
+    );
+    assert_eq!(diagnostic.update_index, Some(1));
+    assert!(
+        diagnostic
+            .target_description
+            .as_deref()
+            .unwrap()
+            .contains("Bob")
     );
     let mut ambiguous = operation.clone();
     ambiguous.updates[0].target.column = Some(TableCellColumn::Header {
         text: "Role".into(),
         occurrence: None,
     });
+    let failed = cells_execute(&input, &ambiguous).unwrap_err();
+    assert_eq!(failed.diagnostics[0].code, "TARGET_AMBIGUOUS");
+    assert_eq!(failed.diagnostics[0].target_type.as_deref(), Some("column"));
     assert_eq!(
-        cells_execute(&input, &ambiguous).unwrap_err().diagnostics[0].code,
-        "TARGET_AMBIGUOUS"
+        failed.diagnostics[0].required_selector_kind.as_deref(),
+        Some("columnOccurrence")
     );
+    let mut missing_row = operation.clone();
+    missing_row.updates[1].target.row = Some(TableCellRow::Label {
+        text: "Missing".into(),
+        occurrence: None,
+    });
+    let failed = cells_execute(&input, &missing_row).unwrap_err();
+    assert_eq!(
+        failed.diagnostics[0].reason_code.as_deref(),
+        Some("TABLE_ROW_NOT_FOUND")
+    );
+    assert_eq!(failed.diagnostics[0].target_type.as_deref(), Some("row"));
+    let mut missing_column = operation.clone();
+    missing_column.updates[2].target.column = Some(TableCellColumn::Header {
+        text: "Missing".into(),
+        occurrence: None,
+    });
+    let failed = cells_execute(&input, &missing_column).unwrap_err();
+    assert_eq!(
+        failed.diagnostics[0].reason_code.as_deref(),
+        Some("TABLE_COLUMN_NOT_FOUND")
+    );
+    assert_eq!(failed.diagnostics[0].target_type.as_deref(), Some("column"));
     let mut shifted = operation.clone();
     shifted.updates[1].target.row = Some(TableCellRow::Index {
         index: 2,
         expected_first_cell_text: "Alice".into(),
     });
+    let failed = cells_execute(&input, &shifted).unwrap_err();
+    assert_eq!(failed.diagnostics[0].code, "PRECONDITION_FAILED");
     assert_eq!(
-        cells_execute(&input, &shifted).unwrap_err().diagnostics[0].code,
-        "PRECONDITION_FAILED"
+        failed.diagnostics[0].reason_code.as_deref(),
+        Some("EXPECTED_TEXT_MISMATCH")
+    );
+    assert_eq!(failed.diagnostics[0].target_type.as_deref(), Some("row"));
+    let handle_target = |handle: &str| TableCellTarget {
+        row: None,
+        column: None,
+        row_label: String::new(),
+        column_header: String::new(),
+        occurrence: None,
+        handle: Some(handle.to_owned()),
+    };
+    let mut wrong_handle = operation.clone();
+    wrong_handle.updates[0].target = handle_target("t0:r0:c2");
+    wrong_handle.updates[1].target = handle_target("t0:r9:c1");
+    let failed = crate::execute_docx_set_table_cells_text(fs::read(&input).unwrap(), &wrong_handle);
+    assert!(failed.output_artifact.is_none());
+    let diagnostic = &failed.operation.diagnostics[0];
+    assert_eq!(diagnostic.update_index, Some(1));
+    assert_eq!(
+        diagnostic
+            .target
+            .as_ref()
+            .map(|target| target.handle.as_str()),
+        Some("t0:r9:c1")
     );
     let mut shifted = operation;
     shifted.updates[2].target.column = Some(TableCellColumn::Index {
@@ -277,15 +340,17 @@ fn fills_an_empty_simple_cell_and_rejects_ambiguous_or_complex_cells() {
     ] {
         let input = table_fixture(&xml);
         let output = path("table-unsupported");
+        let result = table_execute(
+            &input,
+            &output,
+            &table_operation("Revenue", "Amount", "100", "125"),
+        );
+        assert_eq!(result.diagnostics[0].code, "UNSUPPORTED_OPERATION");
+        assert_eq!(result.diagnostics[0].retryable, Some(false));
+        assert!(result.diagnostics[0].reason_code.is_some());
         assert_eq!(
-            table_execute(
-                &input,
-                &output,
-                &table_operation("Revenue", "Amount", "100", "125")
-            )
-            .diagnostics[0]
-                .code,
-            "UNSUPPORTED_OPERATION"
+            result.diagnostics[0].recovery_kind.as_deref(),
+            Some("unsafe_source")
         );
         fs::remove_file(input).unwrap();
     }

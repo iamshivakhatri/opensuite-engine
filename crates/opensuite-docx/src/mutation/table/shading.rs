@@ -21,21 +21,26 @@ pub fn set_table_cell_shading_to_vec(
     }
     let mut cells = HashSet::new();
     let mut targets = Vec::new();
-    for update in &operation.updates {
-        validate_shading_fill(update.fill.as_deref())?;
+    for (index, update) in operation.updates.iter().enumerate() {
+        let update_error = |error| cell_update_failure(error, index, &update.target);
+        validate_shading_fill(update.fill.as_deref()).map_err(&update_error)?;
         let target =
-            resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)?;
+            resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)
+                .map_err(&update_error)?;
         if !cells.insert(target.cell) {
-            return Err(OperationResult::failed(
+            return Err(update_error(OperationResult::failed(
                 "PRECONDITION_FAILED",
                 "the same table cell was requested more than once",
-            ));
+            )));
         }
         targets.push(target);
     }
     let mut patches = Vec::new();
-    for (target, update) in targets.iter().zip(&operation.updates) {
-        patches.push(shading_patch(source, target.cell, update.fill.as_deref())?);
+    for (index, (target, update)) in targets.iter().zip(&operation.updates).enumerate() {
+        patches.push(
+            shading_patch(source, target.cell, update.fill.as_deref())
+                .map_err(|error| cell_update_failure(error, index, &update.target))?,
+        );
     }
     write_patches_to_vec(package, main, source, patches)
 }

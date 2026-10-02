@@ -22,40 +22,40 @@ pub fn set_table_cells_formatting_to_vec(
     }
     let mut cells = HashSet::new();
     let mut patches = Vec::new();
-    for update in &operation.updates {
+    for (index, update) in operation.updates.iter().enumerate() {
+        let update_error = |error| cell_update_failure(error, index, &update.target);
         if update.fill.is_none()
             && update
                 .text_formatting
                 .as_ref()
                 .is_none_or(|formatting| *formatting == Default::default())
         {
-            return Err(OperationResult::failed(
+            return Err(update_error(OperationResult::failed(
                 "PRECONDITION_FAILED",
                 "each cell update needs fill or text formatting",
-            ));
+            )));
         }
-        super::shading::validate_shading_fill(update.fill.as_deref())?;
+        super::shading::validate_shading_fill(update.fill.as_deref()).map_err(&update_error)?;
         let target =
-            resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)?;
+            resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)
+                .map_err(&update_error)?;
         if !cells.insert(target.cell) {
-            return Err(OperationResult::failed(
+            return Err(update_error(OperationResult::failed(
                 "PRECONDITION_FAILED",
                 "the same table cell was requested more than once",
-            ));
+            )));
         }
         if let Some(fill) = update.fill.as_deref() {
-            patches.push(super::shading::shading_patch(
-                source,
-                target.cell,
-                Some(fill),
-            )?);
+            patches.push(
+                super::shading::shading_patch(source, target.cell, Some(fill))
+                    .map_err(&update_error)?,
+            );
         }
         if let Some(formatting) = &update.text_formatting {
-            patches.extend(table_cell_text_formatting_patches(
-                source,
-                target.paragraph,
-                formatting,
-            )?);
+            patches.extend(
+                table_cell_text_formatting_patches(source, target.paragraph, formatting)
+                    .map_err(&update_error)?,
+            );
         }
     }
     let expected = all_table_rows(source)?;

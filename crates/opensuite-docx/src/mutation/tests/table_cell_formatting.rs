@@ -188,7 +188,36 @@ fn semantic_cells_require_occurrences_for_duplicate_labels_and_headers() {
         );
         assert!(failed.output_artifact.is_none());
         assert_eq!(failed.operation.diagnostics[0].code, "TARGET_AMBIGUOUS");
+        assert_eq!(failed.operation.diagnostics[0].update_index, Some(1));
+        assert!(
+            failed.operation.diagnostics[0]
+                .target_description
+                .as_deref()
+                .unwrap()
+                .contains("Total")
+        );
     }
+    let wrong_handle = crate::execute_docx_set_table_cells_formatting(
+        original.clone(),
+        &operation(vec![
+            update("t0:r0:c0", Some("ABCDEF"), false),
+            update("t0:r9:c1", Some("ABCDEF"), false),
+        ]),
+    );
+    let diagnostic = &wrong_handle.operation.diagnostics[0];
+    assert!(wrong_handle.output_artifact.is_none());
+    assert_eq!(diagnostic.update_index, Some(1));
+    assert_eq!(
+        diagnostic
+            .target
+            .as_ref()
+            .map(|target| target.handle.as_str()),
+        Some("t0:r9:c1")
+    );
+    assert_eq!(
+        diagnostic.reason_code.as_deref(),
+        Some("TABLE_ROW_NOT_FOUND")
+    );
     let duplicate = crate::execute_docx_set_table_cells_formatting(
         original,
         &operation(vec![updates[0].clone(), updates[0].clone()]),

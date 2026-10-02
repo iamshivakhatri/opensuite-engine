@@ -35,6 +35,8 @@ not started.
   header/footer text, and simple header/footer PAGE fields.
 - Uses typed operations, structured diagnostics, source-local safety checks,
   package verification, reopen checks, and operation-specific postconditions.
+  Semantic edit failures now report bounded ambiguity candidates, failed row or
+  column selectors, unsafe-source reasons, and the failing atomic update index.
 
 ## Node/N-API
 

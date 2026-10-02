@@ -229,10 +229,10 @@ fn select_row(
     target: &TableRowTarget,
 ) -> Result<(usize, NodeId), OperationResult> {
     if rows.is_empty() {
-        return Err(OperationResult::failed(
-            "TARGET_NOT_FOUND",
-            "table row was not found",
-        ));
+        return Err(
+            OperationResult::failed("TARGET_NOT_FOUND", "table row was not found")
+                .with_target_type("row"),
+        );
     }
     if let Some(occurrence) = target.occurrence {
         return rows.into_iter().nth(occurrence).ok_or_else(|| {
@@ -240,12 +240,22 @@ fn select_row(
                 "TARGET_NOT_FOUND",
                 "table row target occurrence was not found",
             )
+            .with_target_type("row")
+            .with_target_description(format!("row occurrence {occurrence}"))
         });
     }
     if rows.len() != 1 {
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "table row first-cell text matches more than one row",
+        )
+        .with_candidates(
+            "row",
+            rows.iter().enumerate().map(|(occurrence, (index, _))| {
+                format!("rowOccurrence {occurrence} (row index {index})")
+            }),
+            rows.len(),
+            "rowOccurrence",
         ));
     }
     Ok(rows.pop().expect("one row"))

@@ -22,27 +22,39 @@ pub fn set_table_cells_text_to_vec(
     }
     let mut targets = Vec::with_capacity(operation.updates.len());
     let mut cells = HashSet::new();
-    for update in &operation.updates {
+    for (index, update) in operation.updates.iter().enumerate() {
         let target =
-            resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)?;
+            resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)
+                .map_err(|error| cell_update_failure(error, index, &update.target))?;
         if target.text != update.expected_current_text {
-            return Err(OperationResult::failed(
-                "PRECONDITION_FAILED",
-                "resolved cell text does not match expected current text",
-            )
-            .with_reason_code("EXPECTED_TEXT_MISMATCH"));
+            return Err(cell_update_failure(
+                OperationResult::failed(
+                    "PRECONDITION_FAILED",
+                    "resolved cell text does not match expected current text",
+                )
+                .with_reason_code("EXPECTED_TEXT_MISMATCH"),
+                index,
+                &update.target,
+            ));
         }
         if !cells.insert(target.cell) {
-            return Err(OperationResult::failed(
-                "PRECONDITION_FAILED",
-                "the same table cell was requested more than once",
+            return Err(cell_update_failure(
+                OperationResult::failed(
+                    "PRECONDITION_FAILED",
+                    "the same table cell was requested more than once",
+                ),
+                index,
+                &update.target,
             ));
         }
         targets.push(target);
     }
     let mut patches = Vec::new();
-    for (target, update) in targets.iter().zip(&operation.updates) {
-        patches.extend(table_cell_patches(source, target, &update.replacement)?);
+    for (index, (target, update)) in targets.iter().zip(&operation.updates).enumerate() {
+        patches.extend(
+            table_cell_patches(source, target, &update.replacement)
+                .map_err(|error| cell_update_failure(error, index, &update.target))?,
+        );
     }
     let patched = apply_patches(source, patches)?;
     let mut expected = all_table_rows(source)?;
@@ -79,7 +91,9 @@ pub fn set_table_cell_text(
         return OperationResult::failed(
             "PRECONDITION_FAILED",
             "resolved cell text does not match expected current text",
-        );
+        )
+        .with_reason_code("EXPECTED_TEXT_MISMATCH")
+        .with_target_type("cell");
     }
     let patches = match table_cell_patches(source, &target, &operation.replacement) {
         Ok(patches) => patches,
@@ -152,9 +166,12 @@ fn resolve_table_cell(
         };
         let (_, table_id, rows, _) = resolve_table(source, &table)?;
         if !simple_table(source, table_id) {
-            return Err(unsupported(
-                "set_table_cell_text supports only simple rectangular tables",
-            ));
+            let mut result =
+                unsupported("set_table_cell_text supports only simple rectangular tables");
+            if let Some(reason) = table_structure_reason(source, table_id) {
+                result = result.with_reason_code(reason.as_str());
+            }
+            return Err(result);
         }
         let row = rows.get(row_index).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "table cell handle row was not found")
@@ -228,7 +245,8 @@ fn resolve_table_cell(
         return Err(OperationResult::failed(
             "TARGET_NOT_FOUND",
             "table row label and column header intersection was not found",
-        ));
+        )
+        .with_target_type("cell"));
     }
     let (table_id, cell) = if let Some(occurrence) = target.occurrence {
         candidates.into_iter().nth(occurrence).ok_or_else(|| {
@@ -236,19 +254,28 @@ fn resolve_table_cell(
                 "TARGET_NOT_FOUND",
                 "table cell target occurrence was not found",
             )
+            .with_target_type("cell")
         })?
     } else if candidates.len() != 1 {
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "table cell target matches more than one current semantic cell",
+        )
+        .with_candidates(
+            "cell",
+            (0..candidates.len()).map(|index| format!("occurrence {index}")),
+            candidates.len(),
+            "occurrence",
         ));
     } else {
         candidates.pop().expect("one candidate")
     };
     if !simple_table(source, table_id) {
-        return Err(unsupported(
-            "set_table_cell_text supports only simple rectangular tables",
-        ));
+        let mut result = unsupported("set_table_cell_text supports only simple rectangular tables");
+        if let Some(reason) = table_structure_reason(source, table_id) {
+            result = result.with_reason_code(reason.as_str());
+        }
+        return Err(result);
     }
     let paragraphs = direct_cell_paragraphs(source, cell);
     if let Some(reason) = table_cell_text_reason(source, cell) {
@@ -305,7 +332,9 @@ pub(super) fn resolve_semantic_row_index(
                     "PRECONDITION_FAILED",
                     "indexed row first cell does not match expected text",
                 )
-                .with_reason_code("EXPECTED_TEXT_MISMATCH"));
+                .with_reason_code("EXPECTED_TEXT_MISMATCH")
+                .with_target_type("row")
+                .with_target_description(format!("row index {index}")));
             }
             Ok(*index)
         }
@@ -317,21 +346,40 @@ fn select_cell_axis(
     occurrence: Option<usize>,
     not_found_reason: &str,
 ) -> Result<usize, OperationResult> {
+    let (target_type, selector_kind) = if not_found_reason == "TABLE_ROW_NOT_FOUND" {
+        ("row", "rowOccurrence")
+    } else {
+        ("column", "columnOccurrence")
+    };
     if let Some(occurrence) = occurrence {
+        let count = matches.len();
         return matches.into_iter().nth(occurrence).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "cell selector occurrence was not found")
                 .with_reason_code(not_found_reason)
+                .with_target_type(target_type)
+                .with_target_description(format!(
+                    "{target_type} occurrence {occurrence}; {count} matches"
+                ))
         });
     }
     match matches.as_slice() {
         [index] => Ok(*index),
         [] => Err(
             OperationResult::failed("TARGET_NOT_FOUND", "cell selector was not found")
-                .with_reason_code(not_found_reason),
+                .with_reason_code(not_found_reason)
+                .with_target_type(target_type),
         ),
         _ => Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "cell selector matches more than one row or column",
+        )
+        .with_candidates(
+            target_type,
+            matches.iter().enumerate().map(|(occurrence, index)| {
+                format!("{selector_kind} {occurrence} ({target_type} index {index})")
+            }),
+            matches.len(),
+            selector_kind,
         )),
     }
 }
@@ -364,6 +412,8 @@ pub(super) fn resolve_table_cell_in_table(
         }
         let row = rows.get(row_index).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "table cell handle row was not found")
+                .with_reason_code("TABLE_ROW_NOT_FOUND")
+                .with_target_type("row")
         })?;
         let cells = row.cells().collect::<Vec<_>>();
         let cell = cells
@@ -373,6 +423,8 @@ pub(super) fn resolve_table_cell_in_table(
                     "TARGET_NOT_FOUND",
                     "table cell handle column was not found",
                 )
+                .with_reason_code("TABLE_COLUMN_NOT_FOUND")
+                .with_target_type("column")
             })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
@@ -420,7 +472,9 @@ pub(super) fn resolve_table_cell_in_table(
                         "PRECONDITION_FAILED",
                         "indexed column header does not match expected text",
                     )
-                    .with_reason_code("EXPECTED_TEXT_MISMATCH"));
+                    .with_reason_code("EXPECTED_TEXT_MISMATCH")
+                    .with_target_type("column")
+                    .with_target_description(format!("column index {index}")));
                 }
                 *index
             }
@@ -428,7 +482,11 @@ pub(super) fn resolve_table_cell_in_table(
         let cell = rows[row_index]
             .cells()
             .nth(column_index)
-            .ok_or_else(|| OperationResult::failed("TARGET_NOT_FOUND", "table cell was not found"))?
+            .ok_or_else(|| {
+                OperationResult::failed("TARGET_NOT_FOUND", "table cell was not found")
+                    .with_reason_code("TABLE_COLUMN_NOT_FOUND")
+                    .with_target_type("column")
+            })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
         if let Some(reason) = table_cell_text_reason(source, cell) {
@@ -457,7 +515,8 @@ pub(super) fn resolve_table_cell_in_table(
             "TARGET_NOT_FOUND",
             "table column header was not found",
         )
-        .with_reason_code("TABLE_COLUMN_NOT_FOUND"));
+        .with_reason_code("TABLE_COLUMN_NOT_FOUND")
+        .with_target_type("column"));
     }
     let mut candidates = Vec::new();
     for (row_index, row) in rows.iter().enumerate().skip(1) {
@@ -480,17 +539,30 @@ pub(super) fn resolve_table_cell_in_table(
                 "table cell target occurrence was not found",
             )
             .with_reason_code("TABLE_ROW_NOT_FOUND")
+            .with_target_type("cell")
         })?
     } else if candidates.len() != 1 {
         return Err(if candidates.is_empty() {
             OperationResult::failed("TARGET_NOT_FOUND", "table row label was not found")
                 .with_reason_code("TABLE_ROW_NOT_FOUND")
+                .with_target_type("row")
         } else {
             OperationResult::failed(
                 "TARGET_AMBIGUOUS",
                 "table cell target matches more than one current semantic cell",
             )
             .with_reason_code("TABLE_CELL_AMBIGUOUS")
+            .with_candidates(
+                "cell",
+                candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(occurrence, (row, column, _))| {
+                        format!("occurrence {occurrence} (row index {row}, column index {column})")
+                    }),
+                candidates.len(),
+                "occurrence",
+            )
         });
     } else {
         candidates.pop().expect("one candidate")

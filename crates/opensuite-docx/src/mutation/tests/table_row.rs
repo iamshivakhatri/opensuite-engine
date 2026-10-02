@@ -257,12 +257,12 @@ fn deletes_semantic_rows_in_the_selected_table_and_keeps_legacy_targets() {
         text: "Total".into(),
         occurrence: None,
     });
+    let failed = delete_row_execute(&input, &operation).unwrap_err();
+    assert_eq!(failed.diagnostics[0].code, "TARGET_AMBIGUOUS");
+    assert_eq!(failed.diagnostics[0].candidate_count, Some(2));
     assert_eq!(
-        delete_row_execute(&input, &operation)
-            .unwrap_err()
-            .diagnostics[0]
-            .code,
-        "TARGET_AMBIGUOUS"
+        failed.diagnostics[0].required_selector_kind.as_deref(),
+        Some("rowOccurrence")
     );
     operation.table.occurrence = None;
     assert_eq!(

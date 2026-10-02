@@ -687,18 +687,18 @@ pub fn execute_docx_set_table_cells_text(
             operation: OperationResult::table_cells_text_set(operation.updates.len()),
             output_artifact: Some(output_artifact),
         },
-        Err(error) => DocxExecutionResult {
-            operation: structured_failure(
-                error,
-                "set_table_cells_text",
-                operation
-                    .updates
-                    .first()
-                    .and_then(|update| update.target.handle.as_deref())
-                    .or(operation.table.handle.as_deref()),
-            ),
-            output_artifact: None,
-        },
+        Err(error) => {
+            let table_handle = error
+                .diagnostics
+                .iter()
+                .all(|item| item.update_index.is_none())
+                .then_some(operation.table.handle.as_deref())
+                .flatten();
+            DocxExecutionResult {
+                operation: structured_failure(error, "set_table_cells_text", table_handle),
+                output_artifact: None,
+            }
+        }
     }
 }
 

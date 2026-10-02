@@ -315,7 +315,7 @@ pub(super) fn write_patches_to_vec(
 }
 
 pub(super) fn unsupported(message: impl Into<String>) -> OperationResult {
-    OperationResult::failed("UNSUPPORTED_OPERATION", message)
+    OperationResult::failed("UNSUPPORTED_OPERATION", message).with_retryable(false)
 }
 
 pub(super) fn output_matches_input(package: &Package, output: &Path) -> bool {

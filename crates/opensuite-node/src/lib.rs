@@ -109,6 +109,14 @@ pub struct DiagnosticOutput {
     pub reason_code: Option<String>,
     pub operation: Option<String>,
     pub target_handle: Option<String>,
+    pub target_type: Option<String>,
+    pub target_description: Option<String>,
+    pub update_index: Option<u32>,
+    pub candidate_count: Option<u32>,
+    pub candidate_targets: Option<Vec<String>>,
+    pub required_selector_kind: Option<String>,
+    pub retryable: Option<bool>,
+    pub recovery_kind: Option<String>,
 }
 
 #[napi(object)]
@@ -1305,6 +1313,15 @@ fn diagnostic_output(diagnostic: Diagnostic) -> DiagnosticOutput {
         reason_code: diagnostic.reason_code,
         operation: diagnostic.operation,
         target_handle: diagnostic.target.map(|target| target.handle),
+        target_type: diagnostic.target_type,
+        target_description: diagnostic.target_description,
+        update_index: diagnostic.update_index,
+        candidate_count: diagnostic.candidate_count,
+        candidate_targets: (!diagnostic.candidate_targets.is_empty())
+            .then_some(diagnostic.candidate_targets),
+        required_selector_kind: diagnostic.required_selector_kind,
+        retryable: diagnostic.retryable,
+        recovery_kind: diagnostic.recovery_kind,
     }
 }
 
@@ -1781,13 +1798,19 @@ mod tests {
 
     #[test]
     fn preserves_operation_result_shape() {
+        let mut diagnostic = Diagnostic::new(
+            "TARGET_AMBIGUOUS",
+            DiagnosticSeverity::Error,
+            "two rows matched",
+        )
+        .with_reason_code("TABLE_ROW_AMBIGUOUS");
+        diagnostic.candidate_count = Some(2);
+        diagnostic.candidate_targets = vec!["row index 1".to_owned(), "row index 2".to_owned()];
+        diagnostic.required_selector_kind = Some("rowOccurrence".to_owned());
+        diagnostic.recovery_kind = Some("unsafe_source".to_owned());
         let output = operation_result_output(OperationResult {
             status: opensuite_protocol::OperationStatus::Failed,
-            diagnostics: vec![Diagnostic::new(
-                "TARGET_NOT_FOUND",
-                DiagnosticSeverity::Error,
-                "missing",
-            )],
+            diagnostics: vec![diagnostic],
             changes: vec![OperationChange {
                 kind: "text_replaced".to_owned(),
                 before: "before".to_owned(),
@@ -1798,6 +1821,23 @@ mod tests {
         assert!(!output.ok);
         assert_eq!(output.status, "failed");
         assert_eq!(output.diagnostics[0].severity, "error");
+        assert_eq!(
+            output.diagnostics[0].reason_code.as_deref(),
+            Some("TABLE_ROW_AMBIGUOUS")
+        );
+        assert_eq!(output.diagnostics[0].candidate_count, Some(2));
+        assert_eq!(
+            output.diagnostics[0].candidate_targets.as_ref().unwrap()[1],
+            "row index 2"
+        );
+        assert_eq!(
+            output.diagnostics[0].required_selector_kind.as_deref(),
+            Some("rowOccurrence")
+        );
+        assert_eq!(
+            output.diagnostics[0].recovery_kind.as_deref(),
+            Some("unsafe_source")
+        );
         assert_eq!(output.changes[0].kind, "text_replaced");
     }
 }

@@ -223,6 +223,12 @@ pub(super) fn resolve_paragraph_anchor(
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "text target matches more than one current semantic range",
+        )
+        .with_candidates(
+            "paragraph",
+            (0..matches.len()).map(|index| format!("text occurrence {index}")),
+            matches.len(),
+            "occurrence",
         ));
     } else {
         matches.into_iter().next().expect("one match")
@@ -289,6 +295,12 @@ pub(super) fn resolve_formatting_paragraph(
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "text target matches more than one current body paragraph",
+        )
+        .with_candidates(
+            "paragraph",
+            (0..candidates.len()).map(|index| format!("paragraph occurrence {index}")),
+            candidates.len(),
+            "occurrence",
         ));
     }
     Ok(candidates.into_iter().next().expect("one candidate"))

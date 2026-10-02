@@ -147,6 +147,12 @@ fn resolve_formatting_runs(
         return Err(OperationResult::failed(
             "TARGET_AMBIGUOUS",
             "text target matches more than one current semantic range",
+        )
+        .with_candidates(
+            "text",
+            (0..matches.len()).map(|index| format!("text occurrence {index}")),
+            matches.len(),
+            "occurrence",
         ));
     } else {
         matches.into_iter().next().expect("one match")
@@ -154,16 +160,21 @@ fn resolve_formatting_runs(
     let mut runs = Vec::new();
     let mut paragraph = None;
     for segment in &matched.segments {
-        if segment.inside_tracked_change
-            || source.children(segment.id).nth(1).is_some()
-            || is_cdata(source, segment.id)
-        {
+        if segment.inside_tracked_change {
+            return Err(
+                unsupported("text is inside a tracked change").with_reason_code("REVISION_WRAPPER")
+            );
+        }
+        if source.children(segment.id).nth(1).is_some() || is_cdata(source, segment.id) {
             return Err(unsupported(
                 "set_text_formatting requires ordinary visible text source regions",
-            ));
+            )
+            .with_reason_code("UNSAFE_RUN_STRUCTURE"));
         }
-        let run = ordinary_run(source, segment.id)
-            .ok_or_else(|| unsupported("set_text_formatting does not edit inline wrappers"))?;
+        let run = ordinary_run(source, segment.id).ok_or_else(|| {
+            unsupported("set_text_formatting does not edit inline wrappers")
+                .with_reason_code("UNSUPPORTED_WRAPPER")
+        })?;
         let parent = source
             .node(run)
             .and_then(|node| node.parent())
@@ -177,7 +188,8 @@ fn resolve_formatting_runs(
         {
             return Err(unsupported(
                 "set_text_formatting requires simple direct runs in one paragraph",
-            ));
+            )
+            .with_reason_code("UNSAFE_RUN_STRUCTURE"));
         }
         let start = matched.start.max(segment.start) - segment.start;
         let end = matched.end.min(segment.end) - segment.start;
@@ -195,7 +207,7 @@ fn resolve_formatting_runs(
     {
         return Err(unsupported(
             "set_text_formatting supports only an ordinary direct body or simple table-cell run without ranges or wrappers",
-        ));
+        ).with_reason_code("UNSAFE_PARAGRAPH_STRUCTURE"));
     }
     Ok((matched.text, runs))
 }
