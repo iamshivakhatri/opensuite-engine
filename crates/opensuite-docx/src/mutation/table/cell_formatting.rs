@@ -35,10 +35,10 @@ pub fn set_table_cells_formatting_to_vec(
                 "each cell update needs fill or text formatting",
             )));
         }
-        super::shading::validate_shading_fill(update.fill.as_deref()).map_err(&update_error)?;
+        super::shading::validate_shading_fill(update.fill.as_deref()).map_err(update_error)?;
         let target =
             resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)
-                .map_err(&update_error)?;
+                .map_err(update_error)?;
         if !cells.insert(target.cell) {
             return Err(update_error(OperationResult::failed(
                 "PRECONDITION_FAILED",
@@ -48,13 +48,13 @@ pub fn set_table_cells_formatting_to_vec(
         if let Some(fill) = update.fill.as_deref() {
             patches.push(
                 super::shading::shading_patch(source, target.cell, Some(fill))
-                    .map_err(&update_error)?,
+                    .map_err(update_error)?,
             );
         }
         if let Some(formatting) = &update.text_formatting {
             patches.extend(
                 table_cell_text_formatting_patches(source, target.paragraph, formatting)
-                    .map_err(&update_error)?,
+                    .map_err(update_error)?,
             );
         }
     }

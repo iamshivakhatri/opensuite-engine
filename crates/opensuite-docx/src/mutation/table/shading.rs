@@ -23,10 +23,10 @@ pub fn set_table_cell_shading_to_vec(
     let mut targets = Vec::new();
     for (index, update) in operation.updates.iter().enumerate() {
         let update_error = |error| cell_update_failure(error, index, &update.target);
-        validate_shading_fill(update.fill.as_deref()).map_err(&update_error)?;
+        validate_shading_fill(update.fill.as_deref()).map_err(update_error)?;
         let target =
             resolve_table_cell_in_table(source, table_index, &rows, &headers, &update.target)
-                .map_err(&update_error)?;
+                .map_err(update_error)?;
         if !cells.insert(target.cell) {
             return Err(update_error(OperationResult::failed(
                 "PRECONDITION_FAILED",
