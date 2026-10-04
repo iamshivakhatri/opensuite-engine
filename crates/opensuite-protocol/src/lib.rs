@@ -89,6 +89,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "text",
     "tables",
     "styles",
+    "style_snapshot",
     "paragraph_formatting",
     "numbering",
     "sections",
@@ -123,6 +124,8 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_text_formatting",
     "set_hyperlink",
     "set_paragraph_style",
+    "create_style",
+    "update_style",
     "set_paragraphs_list",
     "replace_picture",
     "delete_picture",
@@ -681,6 +684,39 @@ pub struct SetTextFormatting {
 pub struct SetHyperlink {
     pub target: TextTarget,
     pub url: Option<String>,
+    pub base_revision: Option<String>,
+}
+
+/// Supported Word style types; defaults are intentionally not writable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WordStyleType {
+    Paragraph,
+    Character,
+}
+
+/// None leaves a property unchanged; Clear removes its declaration (restoring inheritance).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WordStylePatch {
+    pub name: Option<String>,
+    pub based_on: Option<PropertyPatch<String>>,
+    pub next: Option<PropertyPatch<String>>,
+    pub run: TextFormattingPatch,
+    pub paragraph: ParagraphFormattingPatch,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateStyle {
+    pub style_id: String,
+    pub style_type: WordStyleType,
+    pub properties: WordStylePatch,
+    pub base_revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpdateStyle {
+    pub style_id: String,
+    pub style_type: WordStyleType,
+    pub properties: WordStylePatch,
     pub base_revision: Option<String>,
 }
 
@@ -1654,9 +1690,10 @@ mod tests {
         let json = capabilities.to_json().to_string();
 
         assert_eq!(
-            json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            json.replace("\"style_snapshot\",", ""),
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","create_style","update_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
+        assert!(json.contains("style_snapshot"));
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));
         assert!(!json.contains("NodeId"));

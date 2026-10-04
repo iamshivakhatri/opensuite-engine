@@ -36,6 +36,7 @@ pub struct NumberingLevel {
     pub source_id: NodeId,
     pub level: u8,
     pub start: Option<u32>,
+    pub restart_after_level: Option<u8>,
     pub format: NumberFormat,
     pub text: Option<String>,
     pub suffix: Option<String>,
@@ -224,6 +225,16 @@ fn parse_level(source: &SourceDocument, id: NodeId) -> Result<NumberingLevel, Nu
         .and_then(|x| source.node(x))
         .map(|x| attr_u32(x, "val"))
         .transpose()?;
+    let restart_after_level = child(source, id, "lvlRestart")
+        .and_then(|x| source.node(x))
+        .map(|x| attr_u32(x, "val"))
+        .transpose()?
+        .map(|value| {
+            value
+                .try_into()
+                .map_err(|_| NumberingError::MalformedNumbering)
+        })
+        .transpose()?;
     let text = child(source, id, "lvlText")
         .and_then(|x| source.node(x))
         .and_then(|x| x.attribute("val"))
@@ -247,6 +258,7 @@ fn parse_level(source: &SourceDocument, id: NodeId) -> Result<NumberingLevel, Nu
         source_id: id,
         level,
         start,
+        restart_after_level,
         format: fmt,
         text,
         suffix,

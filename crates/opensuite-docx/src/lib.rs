@@ -14,6 +14,7 @@ mod references;
 mod section;
 mod semantic;
 mod source;
+mod style_inspection;
 mod styles;
 mod text_context;
 mod text_search;
@@ -21,9 +22,9 @@ mod tracked_change;
 
 pub use blank::create_blank_docx;
 pub use execution::{
-    DocxExecutionResult, execute_docx_create_table, execute_docx_delete_page_break,
-    execute_docx_delete_paragraph, execute_docx_delete_picture, execute_docx_delete_table,
-    execute_docx_delete_table_column, execute_docx_delete_table_row,
+    DocxExecutionResult, execute_docx_create_style, execute_docx_create_table,
+    execute_docx_delete_page_break, execute_docx_delete_paragraph, execute_docx_delete_picture,
+    execute_docx_delete_table, execute_docx_delete_table_column, execute_docx_delete_table_row,
     execute_docx_insert_page_break, execute_docx_insert_paragraph, execute_docx_insert_paragraphs,
     execute_docx_insert_picture, execute_docx_insert_section_break,
     execute_docx_insert_table_column, execute_docx_insert_table_row,
@@ -36,8 +37,8 @@ pub use execution::{
     execute_docx_set_section_properties, execute_docx_set_table_cell_shading,
     execute_docx_set_table_cells_formatting, execute_docx_set_table_cells_text,
     execute_docx_set_table_column_widths, execute_docx_set_table_formatting,
-    execute_docx_set_text_formatting, find_docx_text, inspect_docx, inspect_docx_context,
-    inspect_docx_sections,
+    execute_docx_set_text_formatting, execute_docx_update_style, find_docx_text, inspect_docx,
+    inspect_docx_context, inspect_docx_sections,
 };
 pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
 pub use header_footer::{
@@ -51,9 +52,9 @@ pub use image_dimensions::{
 pub use inspection::inspect_docx_document;
 pub use mutation::{
     HeaderFooterInspection, PageNumberInspection, PageSetupInspection,
-    SectionHeaderFooterInspection, SectionInspection, create_table_to_vec, delete_page_break,
-    delete_page_break_to_vec, delete_paragraph, delete_paragraph_to_vec, delete_picture,
-    delete_picture_to_vec, delete_table_column_to_vec, delete_table_row_to_vec,
+    SectionHeaderFooterInspection, SectionInspection, create_style_to_vec, create_table_to_vec,
+    delete_page_break, delete_page_break_to_vec, delete_paragraph, delete_paragraph_to_vec,
+    delete_picture, delete_picture_to_vec, delete_table_column_to_vec, delete_table_row_to_vec,
     delete_table_to_vec, insert_page_break, insert_page_break_to_vec, insert_paragraph_after,
     insert_paragraph_to_vec, insert_paragraphs_to_vec, insert_picture, insert_picture_to_vec,
     insert_section_break_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
@@ -67,7 +68,7 @@ pub use mutation::{
     set_picture_size_to_vec, set_section_header_footer_to_vec, set_section_properties_to_vec,
     set_table_cell_shading_to_vec, set_table_cell_text, set_table_cells_formatting_to_vec,
     set_table_cells_text_to_vec, set_table_column_widths_to_vec, set_table_formatting_to_vec,
-    set_text_formatting, set_text_formatting_to_vec,
+    set_text_formatting, set_text_formatting_to_vec, update_style_to_vec,
 };
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
@@ -87,6 +88,9 @@ pub use semantic::{
 pub use source::{
     NodeId, SourceAttribute, SourceDocument, SourceError, SourceNode, SourceNodeKind, SourceSpan,
     XmlName,
+};
+pub use style_inspection::{
+    DocxStyleSnapshot, StyleInspectionDiagnostic, inspect_docx_style_snapshot,
 };
 pub use styles::{
     EffectiveParagraphFormatting, EffectiveRunFormatting, LineSpacing, LineSpacingRule,

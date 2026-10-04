@@ -18,6 +18,12 @@ not started.
   styles, numbering, sections, headers/footers, references, pictures, fields,
   content controls, comments, and tracked-change views. Exact text search and
   bounded context inspection use source order and opaque local handles.
+- Produces a bounded DOCX style snapshot with declared, direct, and resolved
+  typography; paragraph and list patterns; table appearance; section setup;
+  header/footer facts; and unresolved theme references.
+- Creates and patches real paragraph and character Word styles with explicit IDs,
+  validated inheritance/next targets, and source-local preservation. Default style
+  selection and deletion remain unavailable.
 - Creates blank DOCX files and inserts or deletes safe direct-body paragraphs.
   It replaces text, assigns existing paragraph styles, and applies supported
   direct paragraph and text formatting, including color, underline, highlight,
@@ -43,6 +49,7 @@ not started.
 ## Node/N-API
 
 The adapter exposes capability discovery, blank-document creation, inspection,
+bounded style snapshots,
 text search, text replacement, paragraph insertion/deletion/style/formatting,
 text formatting, table operations, page breaks, page setup, default
 headers/footers, page numbers, section inspection/editing/linkage, lists, hyperlinks, and picture insertion,

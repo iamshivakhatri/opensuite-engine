@@ -3,21 +3,67 @@ use super::*;
 mod paragraph;
 mod text;
 
-pub(super) use paragraph::simple_property;
 pub use paragraph::*;
+pub(super) use paragraph::{
+    new_formatting_children, paragraph_property_patches, ppr_insertion, simple_property,
+};
 pub(super) use text::table_cell_text_formatting_patches;
 pub use text::*;
+pub(super) use text::{
+    new_text_formatting_children, run_property_patches, validate_text_formatting,
+};
 
 pub(super) fn edit_attribute(mut tag: String, key: &str, value: Option<&str>) -> String {
-    let needle = format!("{key}=\"");
-    if let Some(start) = tag.find(&needle) {
-        let end = start + needle.len() + tag[start + needle.len()..].find('"').unwrap_or(0) + 1;
-        if let Some(value) = value {
-            tag.replace_range(start..end, &format!("{key}=\"{value}\""));
-        } else {
-            let begin = tag[..start].rfind(char::is_whitespace).unwrap_or(start);
-            tag.replace_range(begin..end, "");
+    // Read attribute boundaries so single quotes, whitespace around =, and values
+    // containing another attribute's name remain safe in imported XML.
+    let bytes = tag.as_bytes();
+    let mut at = 1;
+    while at < bytes.len() && !bytes[at].is_ascii_whitespace() {
+        at += 1;
+    }
+    let mut found = None;
+    while at < bytes.len() {
+        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
+            at += 1;
         }
+        let start = at;
+        while at < bytes.len() && !bytes[at].is_ascii_whitespace() && !b"=/>".contains(&bytes[at]) {
+            at += 1;
+        }
+        let name_end = at;
+        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        if bytes.get(at) != Some(&b'=') {
+            break;
+        }
+        at += 1;
+        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        let Some(&quote) = bytes.get(at) else {
+            break;
+        };
+        if quote != b'\'' && quote != b'"' {
+            break;
+        }
+        at += 1;
+        while at < bytes.len() && bytes[at] != quote {
+            at += 1;
+        }
+        at += 1;
+        if &tag[start..name_end] == key {
+            found = Some(start..at);
+            break;
+        }
+    }
+    if let Some(range) = found {
+        tag.replace_range(
+            range,
+            &value
+                .map(|value| format!("{key}=\"{value}\""))
+                .unwrap_or_default(),
+        );
     } else if let Some(value) = value {
         let at = tag
             .rfind("/>")

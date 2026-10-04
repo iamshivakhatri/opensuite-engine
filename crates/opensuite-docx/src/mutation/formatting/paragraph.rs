@@ -325,6 +325,17 @@ pub(super) fn formatting_patches(
             replacement: format!("<{}>{}</{}>", name("pPr"), children, name("pPr")).into_bytes(),
         }]);
     };
+    paragraph_property_patches(source, ppr, patch)
+}
+
+pub(crate) fn paragraph_property_patches(
+    source: &SourceDocument,
+    ppr: NodeId,
+    patch: &ParagraphFormattingPatch,
+) -> Result<Vec<Patch>, OperationResult> {
+    let prefix = word_prefix_for(source, ppr, "pPr")?;
+    let prefix = prefix.as_str();
+    let name = |local: &str| qualify(prefix, local);
     let mut patches = Vec::new();
     simple_property(
         source,
@@ -450,7 +461,7 @@ pub(super) fn indent_changes(patch: &ParagraphFormattingPatch) -> Vec<AttrChange
     .collect()
 }
 
-pub(super) fn new_formatting_children(
+pub(crate) fn new_formatting_children(
     patch: &ParagraphFormattingPatch,
     name: &impl Fn(&str) -> String,
     prefix: &str,
@@ -586,7 +597,7 @@ pub(super) fn compound_property(
     Ok(())
 }
 
-pub(super) fn ppr_insertion(
+pub(crate) fn ppr_insertion(
     source: &SourceDocument,
     ppr: NodeId,
     replacement: Vec<u8>,

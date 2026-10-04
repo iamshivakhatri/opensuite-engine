@@ -704,6 +704,7 @@ module.exports.getDocxCapabilities = nativeBinding.getDocxCapabilities
 module.exports.createBlankDocx = nativeBinding.createBlankDocx
 module.exports.findDocxText = nativeBinding.findDocxText
 module.exports.inspectDocx = nativeBinding.inspectDocx
+module.exports.inspectDocxStyleSnapshot = nativeBinding.inspectDocxStyleSnapshot
 module.exports.executeDocxReplaceText = nativeBinding.executeDocxReplaceText
 module.exports.executeDocxInsertParagraph = nativeBinding.executeDocxInsertParagraph
 module.exports.executeDocxInsertParagraphs = nativeBinding.executeDocxInsertParagraphs
@@ -740,3 +741,6 @@ module.exports.executeDocxInsertSectionBreak = nativeBinding.executeDocxInsertSe
 module.exports.executeDocxSetSectionProperties = nativeBinding.executeDocxSetSectionProperties
 module.exports.executeDocxSetSectionHeaderFooter = nativeBinding.executeDocxSetSectionHeaderFooter
 module.exports.executeDocxSetOddEvenHeaders = nativeBinding.executeDocxSetOddEvenHeaders
+
+module.exports.executeDocxCreateStyle = nativeBinding.executeDocxCreateStyle
+module.exports.executeDocxUpdateStyle = nativeBinding.executeDocxUpdateStyle

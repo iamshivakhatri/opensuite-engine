@@ -379,6 +379,9 @@ fn placement_handle(placement: &opensuite_protocol::ParagraphPlacement) -> Optio
     }
 }
 
+use crate::{create_style_to_vec, update_style_to_vec};
+use opensuite_protocol::{CreateStyle, UpdateStyle};
+
 macro_rules! execute_paragraph_mutation {
     ($name:ident, $operation:ty, $apply:ident, $id:literal) => {
         pub fn $name(input_artifact: Vec<u8>, operation: &$operation) -> DocxExecutionResult {
@@ -403,6 +406,18 @@ macro_rules! execute_paragraph_mutation {
         }
     };
 }
+execute_paragraph_mutation!(
+    execute_docx_create_style,
+    CreateStyle,
+    create_style_to_vec,
+    "create_style"
+);
+execute_paragraph_mutation!(
+    execute_docx_update_style,
+    UpdateStyle,
+    update_style_to_vec,
+    "update_style"
+);
 execute_paragraph_mutation!(
     execute_docx_insert_section_break,
     InsertSectionBreak,

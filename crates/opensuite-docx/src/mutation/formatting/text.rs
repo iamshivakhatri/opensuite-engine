@@ -373,7 +373,17 @@ fn text_formatting_patches(
             replacement: format!("<{}>{}</{}>", name("rPr"), children, name("rPr")).into_bytes(),
         }]);
     }
-    let rpr = rpr.expect("checked");
+    run_property_patches(source, rpr.expect("checked"), patch)
+}
+
+pub(crate) fn run_property_patches(
+    source: &SourceDocument,
+    rpr: NodeId,
+    patch: &TextFormattingPatch,
+) -> Result<Vec<Patch>, OperationResult> {
+    let prefix = word_prefix_for(source, rpr, "rPr")?;
+    let prefix = prefix.as_str();
+    let name = |local: &str| qualify(prefix, local);
     let mut patches = Vec::new();
     text_boolean_property(
         source,
@@ -479,7 +489,7 @@ fn text_formatting_patches(
     Ok(patches)
 }
 
-fn new_text_formatting_children(
+pub(crate) fn new_text_formatting_children(
     patch: &TextFormattingPatch,
     name: &impl Fn(&str) -> String,
     prefix: &str,
@@ -549,7 +559,7 @@ fn text_boolean_xml(
     }
 }
 
-fn validate_text_formatting(patch: &TextFormattingPatch) -> Result<(), OperationResult> {
+pub(crate) fn validate_text_formatting(patch: &TextFormattingPatch) -> Result<(), OperationResult> {
     if let Some(PropertyPatch::Set(value)) = &patch.color {
         if value != "auto"
             && (value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -680,6 +690,8 @@ fn font_property(
                 let value = escape(value).into_owned();
                 tag = edit_attribute(tag, &format!("{prefix}ascii"), Some(&value));
                 tag = edit_attribute(tag, &format!("{prefix}hAnsi"), Some(&value));
+                tag = edit_attribute(tag, &format!("{prefix}asciiTheme"), None);
+                tag = edit_attribute(tag, &format!("{prefix}hAnsiTheme"), None);
             }
             PropertyPatch::Clear => {
                 tag = edit_attribute(tag, &format!("{prefix}ascii"), None);

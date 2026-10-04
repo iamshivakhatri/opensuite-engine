@@ -168,6 +168,13 @@ impl<'a> Paragraph<'a> {
         styles.effective_paragraph_formatting(self.style_id().as_ref(), &direct)
     }
 
+    pub fn direct_formatting(&self) -> Result<ParagraphFormatting, StyleError> {
+        child(self.source, self.source_id, "pPr")
+            .map(|id| crate::styles::paragraph_formatting(self.source, id))
+            .transpose()
+            .map(|value| value.unwrap_or_default())
+    }
+
     pub fn list_reference(&self, styles: &StyleSheet) -> Result<Option<ListReference>, StyleError> {
         let direct = child(self.source, self.source_id, "pPr")
             .map(|id| crate::numbering::list_reference(self.source, id))
@@ -269,6 +276,13 @@ impl<'a> Run<'a> {
             self.character_style_id().as_ref(),
             &direct,
         )
+    }
+
+    pub fn direct_formatting(&self) -> Result<RunFormatting, StyleError> {
+        child(self.source, self.source_id, "rPr")
+            .map(|id| crate::styles::run_formatting(self.source, id))
+            .transpose()
+            .map(|value| value.unwrap_or_default())
     }
 
     pub fn texts(&self) -> impl Iterator<Item = Text<'a>> + '_ {

@@ -1,6 +1,8 @@
+mod styles;
 use napi::bindgen_prelude::{AsyncTask, Buffer, Task};
 use napi::{Env, Result};
 use napi_derive::napi;
+pub use styles::{create_style, update_style};
 mod content_controls;
 mod hyperlinks;
 mod lists;
@@ -21,7 +23,7 @@ use opensuite_docx::{
     execute_docx_set_paragraph_formatting, execute_docx_set_paragraph_style,
     execute_docx_set_table_cell_shading, execute_docx_set_table_cells_text,
     execute_docx_set_table_column_widths, execute_docx_set_table_formatting, find_docx_text,
-    inspect_docx,
+    inspect_docx, inspect_docx_style_snapshot,
 };
 use opensuite_protocol::{
     Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, DeleteTableRowTarget,
@@ -550,6 +552,7 @@ fn node_docx_capability(capability: &str) -> bool {
     matches!(
         capability,
         "inspect"
+            | "style_snapshot"
             | "replace_text"
             | "create_blank_docx"
             | "body_blocks"
@@ -571,6 +574,8 @@ fn node_docx_capability(capability: &str) -> bool {
             | "set_text_formatting"
             | "set_hyperlink"
             | "set_paragraph_style"
+            | "create_style"
+            | "update_style"
             | "set_paragraphs_list"
             | "replace_picture"
             | "delete_picture"
@@ -638,6 +643,31 @@ pub fn inspect_docx_node(input: Buffer, request: InspectDocxInput) -> AsyncTask<
         focus,
         request,
     })
+}
+
+/// Inspects the bounded DOCX formatting system away from Node's event loop.
+#[napi(js_name = "inspectDocxStyleSnapshot")]
+pub fn inspect_docx_style_snapshot_node(input: Buffer) -> AsyncTask<InspectDocxStyleSnapshotTask> {
+    AsyncTask::new(InspectDocxStyleSnapshotTask {
+        input: input.to_vec(),
+    })
+}
+
+pub struct InspectDocxStyleSnapshotTask {
+    input: Vec<u8>,
+}
+
+impl Task for InspectDocxStyleSnapshotTask {
+    type Output = opensuite_docx::DocxStyleSnapshot;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(inspect_docx_style_snapshot(std::mem::take(&mut self.input)))
+    }
+
+    fn resolve(&mut self, _env: Env, result: Self::Output) -> Result<Self::JsValue> {
+        serde_json::to_string(&result).map_err(|error| napi::Error::from_reason(error.to_string()))
+    }
 }
 
 pub struct InspectDocxTask {
@@ -1805,6 +1835,22 @@ mod tests {
     use opensuite_protocol::{Diagnostic, DiagnosticSeverity, OperationChange};
 
     use super::*;
+
+    #[test]
+    fn advertises_the_style_snapshot_binding() {
+        let capabilities = get_docx_capabilities();
+        let docx = capabilities
+            .formats
+            .iter()
+            .find(|format| format.format == "docx")
+            .unwrap();
+
+        assert!(
+            docx.capabilities
+                .iter()
+                .any(|value| value == "style_snapshot")
+        );
+    }
 
     #[test]
     fn preserves_operation_result_shape() {

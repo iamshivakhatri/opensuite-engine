@@ -168,6 +168,7 @@ pub struct Style {
     name: Option<String>,
     style_type: StyleType,
     based_on: Option<StyleId>,
+    next: Option<StyleId>,
     formatting: RunFormatting,
     paragraph_formatting: ParagraphFormatting,
     list_reference: Option<ListReference>,
@@ -188,6 +189,15 @@ impl Style {
     }
     pub fn based_on(&self) -> Option<&StyleId> {
         self.based_on.as_ref()
+    }
+    pub fn next(&self) -> Option<&StyleId> {
+        self.next.as_ref()
+    }
+    pub fn run_formatting(&self) -> &RunFormatting {
+        &self.formatting
+    }
+    pub fn paragraph_formatting(&self) -> &ParagraphFormatting {
+        &self.paragraph_formatting
     }
 }
 
@@ -249,6 +259,10 @@ impl StyleSheet {
                 .and_then(|node| node.attribute("val"))
                 .filter(|value| !value.is_empty())
                 .map(|value| StyleId::new(value.to_owned()));
+            let next = child(&source, source_id, "next")
+                .and_then(|id| source.node(id))
+                .and_then(|node| node.attribute("val"))
+                .map(|value| StyleId::new(value.to_owned()));
             let name = child(&source, source_id, "name")
                 .and_then(|id| source.node(id))
                 .and_then(|node| node.attribute("val"))
@@ -270,7 +284,13 @@ impl StyleSheet {
             if styles.contains_key(&id) {
                 return Err(StyleError::DuplicateStyle(id));
             }
-            if style_type == StyleType::Paragraph && is_enabled(node.attribute("default"))? {
+            if style_type == StyleType::Paragraph
+                && node
+                    .attribute("default")
+                    .map(|value| is_enabled(Some(value)))
+                    .transpose()?
+                    .unwrap_or(false)
+            {
                 default_paragraph_style = Some(id.clone());
             }
             styles.insert(
@@ -281,6 +301,7 @@ impl StyleSheet {
                     name,
                     style_type,
                     based_on,
+                    next,
                     formatting,
                     paragraph_formatting,
                     list_reference,
@@ -310,6 +331,12 @@ impl StyleSheet {
     }
     pub fn default_paragraph_style_id(&self) -> Option<&StyleId> {
         self.default_paragraph_style.as_ref()
+    }
+    pub fn run_defaults(&self) -> &RunFormatting {
+        &self.run_defaults
+    }
+    pub fn paragraph_defaults(&self) -> &ParagraphFormatting {
+        &self.paragraph_defaults
     }
 
     pub fn effective_run_formatting(
@@ -344,7 +371,7 @@ impl StyleSheet {
         Ok(result)
     }
 
-    fn style_run_formatting(
+    pub fn style_run_formatting(
         &self,
         id: &StyleId,
         expected_type: StyleType,
@@ -356,7 +383,10 @@ impl StyleSheet {
         Ok(result)
     }
 
-    fn style_paragraph_formatting(&self, id: &StyleId) -> Result<ParagraphFormatting, StyleError> {
+    pub fn style_paragraph_formatting(
+        &self,
+        id: &StyleId,
+    ) -> Result<ParagraphFormatting, StyleError> {
         let mut result = ParagraphFormatting::default();
         for style in self.style_chain(id, StyleType::Paragraph)? {
             result.apply(&style.paragraph_formatting);
@@ -406,22 +436,32 @@ impl StyleSheet {
     }
 }
 
-/// Loads styles.xml through the main part's OPC relationships.
-pub fn load_styles(package: &Package, main_part: &Part) -> Result<Option<StyleSheet>, StyleError> {
+pub(crate) fn styles_part(package: &Package, main_part: &Part) -> Result<Option<Part>, StyleError> {
     let relationships = match package.part_relationships(main_part) {
-        Ok(relationships) => relationships,
+        Ok(value) => value,
         Err(PackageError::MissingPartRelationships(_)) => return Ok(None),
         Err(error) => return Err(StyleError::Package(error)),
     };
-    let Some(relationship) = relationships.into_iter().find(|relationship| {
-        STYLES_RELATIONSHIPS.contains(&relationship.relationship_type.as_str())
-    }) else {
+    let Some(relationship) = relationships
+        .into_iter()
+        .find(|r| STYLES_RELATIONSHIPS.contains(&r.relationship_type.as_str()))
+    else {
         return Ok(None);
     };
     let opensuite_opc::RelationshipTarget::Internal { part_name, .. } = relationship.target else {
         return Err(StyleError::ExternalStylesPart);
     };
-    let part = package.part(&part_name).map_err(StyleError::Package)?;
+    package
+        .part(&part_name)
+        .map(Some)
+        .map_err(StyleError::Package)
+}
+
+/// Loads styles.xml through the main part's OPC relationships.
+pub fn load_styles(package: &Package, main_part: &Part) -> Result<Option<StyleSheet>, StyleError> {
+    let Some(part) = styles_part(package, main_part)? else {
+        return Ok(None);
+    };
     let bytes = package.read_part(&part).map_err(StyleError::Package)?;
     Ok(Some(StyleSheet::parse(bytes)?))
 }
@@ -663,6 +703,69 @@ mod tests {
         assert_eq!(formatting.font_size_half_points, Some(24));
         assert_eq!(formatting.font_size_points(), Some(12.0));
         assert_eq!(formatting.font_family.as_deref(), Some("Direct"));
+    }
+
+    #[test]
+    fn only_an_explicit_default_style_applies_to_unstyled_paragraphs() {
+        let styles = StyleSheet::parse(format!(
+            "<w:styles xmlns:w=\"{WORD}\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type=\"paragraph\" w:styleId=\"Normal\" w:default=\"1\"><w:pPr><w:spacing w:before=\"160\" w:after=\"160\"/></w:pPr></w:style><w:style w:type=\"paragraph\" w:styleId=\"Title\"/><w:style w:type=\"paragraph\" w:styleId=\"Heading1\"/><w:style w:type=\"paragraph\" w:styleId=\"Heading2\"/><w:style w:type=\"paragraph\" w:styleId=\"Heading3\"><w:pPr><w:keepNext/></w:pPr><w:rPr><w:b/><w:sz w:val=\"24\"/></w:rPr></w:style></w:styles>"
+        ).into_bytes()).unwrap();
+        let source = SourceDocument::parse(format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val=\"Heading3\"/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/><w:sz w:val=\"20\"/></w:rPr><w:t>Direct</w:t></w:r></w:p></w:body></w:document>"
+        ).into_bytes()).unwrap();
+        let document = DocxDocument::new(&source).unwrap();
+        let paragraphs = document.paragraphs().collect::<Vec<_>>();
+
+        assert_eq!(
+            styles.default_paragraph_style_id().map(StyleId::as_str),
+            Some("Normal")
+        );
+        assert!(is_enabled(None).unwrap(), "toggle semantics stay unchanged");
+
+        let body_run = paragraphs[0]
+            .runs()
+            .next()
+            .unwrap()
+            .effective_formatting(&styles)
+            .unwrap();
+        let body_paragraph = paragraphs[0].effective_formatting(&styles).unwrap();
+        assert_eq!(body_run.font_family.as_deref(), Some("Arial"));
+        assert_eq!(body_run.font_size_half_points, Some(22));
+        assert_eq!(body_run.bold, None);
+        assert_eq!(body_paragraph.spacing_before_twips, Some(160));
+        assert_eq!(body_paragraph.spacing_after_twips, Some(160));
+        assert_eq!(body_paragraph.keep_with_next, None);
+
+        let heading_run = paragraphs[1]
+            .runs()
+            .next()
+            .unwrap()
+            .effective_formatting(&styles)
+            .unwrap();
+        assert_eq!(heading_run.font_size_half_points, Some(24));
+        assert_eq!(heading_run.bold, Some(true));
+        assert_eq!(
+            paragraphs[1]
+                .effective_formatting(&styles)
+                .unwrap()
+                .keep_with_next,
+            Some(true)
+        );
+
+        let direct_run = paragraphs[2]
+            .runs()
+            .next()
+            .unwrap()
+            .effective_formatting(&styles)
+            .unwrap();
+        assert_eq!(direct_run.font_family.as_deref(), Some("Arial"));
+        assert_eq!(direct_run.font_size_half_points, Some(20));
+        assert_eq!(direct_run.bold, Some(true));
+
+        let no_default = StyleSheet::parse(format!(
+            "<w:styles xmlns:w=\"{WORD}\"><w:style w:type=\"paragraph\" w:styleId=\"Title\"/><w:style w:type=\"character\" w:styleId=\"Emphasis\" w:default=\"1\"/><w:style w:type=\"table\" w:styleId=\"Grid\" w:default=\"1\"/></w:styles>"
+        ).into_bytes()).unwrap();
+        assert_eq!(no_default.default_paragraph_style_id(), None);
     }
 
     #[test]

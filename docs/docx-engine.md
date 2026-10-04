@@ -10,6 +10,10 @@ does not aim to reproduce every Microsoft Word feature.
 
 - Package opening, source-aware semantic inspection, exact text search, bounded
   context inspection, capability discovery, and structured diagnostics.
+- Bounded style-system inspection covering typography origins, paragraph and
+  list patterns, table appearance, sections, headers/footers, and theme references.
+- Custom paragraph and character style creation/update, with clear-to-inherit
+  patches, parent/cycle and next-style validation. See [E1 style details](e1-custom-styles.md).
 - Paragraph creation and deletion, text replacement, existing paragraph styles,
   direct paragraph formatting, and direct text formatting including color,
   underline, highlight, strikethrough, and superscript/subscript.

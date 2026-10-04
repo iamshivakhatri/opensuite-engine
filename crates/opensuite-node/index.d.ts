@@ -93,6 +93,7 @@ export function getDocxCapabilities(): RuntimeCapabilities
 export function createBlankDocx(): Buffer
 export function findDocxText(input: Buffer, request: { text: string }): Promise<FindTextResult>
 export function inspectDocx(input: Buffer, request: InspectDocxInput): Promise<InspectDocxResult>
+export function inspectDocxStyleSnapshot(input: Buffer): Promise<string>
 export function executeDocxReplaceText(input: Buffer, operation: ReplaceTextInput): Promise<ExecuteDocxResult>
 export function executeDocxInsertParagraph(input: Buffer, operation: InsertParagraphInput): Promise<ExecuteDocxResult>
 export function executeDocxInsertParagraphs(input: Buffer, operation: InsertParagraphsInput): Promise<ExecuteDocxResult>
@@ -174,3 +175,27 @@ export function executeDocxSetSectionProperties(input: Buffer, operation: SetSec
 export function executeDocxSetSectionHeaderFooter(input: Buffer, operation: SetSectionHeaderFooterInput): Promise<ExecuteDocxResult>
 /** Explicit document-wide setting; even variants never enable it implicitly. */
 export function executeDocxSetOddEvenHeaders(input: Buffer, operation: { enabled: boolean }): Promise<ExecuteDocxResult>
+
+/** Stable Word style ID; no default-style authoring. Colors use six hex digits without #. */
+export interface StyleInput {
+  styleId: string; styleType: 'paragraph' | 'character'; name?: string; basedOn?: string; next?: string;
+  bold?: boolean;
+  italic?: boolean;
+  fontSizeHalfPoints?: number;
+  fontFamily?: string;
+  color?: string;
+  underline?: boolean;
+  alignment?: 'left' | 'center' | 'right' | 'both' | 'distribute';
+  spacingBeforeTwips?: number;
+  spacingAfterTwips?: number;
+  leftIndentTwips?: number;
+  rightIndentTwips?: number;
+  firstLineIndentTwips?: number;
+  hangingIndentTwips?: number;
+  keepWithNext?: boolean;
+  keepLines?: boolean;
+  clear?: Array<'basedOn' | 'next' | 'bold' | 'italic' | 'fontSizeHalfPoints' | 'fontFamily' | 'color' | 'underline' | 'alignment' | 'spacingBeforeTwips' | 'spacingAfterTwips' | 'leftIndentTwips' | 'rightIndentTwips' | 'firstLineIndentTwips' | 'hangingIndentTwips' | 'keepWithNext' | 'keepLines'>;
+  baseRevision?: string;
+}
+export function executeDocxCreateStyle(input: Buffer, operation: StyleInput & { name: string }): Promise<ExecuteDocxResult>
+export function executeDocxUpdateStyle(input: Buffer, operation: StyleInput): Promise<ExecuteDocxResult>

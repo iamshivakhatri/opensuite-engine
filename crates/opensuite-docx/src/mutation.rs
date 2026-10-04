@@ -67,6 +67,7 @@ mod page_setup;
 mod paragraph;
 mod picture;
 mod sections;
+mod styles;
 mod table;
 mod text;
 
@@ -93,6 +94,7 @@ pub use page_setup::*;
 pub use paragraph::*;
 pub use picture::*;
 pub use sections::*;
+pub use styles::*;
 pub use table::*;
 pub use text::*;
 
