@@ -106,7 +106,10 @@ pub use styles::{
 };
 pub use text_context::inspect_text_context;
 pub use text_search::find_text;
-pub use tracked_change::{RevisionView, TrackedChange, TrackedChangeKind, TrackedChangeMetadata};
+pub use tracked_change::{
+    RevisionInspection, RevisionKind, RevisionSnapshot, RevisionView, TrackedChange,
+    TrackedChangeKind, TrackedChangeMetadata, inspect_docx_tracked_changes,
+};
 
 use opensuite_opc::{Package, Part};
 

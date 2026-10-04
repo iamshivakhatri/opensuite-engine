@@ -66,6 +66,23 @@ not started.
   dimensions with safe width diagnostics. See [E1 layout inspection](e1-layout-inspection.md).
   Rendered page counts are supplied only by an optional application-side renderer.
 
+## Tracked-change inspection
+
+Read-only `inspect_docx_tracked_changes` / Node `inspectDocxTrackedChanges` returns
+main-document revisions in source order, including table paragraphs. The snapshot
+contains ID, insertion/deletion kind, author/date, text, paragraph index, structural
+status, and reason codes. Default 20 entries, maximum 100, offset paging, and
+2,000-character text/metadata bounds. Totals distinguish supported insertions,
+supported deletions, and unsupported revision structures. Move/range markers,
+property/row/cell changes, and nested revisions are counted with diagnostics;
+their text is not interpreted. Counts describe XML revision records/markers,
+not logical edit groups. Headers/footers and other parts are outside this snapshot.
+
+Existing current-text inspection includes insertions/move-to and excludes
+deletions/move-from; original-text views do the reverse. Those semantics and
+mutation guards remain unchanged. Unrelated safe text edits preserve revision
+XML byte-for-byte. No revision authoring or accept/reject operations are exposed.
+
 ## Node/N-API
 
 The adapter exposes capability discovery, blank-document creation, inspection,

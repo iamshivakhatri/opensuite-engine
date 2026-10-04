@@ -227,3 +227,6 @@ export function inspectDocxComments(input: Buffer, options?: CommentInspectionOp
 export function executeDocxAddComment(input: Buffer, operation: AddCommentInput): Promise<ExecuteDocxResult>
 export function executeDocxUpdateComment(input: Buffer, operation: {handle: string; text: string}): Promise<ExecuteDocxResult>
 export function executeDocxDeleteComment(input: Buffer, operation: {handle: string}): Promise<ExecuteDocxResult>
+
+/** Read-only, bounded main-document insertion/deletion inspection. JSON RevisionInspection. */
+export function inspectDocxTrackedChanges(input: Buffer, options?: { offset?: number; limit?: number }): Promise<string>

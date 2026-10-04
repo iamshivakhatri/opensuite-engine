@@ -749,3 +749,4 @@ module.exports.inspectDocxComments = nativeBinding.inspectDocxComments
 module.exports.executeDocxAddComment = nativeBinding.executeDocxAddComment
 module.exports.executeDocxUpdateComment = nativeBinding.executeDocxUpdateComment
 module.exports.executeDocxDeleteComment = nativeBinding.executeDocxDeleteComment
+module.exports.inspectDocxTrackedChanges = nativeBinding.inspectDocxTrackedChanges

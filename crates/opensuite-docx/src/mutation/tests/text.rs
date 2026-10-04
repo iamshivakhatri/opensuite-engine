@@ -210,3 +210,70 @@ fn uses_shared_occurrence_order_for_replacement() {
     fs::remove_file(input).unwrap();
     fs::remove_file(output).unwrap();
 }
+
+#[test]
+fn revision_snapshot_and_unrelated_edit_preserve_source() {
+    let revision = r#"<w:p><w:r><w:t>Revenue: </w:t></w:r><w:del w:id="7" w:author="Sarah" w:date="2026-10-03T12:00:00Z"><w:r><w:delText>$2.1M</w:delText></w:r></w:del><w:ins w:id="8" w:author="Sarah" w:date="2026-10-03T12:00:00Z"><w:r><w:t>$2.4M</w:t></w:r></w:ins></w:p>"#;
+    let xml = format!(
+        r#"<w:document xmlns:w="{WORD}"><w:body>{revision}<w:p><w:r><w:t>Prepared for the board.</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let path = table_fixture(&xml);
+    let input = fs::read(&path).unwrap();
+    fs::remove_file(path).unwrap();
+    let before = input.clone();
+    let snapshot = crate::inspect_docx_tracked_changes(input.clone(), 0, 20);
+    assert!(snapshot.ok);
+    assert_eq!(
+        (
+            snapshot.total,
+            snapshot.insertion_count,
+            snapshot.deletion_count
+        ),
+        (2, 1, 1)
+    );
+    assert_eq!(snapshot.revisions[0].text.as_deref(), Some("$2.1M"));
+    assert_eq!(snapshot.revisions[1].text.as_deref(), Some("$2.4M"));
+    assert_eq!(snapshot.revisions[1].id.as_deref(), Some("8"));
+    assert_eq!(snapshot.revisions[1].author.as_deref(), Some("Sarah"));
+    assert_eq!(
+        snapshot.revisions[1].date.as_deref(),
+        Some("2026-10-03T12:00:00Z")
+    );
+    assert_eq!(snapshot.revisions[1].paragraph_index, Some(0));
+    assert_eq!(snapshot.revisions[1].structure, "supported");
+    assert_eq!(input, before);
+    let package = Package::from_bytes(input).unwrap();
+    let (main, source) = crate::open_main_source(&package).unwrap();
+    assert!(
+        replace_text_to_vec(
+            &package,
+            &main,
+            &source,
+            &operation("$2.4M", "$2.4M", "$3M")
+        )
+        .is_err()
+    );
+    let output = replace_text_to_vec(
+        &package,
+        &main,
+        &source,
+        &operation(
+            "Prepared for the board.",
+            "Prepared for the board.",
+            "Prepared for review.",
+        ),
+    )
+    .unwrap();
+    let reopened = Package::from_bytes(output).unwrap();
+    let (_, after) = crate::open_main_source(&reopened).unwrap();
+    assert_eq!(
+        after.original_bytes(),
+        xml.replace("Prepared for the board.", "Prepared for review.")
+            .as_bytes()
+    );
+    assert!(
+        std::str::from_utf8(after.original_bytes())
+            .unwrap()
+            .contains(revision)
+    );
+}

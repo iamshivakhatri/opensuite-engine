@@ -1,3 +1,5 @@
+mod revisions;
+pub use revisions::inspect_tracked_changes;
 mod comments;
 pub use comments::{add_comment, delete_comment, inspect_comments, update_comment};
 mod layout;
@@ -558,6 +560,7 @@ fn node_docx_capability(capability: &str) -> bool {
         "inspect"
             | "style_snapshot"
             | "inspect_comments"
+            | "inspect_tracked_changes"
             | "add_comment"
             | "update_comment"
             | "delete_comment"
