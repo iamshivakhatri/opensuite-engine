@@ -76,9 +76,17 @@ export interface SetTableCellShadingInput { table: TableTarget; updates: TableCe
 export interface SetContentControlTextInput { target: { tag?: string; alias?: string; occurrence?: number }; expectedCurrentText: string; replacement: string; baseRevision?: string }
 export interface SetParagraphsListInput { targets: TextTarget[]; kind: 'bullet' | 'decimal' | 'none'; level?: 0 | 1 | 2; /** Reuse the immediately preceding compatible list. */ continueFromPrevious?: boolean; baseRevision?: string }
 export interface SetHyperlinkInput { target: TextTarget; /** Omit to clear the external hyperlink. */ url?: string; baseRevision?: string }
-export interface InsertPictureInput { imageBytes: Buffer; placement: ParagraphPlacement; altText?: string; baseRevision?: string }
+/** EMU: 914,400 per inch. Exactly one alignment or offset per axis. */
+export interface ImagePositionInput { reference: 'page' | 'margin' | 'column' | 'paragraph'; alignment?: 'start' | 'center' | 'end'; offsetEmu?: number }
+export interface PictureLayoutInput {
+  horizontal?: ImagePositionInput; vertical?: ImagePositionInput;
+  wrap?: 'square' | 'topAndBottom' | 'behindText' | 'inFrontOfText';
+  distance?: { topEmu?: number; bottomEmu?: number; leftEmu?: number; rightEmu?: number };
+}
+export interface SetPictureLayoutInput { handle: string; layout: PictureLayoutInput; baseRevision?: string }
+export interface InsertPictureInput { widthEmu?: number; heightEmu?: number; layout?: PictureLayoutInput; imageBytes: Buffer; placement: ParagraphPlacement; altText?: string; baseRevision?: string }
 export interface PictureHandleInput { handle: string; baseRevision?: string }
-export interface SetPictureSizeInput extends PictureHandleInput { /** Supply exactly one dimension. */ widthEmu?: number; heightEmu?: number }
+export interface SetPictureSizeInput extends PictureHandleInput { /** One dimension preserves aspect ratio; both set exact size. */ widthEmu?: number; heightEmu?: number }
 export interface ReplacePictureInput extends PictureHandleInput { replacementBytes: Buffer; contentType: string }
 export interface InsertPageBreakInput { placement: ParagraphPlacement; baseRevision?: string }
 export interface PageBreakHandleInput { handle: string; baseRevision?: string }
@@ -203,3 +211,5 @@ export function executeDocxUpdateStyle(input: Buffer, operation: StyleInput): Pr
 export interface LayoutOptions { blockOffset?: number; blockLimit?: number; sectionIndex?: number }
 /** JSON structural LayoutSnapshot. No rendered pagination or mutation. */
 export function inspectDocxLayout(input: Buffer, options?: LayoutOptions): Promise<string>
+
+export function executeDocxSetPictureLayout(input: Buffer, operation: SetPictureLayoutInput): Promise<ExecuteDocxResult>

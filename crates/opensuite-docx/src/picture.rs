@@ -54,6 +54,25 @@ pub enum ImageReference {
     LinkedInternal(Part),
 }
 
+/// Structural facts preserve imported references and wrap names, including unsupported ones.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImagePositionFacts {
+    pub reference: Option<String>,
+    pub alignment: Option<String>,
+    pub offset_emu: Option<i64>,
+}
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageAnchorFacts {
+    pub horizontal: Option<ImagePositionFacts>,
+    pub vertical: Option<ImagePositionFacts>,
+    pub wrap: Option<String>,
+    pub behind_text: Option<bool>,
+    pub distance_emu: std::collections::BTreeMap<String, i64>,
+    pub editable: bool,
+}
+
 pub struct Picture<'a> {
     source: &'a SourceDocument,
     source_id: NodeId,
@@ -76,6 +95,191 @@ impl Picture<'_> {
             width_emu: number(node.attribute("cx"))?,
             height_emu: number(node.attribute("cy"))?,
         }))
+    }
+    pub(crate) fn container_id(&self) -> NodeId {
+        self.container_id
+    }
+    pub(crate) fn layout_child(&self, local: &str) -> Option<NodeId> {
+        child(self.source, self.container_id, WP, local)
+    }
+    /// Only one direct picture in one drawing container is safe to target.
+    pub(crate) fn is_simple(&self) -> bool {
+        let containers = self
+            .source
+            .children(self.source_id)
+            .filter(|id| {
+                element(self.source, *id, WP, "inline") || element(self.source, *id, WP, "anchor")
+            })
+            .count();
+        let mut todo = vec![self.source_id];
+        let (mut pictures, mut blips, mut graphics) = (0, 0, 0);
+        while let Some(id) = todo.pop() {
+            todo.extend(self.source.children(id));
+            pictures += usize::from(element(self.source, id, PICTURE, "pic"));
+            blips += usize::from(element(self.source, id, DRAWING, "blip"));
+            graphics += usize::from(element(self.source, id, DRAWING, "graphic"));
+        }
+        let direct_picture = child(self.source, self.container_id, DRAWING, "graphic")
+            .and_then(|id| child(self.source, id, DRAWING, "graphicData"))
+            .is_some_and(|id| {
+                self.source
+                    .children(id)
+                    .filter(|id| {
+                        matches!(
+                            self.source.node(*id).map(|n| n.kind()),
+                            Some(SourceNodeKind::Element { .. })
+                        )
+                    })
+                    .count()
+                    == 1
+            });
+        containers == 1
+            && pictures == 1
+            && blips == 1
+            && graphics == 1
+            && direct_picture
+            && self.blip().ok().flatten().is_some()
+    }
+    pub(crate) fn extent_nodes(&self) -> Option<[NodeId; 2]> {
+        let only = |parent, namespaces, local| {
+            let mut nodes = self
+                .source
+                .children(parent)
+                .filter(|id| element(self.source, *id, namespaces, local));
+            let id = nodes.next()?;
+            nodes.next().is_none().then_some(id)
+        };
+        let extent = only(self.container_id, WP, "extent")?;
+        let graphic = only(self.container_id, DRAWING, "graphic")?;
+        let data = only(graphic, DRAWING, "graphicData")?;
+        let picture = only(data, PICTURE, "pic")?;
+        let properties = only(picture, PICTURE, "spPr")?;
+        let transform = only(properties, DRAWING, "xfrm")?;
+        Some([extent, only(transform, DRAWING, "ext")?])
+    }
+    pub fn anchor_facts(&self) -> Option<ImageAnchorFacts> {
+        if self.kind != PictureKind::Anchored {
+            return None;
+        }
+        let node = self.source.node(self.container_id)?;
+        let position = |local| {
+            self.layout_child(local).map(|id| {
+                let alignment = child(self.source, id, WP, "align")
+                    .and_then(|v| element_text(self.source, v))
+                    .map(str::to_owned);
+                let offset = child(self.source, id, WP, "posOffset")
+                    .and_then(|v| element_text(self.source, v))
+                    .and_then(|v| v.parse().ok());
+                ImagePositionFacts {
+                    reference: self
+                        .source
+                        .node(id)
+                        .and_then(|n| n.attribute("relativeFrom"))
+                        .map(str::to_owned),
+                    alignment,
+                    offset_emu: offset,
+                }
+            })
+        };
+        let wrap = [
+            "wrapNone",
+            "wrapSquare",
+            "wrapTopAndBottom",
+            "wrapTight",
+            "wrapThrough",
+        ]
+        .into_iter()
+        .find(|v| self.layout_child(v).is_some());
+        let behind_text = match node.attribute("behindDoc") {
+            Some("1" | "true") => Some(true),
+            Some("0" | "false") => Some(false),
+            _ => None,
+        };
+        let horizontal = position("positionH");
+        let vertical = position("positionV");
+        let supported_axis = |facts: &Option<ImagePositionFacts>, horizontal: bool| {
+            facts.as_ref().is_some_and(|f| {
+                let reference = f.reference.as_deref();
+                (matches!(reference, Some("page" | "margin"))
+                    || reference == Some(if horizontal { "column" } else { "paragraph" }))
+                    && match (&f.alignment, f.offset_emu) {
+                        (None, Some(v)) => i32::try_from(v).is_ok(),
+                        (Some(v), None) => {
+                            reference != Some("paragraph")
+                                && if horizontal {
+                                    matches!(v.as_str(), "left" | "center" | "right")
+                                } else {
+                                    matches!(v.as_str(), "top" | "center" | "bottom")
+                                }
+                        }
+                        _ => false,
+                    }
+            })
+        };
+        let position_count = |local| {
+            self.source
+                .children(self.container_id)
+                .filter(|id| element(self.source, *id, WP, local))
+                .count()
+        };
+        let wrap_count = [
+            "wrapNone",
+            "wrapSquare",
+            "wrapTopAndBottom",
+            "wrapTight",
+            "wrapThrough",
+        ]
+        .into_iter()
+        .map(position_count)
+        .sum::<usize>();
+        let editable = self.is_simple()
+            && position_count("positionH") == 1
+            && position_count("positionV") == 1
+            && wrap_count == 1
+            && node
+                .attribute("simplePos")
+                .is_some_and(|v| matches!(v, "0" | "false"))
+            && matches!(wrap, Some("wrapNone" | "wrapSquare" | "wrapTopAndBottom"))
+            && behind_text.is_some()
+            && supported_axis(&horizontal, true)
+            && supported_axis(&vertical, false);
+        let wrap_node = wrap
+            .and_then(|local| self.layout_child(local))
+            .and_then(|id| self.source.node(id));
+        Some(ImageAnchorFacts {
+            horizontal,
+            vertical,
+            wrap: wrap.map(|v| {
+                match v {
+                    "wrapNone" if behind_text == Some(true) => "behindText",
+                    "wrapNone" if behind_text == Some(false) => "inFrontOfText",
+                    "wrapSquare" => "square",
+                    "wrapTopAndBottom" => "topAndBottom",
+                    "wrapTight" => "tight",
+                    "wrapThrough" => "through",
+                    _ => v,
+                }
+                .to_owned()
+            }),
+            behind_text,
+            distance_emu: [
+                ("top", "distT"),
+                ("bottom", "distB"),
+                ("left", "distL"),
+                ("right", "distR"),
+            ]
+            .into_iter()
+            .filter_map(|(key, attr)| {
+                wrap_node
+                    .and_then(|n| n.attribute(attr))
+                    .or_else(|| node.attribute(attr))?
+                    .parse()
+                    .ok()
+                    .map(|v| (key.to_owned(), v))
+            })
+            .collect(),
+            editable,
+        })
     }
     pub fn metadata(&self) -> Option<PictureMetadata> {
         let node = child(self.source, self.container_id, WP, "docPr")
@@ -184,6 +388,14 @@ pub(crate) fn pictures(source: &SourceDocument) -> impl Iterator<Item = Picture<
             kind,
         })
     })
+}
+fn element_text(source: &SourceDocument, id: NodeId) -> Option<&str> {
+    let mut children = source.children(id);
+    let child = children.next()?;
+    if children.next().is_some() {
+        return None;
+    }
+    std::str::from_utf8(source.text_bytes(child)?).ok()
 }
 fn number(value: Option<&str>) -> Result<i64, PictureError> {
     value

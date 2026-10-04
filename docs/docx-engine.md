@@ -28,7 +28,9 @@ does not aim to reproduce every Microsoft Word feature.
 - Read and safe targeted mutation support for simple content controls, typed
   bullet and decimal lists at levels zero through two (including separate,
   source-ordered bullet runs), external hyperlinks,
-  and inline PNG/JPEG pictures.
+  and PNG/JPEG pictures with typed inline/floating insertion, proportional or exact
+  size, common wrapping and positioning, and preservation-aware layout patches.
+  See [E1 image layout](e1-image-layout.md).
 - Page breaks and real section boundaries (next/continuous/odd/even page),
   independent section page setup, first-page behavior, numbering restart/continue,
   default/first/even simple headers/footers and PAGE fields, and link/unlink.

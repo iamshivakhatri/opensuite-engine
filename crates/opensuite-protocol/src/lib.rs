@@ -131,6 +131,7 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "replace_picture",
     "delete_picture",
     "set_picture_size",
+    "set_picture_layout",
     "insert_picture",
     "insert_table_row",
     "insert_table_rows",
@@ -779,6 +780,7 @@ pub struct DeletePicture {
 pub enum PictureSizeChange {
     WidthEmu(i64),
     HeightEmu(i64),
+    ExactEmu { width: i64, height: i64 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -788,13 +790,68 @@ pub struct SetPictureSize {
     pub base_revision: Option<String>,
 }
 
-/// Inserts one inline PNG or JPEG picture in the direct main-document body.
+/// Inserts one inline or floating PNG/JPEG in a dedicated main-body paragraph.
 /// The engine determines the format and dimensions from the supplied bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InsertPicture {
+    pub size: Option<PictureSizeChange>,
+    pub layout: Option<PictureLayoutPatch>,
     pub image_bytes: Vec<u8>,
     pub placement: ParagraphPlacement,
     pub alt_text: Option<String>,
+    pub base_revision: Option<String>,
+}
+
+/// Drawing units are English Metric Units (EMU): 914,400 per inch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImagePositionReference {
+    Page,
+    Margin,
+    Column,
+    Paragraph,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImageAlignment {
+    Start,
+    Center,
+    End,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImagePosition {
+    Align(ImageAlignment),
+    OffsetEmu(i64),
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ImageAxisPosition {
+    pub reference: ImagePositionReference,
+    pub position: ImagePosition,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImageWrap {
+    Square,
+    TopAndBottom,
+    BehindText,
+    InFrontOfText,
+}
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ImageTextDistance {
+    pub top_emu: Option<i64>,
+    pub bottom_emu: Option<i64>,
+    pub left_emu: Option<i64>,
+    pub right_emu: Option<i64>,
+}
+/// Insertion requires both axes. Updates leave omitted properties untouched.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PictureLayoutPatch {
+    pub horizontal: Option<ImageAxisPosition>,
+    pub vertical: Option<ImageAxisPosition>,
+    pub wrap: Option<ImageWrap>,
+    pub distance: ImageTextDistance,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetPictureLayout {
+    pub target: PictureTarget,
+    pub layout: PictureLayoutPatch,
     pub base_revision: Option<String>,
 }
 
@@ -1453,7 +1510,7 @@ impl OperationResult {
             changes: vec![OperationChange {
                 kind: "picture_inserted".to_owned(),
                 before: "body".to_owned(),
-                after: "inline picture added".to_owned(),
+                after: "picture added".to_owned(),
             }],
         }
     }
@@ -1464,8 +1521,20 @@ impl OperationResult {
             diagnostics: Vec::new(),
             changes: vec![OperationChange {
                 kind: "picture_deleted".to_owned(),
-                before: "inline picture".to_owned(),
+                before: "picture".to_owned(),
                 after: String::new(),
+            }],
+        }
+    }
+
+    pub fn picture_layout_set() -> Self {
+        Self {
+            status: OperationStatus::Applied,
+            diagnostics: Vec::new(),
+            changes: vec![OperationChange {
+                kind: "picture_layout_set".to_owned(),
+                before: "image layout".to_owned(),
+                after: "image layout updated".to_owned(),
             }],
         }
     }
@@ -1476,7 +1545,7 @@ impl OperationResult {
             diagnostics: Vec::new(),
             changes: vec![OperationChange {
                 kind: "picture_resized".to_owned(),
-                before: "inline picture".to_owned(),
+                before: "picture".to_owned(),
                 after: "size updated".to_owned(),
             }],
         }
@@ -1692,7 +1761,7 @@ mod tests {
 
         assert_eq!(
             json.replace("\"style_snapshot\",", ""),
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","layout_snapshot","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","create_style","update_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","layout_snapshot","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","create_style","update_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","set_picture_layout","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(json.contains("style_snapshot"));
         assert!(!json.contains("mutation"));

@@ -741,8 +741,7 @@ module.exports.executeDocxInsertSectionBreak = nativeBinding.executeDocxInsertSe
 module.exports.executeDocxSetSectionProperties = nativeBinding.executeDocxSetSectionProperties
 module.exports.executeDocxSetSectionHeaderFooter = nativeBinding.executeDocxSetSectionHeaderFooter
 module.exports.executeDocxSetOddEvenHeaders = nativeBinding.executeDocxSetOddEvenHeaders
-
 module.exports.executeDocxCreateStyle = nativeBinding.executeDocxCreateStyle
 module.exports.executeDocxUpdateStyle = nativeBinding.executeDocxUpdateStyle
-
 module.exports.inspectDocxLayout = nativeBinding.inspectDocxLayout
+module.exports.executeDocxSetPictureLayout = nativeBinding.executeDocxSetPictureLayout

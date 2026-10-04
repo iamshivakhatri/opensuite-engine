@@ -47,7 +47,7 @@ pub use page_composition::{
 };
 pub use pictures::{
     execute_docx_delete_picture_node, execute_docx_insert_picture_node,
-    execute_docx_replace_picture_node, execute_docx_set_picture_size_node,
+    execute_docx_replace_picture_node, execute_docx_set_picture_size_node, set_picture_layout,
 };
 pub use sections::{
     insert_section_break, inspect_docx_sections, set_odd_even_headers, set_section_header_footer,
@@ -583,6 +583,7 @@ fn node_docx_capability(capability: &str) -> bool {
             | "replace_picture"
             | "delete_picture"
             | "set_picture_size"
+            | "set_picture_layout"
             | "insert_picture"
             | "insert_table_row"
             | "insert_table_rows"

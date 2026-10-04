@@ -503,6 +503,8 @@ fn set_table_cell_text(
         &source,
         &opensuite_protocol::SetTableCellText {
             target: opensuite_protocol::TableCellTarget {
+                row: None,
+                column: None,
                 row_label,
                 column_header,
                 occurrence,
@@ -1502,6 +1504,8 @@ fn insert_picture(
         &main,
         &source,
         &opensuite_protocol::InsertPicture {
+            size: None,
+            layout: None,
             image_bytes,
             placement,
             alt_text,

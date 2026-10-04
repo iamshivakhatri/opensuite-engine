@@ -313,6 +313,34 @@ pub fn execute_docx_set_picture_size(
     }
 }
 
+pub fn execute_docx_set_picture_layout(
+    input: Vec<u8>,
+    operation: &opensuite_protocol::SetPictureLayout,
+) -> DocxExecutionResult {
+    let package = match Package::from_bytes(input) {
+        Ok(p) => p,
+        Err(e) => return failed(e.code(), "could not load DOCX"),
+    };
+    let (main, source) = match open_main_source(&package) {
+        Ok(v) => v,
+        Err(e) => return failed(e.code(), "could not load DOCX"),
+    };
+    match crate::set_picture_layout_to_vec(&package, &main, &source, operation) {
+        Ok(output) => DocxExecutionResult {
+            operation: OperationResult::picture_layout_set(),
+            output_artifact: Some(output),
+        },
+        Err(error) => DocxExecutionResult {
+            operation: structured_failure(
+                error,
+                "set_picture_layout",
+                operation.target.handle.as_deref(),
+            ),
+            output_artifact: None,
+        },
+    }
+}
+
 /// Executes `SetContentControlText` against owned DOCX bytes and returns verified output bytes.
 pub fn execute_docx_set_content_control_text(
     input_artifact: Vec<u8>,

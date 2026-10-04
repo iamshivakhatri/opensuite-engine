@@ -232,6 +232,8 @@ fn inserts_inline_picture_with_bytes_dimensions_and_collision_safe_ids() {
         &main,
         &source,
         &InsertPicture {
+            size: None,
+            layout: None,
             image_bytes: png(640, 480),
             placement: ParagraphPlacement::Start,
             alt_text: Some("chart".to_owned()),
@@ -246,6 +248,8 @@ fn inserts_inline_picture_with_bytes_dimensions_and_collision_safe_ids() {
         &main,
         &source,
         &InsertPicture {
+            size: None,
+            layout: None,
             image_bytes: png(1600, 800),
             placement: ParagraphPlacement::End,
             alt_text: None,
@@ -288,6 +292,8 @@ fn rejects_malformed_and_unsupported_picture_bytes_without_output() {
                 &main,
                 &source,
                 &InsertPicture {
+                    size: None,
+                    layout: None,
                     image_bytes,
                     placement: ParagraphPlacement::End,
                     alt_text: None,
@@ -343,6 +349,8 @@ fn inserts_pictures_before_and_after_body_handles() {
                 &main,
                 &source,
                 &InsertPicture {
+                    size: None,
+                    layout: None,
                     image_bytes: png(1, 1),
                     placement,
                     alt_text: None,
@@ -363,6 +371,8 @@ fn deletes_a_supported_picture_and_preserves_its_media_part() {
         &main,
         &source,
         &InsertPicture {
+            size: None,
+            layout: None,
             image_bytes: png(2, 1),
             placement: ParagraphPlacement::Start,
             alt_text: None,
@@ -434,6 +444,8 @@ fn resizes_one_picture_and_preserves_the_other_picture() {
         &main,
         &source,
         &InsertPicture {
+            size: None,
+            layout: None,
             image_bytes: png(4, 2),
             placement: ParagraphPlacement::Start,
             alt_text: Some("png alt".to_owned()),
@@ -448,6 +460,8 @@ fn resizes_one_picture_and_preserves_the_other_picture() {
         &main,
         &source,
         &InsertPicture {
+            size: None,
+            layout: None,
             image_bytes: jpeg(4, 2),
             placement: ParagraphPlacement::End,
             alt_text: Some("jpeg alt".to_owned()),

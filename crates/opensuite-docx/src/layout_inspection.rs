@@ -95,6 +95,10 @@ pub struct TableLayout {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageLayout {
+    pub handle: Option<String>,
+    pub paragraph_index: Option<usize>,
+    pub aspect_ratio: Option<f64>,
+    pub anchor: Option<crate::picture::ImageAnchorFacts>,
     pub kind: &'static str,
     pub block_handle: Option<String>,
     pub section_index: Option<usize>,
@@ -462,8 +466,15 @@ fn inspect_images(
         out.diagnostic(error.code(), "image relationships could not be read");
         Vec::new()
     });
+    let paragraphs = source
+        .node_ids()
+        .filter(|id| word(source, *id, "p"))
+        .enumerate()
+        .map(|(index, id)| (id, index))
+        .collect::<HashMap<_, _>>();
     let mut assets = HashMap::new();
-    for picture in crate::picture::pictures(source) {
+    let fingerprint = crate::mutation::section_fingerprint(package, main, source).ok();
+    for (index, picture) in crate::picture::pictures(source).enumerate() {
         out.image_count += 1;
         let mut ancestor = Some(picture.source_id());
         let mut owner = None;
@@ -480,8 +491,15 @@ fn inspect_images(
             .map_err(|e| out.diagnostic(e.code(), "invalid drawing dimensions"))
             .ok()
             .flatten();
-        if picture.kind() == crate::PictureKind::Anchored {
-            out.diagnostic("UNSUPPORTED_FLOATING_OBJECT","anchored drawing dimensions are known; wrapping and final position require rendering");
+        let anchor = picture.anchor_facts();
+        if !picture.is_simple() {
+            out.diagnostic(
+                "UNSUPPORTED_DRAWING_TYPE",
+                "drawing is not a single direct image; mutations are unavailable",
+            );
+        }
+        if anchor.as_ref().is_some_and(|a| !a.editable) {
+            out.diagnostic("UNSUPPORTED_ANCHORED_IMAGE_STRUCTURE", "imported anchor facts are inspectable; unsupported positioning or wrapping remains preserved");
         }
         if let (Some(size), Some(width)) = (extent, section.and_then(|i| geometry[i].0)) {
             if i128::from(size.width_emu) > i128::from(width) * 635 {
@@ -489,6 +507,29 @@ fn inspect_images(
                     "IMAGE_WIDTH_EXCEEDS_PAGE",
                     "requested image display width exceeds usable page width",
                 );
+            }
+        }
+        if let (Some(size), Some(axis), Some(section)) = (
+            extent,
+            anchor.as_ref().and_then(|a| a.horizontal.as_ref()),
+            section,
+        ) {
+            let width = match axis.reference.as_deref() {
+                Some("margin") => geometry[section].0.map(|v| v * 635),
+                Some("page") => out
+                    .sections
+                    .iter()
+                    .find(|s| s.geometry.index as usize == section)
+                    .and_then(|s| s.geometry.page_width_twips)
+                    .map(|v| i64::from(v) * 635),
+                _ => None,
+            };
+            if axis.offset_emu.zip(width).is_some_and(|(offset, width)| {
+                offset > width
+                    || offset.saturating_add(size.width_emu) > width
+                    || (axis.reference.as_deref() == Some("page") && offset < 0)
+            }) {
+                out.diagnostic("IMAGE_POSITION_OUTSIDE_PAGE", "declared horizontal image offset/extent exceeds the reference width; final position requires rendering");
             }
         }
         if options.section_index.is_some_and(|v| Some(v) != section) {
@@ -517,7 +558,19 @@ fn inspect_images(
                     .map(|info| info.dimensions)
             })
         });
+        let mut paragraph = source.node(picture.source_id()).and_then(|n| n.parent());
+        while paragraph.is_some_and(|id| !word(source, id, "p")) {
+            paragraph = paragraph
+                .and_then(|id| source.node(id))
+                .and_then(|n| n.parent());
+        }
         out.images.push(ImageLayout {
+            handle: fingerprint.map(|v| format!("d{index}:{v:016x}")),
+            paragraph_index: paragraph.and_then(|id| paragraphs.get(&id).copied()),
+            aspect_ratio: extent
+                .filter(|v| v.height_emu > 0)
+                .map(|v| v.width_emu as f64 / v.height_emu as f64),
+            anchor,
             kind: if picture.kind() == crate::PictureKind::Inline {
                 "inline"
             } else {

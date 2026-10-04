@@ -511,6 +511,20 @@ pub(crate) fn picture_source_for_handle(
     source: &SourceDocument,
     handle: &str,
 ) -> Option<crate::NodeId> {
+    if let Some(value) = handle.strip_prefix('d') {
+        let (index, stamp) = value.split_once(':')?;
+        if stamp
+            != format!(
+                "{:016x}",
+                crate::mutation::section_fingerprint(package, main, source).ok()?
+            )
+        {
+            return None;
+        }
+        return crate::picture::pictures(source)
+            .nth(index.parse().ok()?)
+            .map(|p| p.source_id());
+    }
     let index = handle.strip_prefix('p')?.parse::<usize>().ok()?;
     let document = DocxDocument::new(source).ok()?;
     source
@@ -794,6 +808,8 @@ mod tests {
             &main,
             &source,
             &opensuite_protocol::InsertPicture {
+                size: None,
+                layout: None,
                 image_bytes: png(),
                 placement: opensuite_protocol::ParagraphPlacement::Start,
                 alt_text: Some("diagram".to_owned()),

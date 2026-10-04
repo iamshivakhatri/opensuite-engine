@@ -3,11 +3,13 @@ use napi::{Env, Result};
 use napi_derive::napi;
 use opensuite_docx::{
     DocxExecutionResult, execute_docx_delete_picture, execute_docx_insert_picture,
-    execute_docx_replace_picture, execute_docx_set_picture_size,
+    execute_docx_replace_picture, execute_docx_set_picture_layout, execute_docx_set_picture_size,
 };
 use opensuite_protocol::{
-    DeletePicture, ImagePayload, InsertPicture, OperationResult, ParagraphPlacement,
-    PictureSizeChange, PictureTarget, ReplacePicture, SetPictureSize,
+    DeletePicture, ImageAlignment, ImageAxisPosition, ImagePayload, ImagePosition,
+    ImagePositionReference, ImageTextDistance, ImageWrap, InsertPicture, OperationResult,
+    ParagraphPlacement, PictureLayoutPatch, PictureSizeChange, PictureTarget, ReplacePicture,
+    SetPictureLayout, SetPictureSize,
 };
 
 use crate::{
@@ -16,6 +18,9 @@ use crate::{
 
 #[napi(object)]
 pub struct InsertPictureInput {
+    pub width_emu: Option<i64>,
+    pub height_emu: Option<i64>,
+    pub layout: Option<PictureLayoutInput>,
     pub image_bytes: Buffer,
     pub placement: ParagraphPlacementInput,
     pub alt_text: Option<String>,
@@ -51,11 +56,15 @@ pub fn execute_docx_insert_picture_node(
 ) -> AsyncTask<PictureTask<InsertPicture>> {
     PictureTask::new(
         input,
-        picture_placement(operation.placement).map(|placement| InsertPicture {
-            image_bytes: operation.image_bytes.to_vec(),
-            placement,
-            alt_text: operation.alt_text,
-            base_revision: operation.base_revision,
+        picture_placement(operation.placement).and_then(|placement| {
+            Ok(InsertPicture {
+                size: optional_picture_size(operation.width_emu, operation.height_emu)?,
+                layout: operation.layout.map(layout_patch).transpose()?,
+                image_bytes: operation.image_bytes.to_vec(),
+                placement,
+                alt_text: operation.alt_text,
+                base_revision: operation.base_revision,
+            })
         }),
         execute_docx_insert_picture,
     )
@@ -187,6 +196,110 @@ fn picture_size(
     match (width_emu, height_emu) {
         (Some(width), None) => Ok(PictureSizeChange::WidthEmu(width)),
         (None, Some(height)) => Ok(PictureSizeChange::HeightEmu(height)),
-        _ => Err("picture size requires exactly one dimension"),
+        (Some(width), Some(height)) => Ok(PictureSizeChange::ExactEmu { width, height }),
+        _ => Err("picture size requires at least one dimension"),
     }
+}
+
+fn optional_picture_size(
+    width: Option<i64>,
+    height: Option<i64>,
+) -> std::result::Result<Option<PictureSizeChange>, &'static str> {
+    if width.is_none() && height.is_none() {
+        Ok(None)
+    } else {
+        picture_size(width, height).map(Some)
+    }
+}
+#[napi(object)]
+pub struct ImagePositionInput {
+    pub reference: String,
+    /// start/end mean left/right horizontally, top/bottom vertically.
+    pub alignment: Option<String>,
+    pub offset_emu: Option<i64>,
+}
+#[napi(object)]
+pub struct ImageDistanceInput {
+    pub top_emu: Option<i64>,
+    pub bottom_emu: Option<i64>,
+    pub left_emu: Option<i64>,
+    pub right_emu: Option<i64>,
+}
+#[napi(object)]
+pub struct PictureLayoutInput {
+    pub horizontal: Option<ImagePositionInput>,
+    pub vertical: Option<ImagePositionInput>,
+    pub wrap: Option<String>,
+    pub distance: Option<ImageDistanceInput>,
+}
+#[napi(object)]
+pub struct SetPictureLayoutInput {
+    pub handle: String,
+    pub layout: PictureLayoutInput,
+    pub base_revision: Option<String>,
+}
+fn axis(input: ImagePositionInput) -> std::result::Result<ImageAxisPosition, &'static str> {
+    let reference = match input.reference.as_str() {
+        "page" => ImagePositionReference::Page,
+        "margin" => ImagePositionReference::Margin,
+        "column" => ImagePositionReference::Column,
+        "paragraph" => ImagePositionReference::Paragraph,
+        _ => return Err("unsupported image position reference"),
+    };
+    let position = match (input.alignment.as_deref(), input.offset_emu) {
+        (Some(value), None) => ImagePosition::Align(match value {
+            "start" => ImageAlignment::Start,
+            "center" => ImageAlignment::Center,
+            "end" => ImageAlignment::End,
+            _ => return Err("alignment must be start/center/end"),
+        }),
+        (None, Some(value)) => ImagePosition::OffsetEmu(value),
+        _ => return Err("image position requires exactly one of alignment or offsetEmu"),
+    };
+    Ok(ImageAxisPosition {
+        reference,
+        position,
+    })
+}
+fn layout_patch(
+    input: PictureLayoutInput,
+) -> std::result::Result<PictureLayoutPatch, &'static str> {
+    Ok(PictureLayoutPatch {
+        horizontal: input.horizontal.map(axis).transpose()?,
+        vertical: input.vertical.map(axis).transpose()?,
+        wrap: input
+            .wrap
+            .map(|v| match v.as_str() {
+                "square" => Ok(ImageWrap::Square),
+                "topAndBottom" => Ok(ImageWrap::TopAndBottom),
+                "behindText" => Ok(ImageWrap::BehindText),
+                "inFrontOfText" => Ok(ImageWrap::InFrontOfText),
+                _ => Err("unsupported image wrap mode"),
+            })
+            .transpose()?,
+        distance: input
+            .distance
+            .map(|v| ImageTextDistance {
+                top_emu: v.top_emu,
+                bottom_emu: v.bottom_emu,
+                left_emu: v.left_emu,
+                right_emu: v.right_emu,
+            })
+            .unwrap_or_default(),
+    })
+}
+#[napi(js_name = "executeDocxSetPictureLayout")]
+pub fn set_picture_layout(
+    input: Buffer,
+    operation: SetPictureLayoutInput,
+) -> AsyncTask<PictureTask<SetPictureLayout>> {
+    PictureTask::new(
+        input,
+        layout_patch(operation.layout).map(|layout| SetPictureLayout {
+            target: picture_target(operation.handle),
+            layout,
+            base_revision: operation.base_revision,
+        }),
+        execute_docx_set_picture_layout,
+    )
 }

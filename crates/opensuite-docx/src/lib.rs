@@ -34,12 +34,12 @@ pub use execution::{
     execute_docx_set_hyperlink, execute_docx_set_odd_even_headers, execute_docx_set_page_number,
     execute_docx_set_page_setup, execute_docx_set_paragraph_formatting,
     execute_docx_set_paragraph_style, execute_docx_set_paragraphs_list,
-    execute_docx_set_picture_size, execute_docx_set_section_header_footer,
-    execute_docx_set_section_properties, execute_docx_set_table_cell_shading,
-    execute_docx_set_table_cells_formatting, execute_docx_set_table_cells_text,
-    execute_docx_set_table_column_widths, execute_docx_set_table_formatting,
-    execute_docx_set_text_formatting, execute_docx_update_style, find_docx_text, inspect_docx,
-    inspect_docx_context, inspect_docx_sections,
+    execute_docx_set_picture_layout, execute_docx_set_picture_size,
+    execute_docx_set_section_header_footer, execute_docx_set_section_properties,
+    execute_docx_set_table_cell_shading, execute_docx_set_table_cells_formatting,
+    execute_docx_set_table_cells_text, execute_docx_set_table_column_widths,
+    execute_docx_set_table_formatting, execute_docx_set_text_formatting, execute_docx_update_style,
+    find_docx_text, inspect_docx, inspect_docx_context, inspect_docx_sections,
 };
 pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
 pub use header_footer::{
@@ -66,18 +66,20 @@ pub use mutation::{
     set_header_footer_text_to_vec, set_hyperlink_to_vec, set_odd_even_headers_to_vec,
     set_page_number, set_page_number_to_vec, set_page_setup, set_page_setup_to_vec,
     set_paragraph_formatting, set_paragraph_formatting_to_vec, set_paragraph_style,
-    set_paragraph_style_to_vec, set_paragraphs_list, set_paragraphs_list_to_vec, set_picture_size,
-    set_picture_size_to_vec, set_section_header_footer_to_vec, set_section_properties_to_vec,
-    set_table_cell_shading_to_vec, set_table_cell_text, set_table_cells_formatting_to_vec,
-    set_table_cells_text_to_vec, set_table_column_widths_to_vec, set_table_formatting_to_vec,
-    set_text_formatting, set_text_formatting_to_vec, update_style_to_vec,
+    set_paragraph_style_to_vec, set_paragraphs_list, set_paragraphs_list_to_vec,
+    set_picture_layout_to_vec, set_picture_size, set_picture_size_to_vec,
+    set_section_header_footer_to_vec, set_section_properties_to_vec, set_table_cell_shading_to_vec,
+    set_table_cell_text, set_table_cells_formatting_to_vec, set_table_cells_text_to_vec,
+    set_table_column_widths_to_vec, set_table_formatting_to_vec, set_text_formatting,
+    set_text_formatting_to_vec, update_style_to_vec,
 };
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
     NumberingInstance, NumberingLevel, load_numbering,
 };
 pub use picture::{
-    ImagePart, ImageReference, Picture, PictureError, PictureExtent, PictureKind, PictureMetadata,
+    ImageAnchorFacts, ImagePart, ImagePositionFacts, ImageReference, Picture, PictureError,
+    PictureExtent, PictureKind, PictureMetadata,
 };
 pub use references::{Bookmark, BookmarkId, Hyperlink, HyperlinkTarget, ReferenceError};
 pub use section::{

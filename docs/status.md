@@ -46,6 +46,12 @@ not started.
   Semantic edit failures now report bounded ambiguity candidates, failed row or
   column selectors, unsafe-source reasons, and the failing atomic update index.
 
+- Supports typed inline/floating image insertion, exact or proportional sizing, and
+  source-local floating layout updates. Square/top-and-bottom/behind/front wrapping;
+  page/margin/column horizontal and page/margin/paragraph vertical references.
+  Layout inspection returns fresh image handles, anchor facts, ownership, and width/position
+  diagnostics. Replacement preserves layout and rejects assets shared across document parts.
+  See [E1 image layout](e1-image-layout.md) for supported and deferred cases.
 - Provides bounded, read-only structural layout snapshots: section geometry and
   block ownership, effective paragraph controls, table row/width inputs, and image
   dimensions with safe width diagnostics. See [E1 layout inspection](e1-layout-inspection.md).
@@ -58,7 +64,7 @@ bounded style and layout snapshots,
 text search, text replacement, paragraph insertion/deletion/style/formatting,
 text formatting, table operations, page breaks, page setup, default
 headers/footers, page numbers, section inspection/editing/linkage, lists, hyperlinks, and picture insertion,
-deletion, resizing, replacement, and targeting inspection, plus simple
+deletion, resizing, floating layout updates, replacement, and targeting inspection, plus simple
 content-control text updates. DOCX mutation capabilities are Node-exposed.
 
 ## Immediate Direction
