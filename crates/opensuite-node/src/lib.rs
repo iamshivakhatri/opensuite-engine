@@ -1,3 +1,5 @@
+mod comments;
+pub use comments::{add_comment, delete_comment, inspect_comments, update_comment};
 mod layout;
 pub use layout::inspect_layout;
 mod styles;
@@ -555,6 +557,10 @@ fn node_docx_capability(capability: &str) -> bool {
         capability,
         "inspect"
             | "style_snapshot"
+            | "inspect_comments"
+            | "add_comment"
+            | "update_comment"
+            | "delete_comment"
             | "replace_text"
             | "create_blank_docx"
             | "body_blocks"

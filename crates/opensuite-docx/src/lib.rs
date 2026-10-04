@@ -23,9 +23,10 @@ mod tracked_change;
 
 pub use blank::create_blank_docx;
 pub use execution::{
-    DocxExecutionResult, execute_docx_create_style, execute_docx_create_table,
-    execute_docx_delete_page_break, execute_docx_delete_paragraph, execute_docx_delete_picture,
-    execute_docx_delete_table, execute_docx_delete_table_column, execute_docx_delete_table_row,
+    DocxExecutionResult, execute_docx_add_comment, execute_docx_create_style,
+    execute_docx_create_table, execute_docx_delete_comment, execute_docx_delete_page_break,
+    execute_docx_delete_paragraph, execute_docx_delete_picture, execute_docx_delete_table,
+    execute_docx_delete_table_column, execute_docx_delete_table_row,
     execute_docx_insert_page_break, execute_docx_insert_paragraph, execute_docx_insert_paragraphs,
     execute_docx_insert_picture, execute_docx_insert_section_break,
     execute_docx_insert_table_column, execute_docx_insert_table_row,
@@ -38,8 +39,9 @@ pub use execution::{
     execute_docx_set_section_header_footer, execute_docx_set_section_properties,
     execute_docx_set_table_cell_shading, execute_docx_set_table_cells_formatting,
     execute_docx_set_table_cells_text, execute_docx_set_table_column_widths,
-    execute_docx_set_table_formatting, execute_docx_set_text_formatting, execute_docx_update_style,
-    find_docx_text, inspect_docx, inspect_docx_context, inspect_docx_sections,
+    execute_docx_set_table_formatting, execute_docx_set_text_formatting,
+    execute_docx_update_comment, execute_docx_update_style, find_docx_text, inspect_docx,
+    inspect_docx_context, inspect_docx_sections,
 };
 pub use field::{Field, FieldError, FieldKind, FieldSet, FieldState};
 pub use header_footer::{
@@ -73,6 +75,7 @@ pub use mutation::{
     set_table_column_widths_to_vec, set_table_formatting_to_vec, set_text_formatting,
     set_text_formatting_to_vec, update_style_to_vec,
 };
+pub use mutation::{add_comment_to_vec, delete_comment_to_vec, update_comment_to_vec};
 pub use numbering::{
     AbstractNumberingId, ListReference, NumberFormat, Numbering, NumberingError, NumberingId,
     NumberingInstance, NumberingLevel, load_numbering,
@@ -120,6 +123,7 @@ pub fn open_main_source(package: &Package) -> Result<(Part, SourceDocument), Sou
     Ok((part, source))
 }
 pub use comment::{Comment, CommentError, CommentIssue, CommentMetadata, CommentSet};
+pub use comment::{CommentInspection, CommentSummary, inspect_docx_comments};
 pub use content_control::{
     ContentControl, ContentControlKind, ContentControlListItem, ContentControlProperties,
     DataBinding, DateMetadata,

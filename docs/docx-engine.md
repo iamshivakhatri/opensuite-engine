@@ -35,6 +35,13 @@ does not aim to reproduce every Microsoft Word feature.
   independent section page setup, first-page behavior, numbering restart/continue,
   default/first/even simple headers/footers and PAGE fields, and link/unlink.
   Odd/even headers are explicitly document-wide. See [E1 details](e1-sections.md).
+- Standard comment inspection with bounded paging, metadata, attached text,
+  paragraph locations, and malformed/orphan diagnostics. Add comments to exact
+  text across simple direct runs in one body paragraph; update plain comment
+  text and delete matching records/markers through fresh source-stamped handles.
+  Creates missing comments package pieces and preserves unrelated comments/parts.
+  Threaded metadata, replies/resolve, rich-content editing, field/wrapper/revision
+  selections, and cross-paragraph authoring remain unsupported.
 - Reopen and semantic postcondition verification for mutations, while untouched
   package content remains preserved where practical.
 
@@ -44,7 +51,7 @@ Capability details are kept in [status.md](status.md).
 ## Add Only When Benchmarks Need It
 
 - Long-document structure: table of contents, bookmarks, and cross-references.
-- Review workflow: simple comments and safe accept/reject of revisions.
+- Review workflow: safe accept/reject of revisions.
 - Footnotes/endnotes.
 - Other page, header/footer, section, field, or layout features demonstrated as
   necessary by the benchmark documents.

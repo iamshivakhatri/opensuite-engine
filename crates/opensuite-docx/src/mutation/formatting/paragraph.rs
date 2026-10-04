@@ -597,48 +597,6 @@ pub(super) fn compound_property(
     Ok(())
 }
 
-pub(crate) fn ppr_insertion(
-    source: &SourceDocument,
-    ppr: NodeId,
-    replacement: Vec<u8>,
-) -> Result<Patch, OperationResult> {
-    let SourceNodeKind::Element {
-        start_tag, end_tag, ..
-    } = source.node(ppr).expect("node").kind()
-    else {
-        return Err(unsupported("paragraph properties have no source tag"));
-    };
-    if let Some(end) = end_tag {
-        return Ok(Patch {
-            span: SourceSpan {
-                start: end.start,
-                end: end.start,
-            },
-            replacement,
-        });
-    }
-    let tag = std::str::from_utf8(&source.original_bytes()[start_tag.start..start_tag.end])
-        .map_err(|_| unsupported("paragraph properties tag is not UTF-8"))?;
-    let name = tag
-        .trim_start_matches('<')
-        .split(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
-        .next()
-        .ok_or_else(|| unsupported("paragraph properties tag is invalid"))?;
-    let offset = tag
-        .rfind("/>")
-        .ok_or_else(|| unsupported("paragraph properties cannot receive insertion"))?;
-    let mut value = b">".to_vec();
-    value.extend(replacement);
-    value.extend(format!("</{name}>").bytes());
-    Ok(Patch {
-        span: SourceSpan {
-            start: start_tag.start + offset,
-            end: start_tag.end,
-        },
-        replacement: value,
-    })
-}
-
 pub(super) fn verify_formatting_output(
     output: &Path,
     target: &TextTarget,

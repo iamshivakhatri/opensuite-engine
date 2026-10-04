@@ -213,3 +213,17 @@ export interface LayoutOptions { blockOffset?: number; blockLimit?: number; sect
 export function inspectDocxLayout(input: Buffer, options?: LayoutOptions): Promise<string>
 
 export function executeDocxSetPictureLayout(input: Buffer, operation: SetPictureLayoutInput): Promise<ExecuteDocxResult>
+
+/** Standard comments only; no replies or resolved state. */
+export interface CommentInspectionOptions { offset?: number; limit?: number }
+export interface CommentSummary {
+  id: string | null; handle: string | null; author: string | null; initials: string | null; date: string | null;
+  text: string; anchoredText: string | null; paragraphIndex: number | null; endParagraphIndex: number | null;
+  hasRange: boolean; hasReference: boolean; structure: 'range' | 'point' | 'orphaned' | 'malformed'; truncated: boolean;
+}
+export interface CommentInspection { ok: boolean; comments: CommentSummary[]; total: number; offset: number; hasMore: boolean; diagnostics: Array<{code: string; message: string}> }
+export interface AddCommentInput { target: TextTarget; text: string; author: string; initials?: string; date: string }
+export function inspectDocxComments(input: Buffer, options?: CommentInspectionOptions): Promise<string>
+export function executeDocxAddComment(input: Buffer, operation: AddCommentInput): Promise<ExecuteDocxResult>
+export function executeDocxUpdateComment(input: Buffer, operation: {handle: string; text: string}): Promise<ExecuteDocxResult>
+export function executeDocxDeleteComment(input: Buffer, operation: {handle: string}): Promise<ExecuteDocxResult>

@@ -52,6 +52,15 @@ not started.
   Layout inspection returns fresh image handles, anchor facts, ownership, and width/position
   diagnostics. Replacement preserves layout and rejects assets shared across document parts.
   See [E1 image layout](e1-image-layout.md) for supported and deferred cases.
+- Inspects standard Word comments with bounded text, attached text, source-order
+  paragraph locations, metadata, marker diagnostics, and fresh handles. Adds
+  comments to exact selections across simple runs in one body paragraph; edits
+  plain comment text and safely deletes records/markers without deleting document
+  text. First-comment creation adds the part, relationship, and content type.
+  Untouched comments and package payloads remain source-backed. Cross-paragraph
+  authoring, fields/wrappers/revisions, rich comment editing, replies, resolved
+  state, and mutation of threaded-comment metadata are deferred. Rust/N-API takes
+  explicit author and UTC ISO date; engine-client supplies current UTC if omitted.
 - Provides bounded, read-only structural layout snapshots: section geometry and
   block ownership, effective paragraph controls, table row/width inputs, and image
   dimensions with safe width diagnostics. See [E1 layout inspection](e1-layout-inspection.md).
@@ -64,8 +73,8 @@ bounded style and layout snapshots,
 text search, text replacement, paragraph insertion/deletion/style/formatting,
 text formatting, table operations, page breaks, page setup, default
 headers/footers, page numbers, section inspection/editing/linkage, lists, hyperlinks, and picture insertion,
-deletion, resizing, floating layout updates, replacement, and targeting inspection, plus simple
-content-control text updates. DOCX mutation capabilities are Node-exposed.
+deletion, resizing, floating layout updates, replacement, and targeting inspection, plus
+standard comment inspection/add/update/delete and simple content-control text updates. DOCX mutation capabilities are Node-exposed.
 
 ## Immediate Direction
 

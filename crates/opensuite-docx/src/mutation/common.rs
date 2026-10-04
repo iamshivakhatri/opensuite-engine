@@ -332,3 +332,45 @@ pub(super) fn document_invalid(error: impl std::fmt::Display) -> OperationResult
 pub(super) fn word(source: &SourceDocument, id: NodeId, local_name: &str) -> bool {
     matches!(source.node(id).map(|node| node.kind()), Some(SourceNodeKind::Element { name, .. }) if name.local_name() == local_name && name.namespace_uri().is_some_and(|uri| NS.contains(&uri)))
 }
+
+pub(super) fn element_insertion(
+    source: &SourceDocument,
+    element: NodeId,
+    replacement: Vec<u8>,
+) -> Result<Patch, OperationResult> {
+    let SourceNodeKind::Element {
+        start_tag, end_tag, ..
+    } = source.node(element).expect("node").kind()
+    else {
+        return Err(unsupported("element has no source tag"));
+    };
+    if let Some(end) = end_tag {
+        return Ok(Patch {
+            span: SourceSpan {
+                start: end.start,
+                end: end.start,
+            },
+            replacement,
+        });
+    }
+    let tag = std::str::from_utf8(&source.original_bytes()[start_tag.start..start_tag.end])
+        .map_err(|_| unsupported("element tag is not UTF-8"))?;
+    let name = tag
+        .trim_start_matches('<')
+        .split(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+        .next()
+        .ok_or_else(|| unsupported("element tag is invalid"))?;
+    let offset = tag
+        .rfind("/>")
+        .ok_or_else(|| unsupported("element cannot receive insertion"))?;
+    let mut value = b">".to_vec();
+    value.extend(replacement);
+    value.extend(format!("</{name}>").bytes());
+    Ok(Patch {
+        span: SourceSpan {
+            start: start_tag.start + offset,
+            end: start_tag.end,
+        },
+        replacement: value,
+    })
+}

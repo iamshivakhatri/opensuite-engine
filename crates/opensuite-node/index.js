@@ -745,3 +745,7 @@ module.exports.executeDocxCreateStyle = nativeBinding.executeDocxCreateStyle
 module.exports.executeDocxUpdateStyle = nativeBinding.executeDocxUpdateStyle
 module.exports.inspectDocxLayout = nativeBinding.inspectDocxLayout
 module.exports.executeDocxSetPictureLayout = nativeBinding.executeDocxSetPictureLayout
+module.exports.inspectDocxComments = nativeBinding.inspectDocxComments
+module.exports.executeDocxAddComment = nativeBinding.executeDocxAddComment
+module.exports.executeDocxUpdateComment = nativeBinding.executeDocxUpdateComment
+module.exports.executeDocxDeleteComment = nativeBinding.executeDocxDeleteComment

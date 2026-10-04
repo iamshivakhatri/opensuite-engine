@@ -434,6 +434,26 @@ macro_rules! execute_paragraph_mutation {
         }
     };
 }
+use crate::{add_comment_to_vec, delete_comment_to_vec, update_comment_to_vec};
+use opensuite_protocol::{AddComment, DeleteComment, UpdateComment};
+execute_paragraph_mutation!(
+    execute_docx_add_comment,
+    AddComment,
+    add_comment_to_vec,
+    "add_comment"
+);
+execute_paragraph_mutation!(
+    execute_docx_update_comment,
+    UpdateComment,
+    update_comment_to_vec,
+    "update_comment"
+);
+execute_paragraph_mutation!(
+    execute_docx_delete_comment,
+    DeleteComment,
+    delete_comment_to_vec,
+    "delete_comment"
+);
 execute_paragraph_mutation!(
     execute_docx_create_style,
     CreateStyle,

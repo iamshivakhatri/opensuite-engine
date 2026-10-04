@@ -208,6 +208,7 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   const capabilities = getDocxCapabilities()
   assert.equal(capabilities.ok, true)
   assert.equal(capabilities.formats[0].format, 'docx')
+  for (const name of ['inspect_comments', 'add_comment', 'update_comment', 'delete_comment']) assert.ok(capabilities.formats[0].capabilities.includes(name))
   assert.ok(capabilities.formats[0].capabilities.includes('create_style'))
   assert.ok(capabilities.formats[0].capabilities.includes('update_style'))
   assert.ok(capabilities.formats[0].capabilities.includes('find_text'))

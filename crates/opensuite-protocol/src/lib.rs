@@ -100,6 +100,10 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "content_controls",
     "tracked_changes",
     "comments",
+    "inspect_comments",
+    "add_comment",
+    "update_comment",
+    "delete_comment",
     "revision_views",
     "replace_text",
     "create_blank_docx",
@@ -687,6 +691,28 @@ pub struct SetHyperlink {
     pub target: TextTarget,
     pub url: Option<String>,
     pub base_revision: Option<String>,
+}
+
+/// A standard Word comment on an existing exact text selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddComment {
+    pub target: TextTarget,
+    pub text: String,
+    pub author: String,
+    pub initials: Option<String>,
+    /// ISO 8601 date supplied by the caller; no implicit identity or clock in Rust.
+    pub date: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpdateComment {
+    pub handle: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeleteComment {
+    pub handle: String,
 }
 
 /// Supported Word style types; defaults are intentionally not writable.
@@ -1761,7 +1787,7 @@ mod tests {
 
         assert_eq!(
             json.replace("\"style_snapshot\",", ""),
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","layout_snapshot","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","create_style","update_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","set_picture_layout","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","inspect_comments","add_comment","update_comment","delete_comment","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","layout_snapshot","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","create_style","update_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","set_picture_layout","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(json.contains("style_snapshot"));
         assert!(!json.contains("mutation"));

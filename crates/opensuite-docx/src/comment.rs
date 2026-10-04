@@ -11,28 +11,32 @@ const NS: [&str; 2] = [
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
     "http://purl.oclc.org/ooxml/wordprocessingml/main",
 ];
-const REL: [&str; 2] = [
+pub(crate) const CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+pub(crate) const REL: [&str; 2] = [
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
     "http://purl.oclc.org/ooxml/officeDocument/relationships/comments",
 ];
 
 /// Read-only comments loaded from the main document's comments relationship.
 pub struct CommentSet {
-    source: Option<SourceDocument>,
-    comments: Vec<CommentData>,
+    pub(crate) source: Option<SourceDocument>,
+    pub(crate) part: Option<Part>,
+    pub(crate) has_threaded_metadata: bool,
+    pub(crate) comments: Vec<CommentData>,
     errors: Vec<CommentIssue>,
 }
 
-struct CommentData {
-    source_id: NodeId,
-    id: Option<String>,
+pub(crate) struct CommentData {
+    pub(crate) source_id: NodeId,
+    pub(crate) id: Option<String>,
     author: Option<String>,
     initials: Option<String>,
     date: Option<String>,
-    range_start: Option<NodeId>,
-    range_end: Option<NodeId>,
+    pub(crate) range_start: Option<NodeId>,
+    pub(crate) range_end: Option<NodeId>,
     complete_range: bool,
-    reference: Option<NodeId>,
+    pub(crate) reference: Option<NodeId>,
 }
 
 /// A source-backed standard Word comment.
@@ -74,6 +78,34 @@ impl Comment<'_> {
         Ok(paragraphs.join("\n"))
     }
 
+    /// Attached standard text, using the same decoded text values as document inspection.
+    pub(crate) fn anchored_text(
+        &self,
+        document: &SourceDocument,
+    ) -> Result<Option<String>, SemanticError> {
+        if !self.data.complete_range {
+            return Ok(None);
+        }
+        let start = document
+            .node(self.data.range_start.unwrap())
+            .unwrap()
+            .span()
+            .end;
+        let end = document
+            .node(self.data.range_end.unwrap())
+            .unwrap()
+            .span()
+            .start;
+        let mut text = String::new();
+        for id in document.node_ids().filter(|id| word(document, *id, "t")) {
+            let span = document.node(id).unwrap().span();
+            if span.start >= start && span.end <= end {
+                text.push_str(&crate::semantic::text_value(document, id)?);
+            }
+        }
+        Ok(Some(text))
+    }
+
     /// True only when both document range markers were found.
     pub fn has_range(&self) -> bool {
         self.data.complete_range
@@ -102,9 +134,24 @@ pub enum CommentIssue {
     DuplicateRangeEnd(String),
     UnmatchedRangeEnd(String),
     DuplicateReference(String),
+    InvalidReference(String),
 }
 
 impl CommentIssue {
+    fn comment_id(&self) -> Option<&str> {
+        match self {
+            Self::MissingCommentId => None,
+            Self::DuplicateCommentId(id)
+            | Self::MissingCommentEntry(id)
+            | Self::DuplicateRangeStart(id)
+            | Self::UnmatchedRangeStart(id)
+            | Self::DuplicateRangeEnd(id)
+            | Self::UnmatchedRangeEnd(id)
+            | Self::DuplicateReference(id)
+            | Self::InvalidReference(id) => Some(id),
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::MissingCommentId => "MISSING_COMMENT_ID",
@@ -115,6 +162,7 @@ impl CommentIssue {
             Self::DuplicateRangeEnd(_) => "DUPLICATE_COMMENT_RANGE_END",
             Self::UnmatchedRangeEnd(_) => "UNMATCHED_COMMENT_RANGE_END",
             Self::DuplicateReference(_) => "DUPLICATE_COMMENT_REFERENCE",
+            Self::InvalidReference(_) => "INVALID_COMMENT_REFERENCE",
         }
     }
 }
@@ -126,19 +174,32 @@ pub(crate) fn load(
 ) -> Result<CommentSet, CommentError> {
     let relationships = match package.part_relationships(main) {
         Ok(relationships) => relationships,
-        Err(PackageError::MissingPartRelationships(_)) => return Ok(empty()),
+        Err(PackageError::MissingPartRelationships(_)) => return Ok(empty_for(document_source)),
         Err(error) => return Err(CommentError::Package(error)),
     };
-    let Some(relationship) = relationships
+    let has_threaded_metadata = relationships.iter().any(|r| {
+        ["commentsExtended", "commentsIds", "commentsExtensible"]
+            .iter()
+            .any(|suffix| r.relationship_type.as_str().ends_with(suffix))
+    });
+    let mut comment_relationships = relationships
         .into_iter()
-        .find(|relationship| REL.contains(&relationship.relationship_type.as_str()))
-    else {
-        return Ok(empty());
+        .filter(|r| REL.contains(&r.relationship_type.as_str()));
+    let Some(relationship) = comment_relationships.next() else {
+        let mut empty = empty_for(document_source);
+        empty.has_threaded_metadata = has_threaded_metadata;
+        return Ok(empty);
     };
+    if comment_relationships.next().is_some() {
+        return Err(CommentError::AmbiguousCommentsPart);
+    }
     let RelationshipTarget::Internal { part_name, .. } = relationship.target else {
         return Err(CommentError::ExternalCommentsPart);
     };
     let part = package.part(&part_name).map_err(CommentError::Package)?;
+    if part.content_type.as_str() != CONTENT_TYPE {
+        return Err(CommentError::InvalidCommentsPart);
+    }
     let source = SourceDocument::parse(package.read_part(&part).map_err(CommentError::Package)?)
         .map_err(CommentError::Source)?;
     if !word(&source, source.root(), "comments") {
@@ -231,6 +292,23 @@ pub(crate) fn load(
         errors.push(CommentIssue::UnmatchedRangeStart(id));
     }
 
+    for comment in &comments {
+        if let Some(reference) = comment.reference {
+            if !document_source
+                .node(reference)
+                .and_then(|n| n.parent())
+                .is_some_and(|id| word(document_source, id, "r"))
+                || comment.range_end.is_some_and(|end| {
+                    document_source.node(end).unwrap().span().end
+                        > document_source.node(reference).unwrap().span().start
+                })
+            {
+                errors.push(CommentIssue::InvalidReference(
+                    comment.id.clone().unwrap_or_default(),
+                ));
+            }
+        }
+    }
     comments.sort_by_key(|comment| {
         comment
             .range_start
@@ -240,16 +318,30 @@ pub(crate) fn load(
     });
     Ok(CommentSet {
         source: Some(source),
+        part: Some(part),
+        has_threaded_metadata,
         comments,
         errors,
     })
 }
 
-fn empty() -> CommentSet {
+fn empty_for(document_source: &SourceDocument) -> CommentSet {
     CommentSet {
         source: None,
+        part: None,
+        has_threaded_metadata: false,
         comments: Vec::new(),
-        errors: Vec::new(),
+        errors: document_source
+            .node_ids()
+            .filter(|id| marker_kind(document_source, *id).is_some())
+            .map(|id| {
+                document_source
+                    .node(id)
+                    .and_then(|n| n.attribute("id"))
+                    .map(|id| CommentIssue::MissingCommentEntry(id.to_owned()))
+                    .unwrap_or(CommentIssue::MissingCommentId)
+            })
+            .collect(),
     }
 }
 
@@ -315,6 +407,8 @@ pub enum CommentError {
     InvalidCommentsRoot,
     MalformedComments,
     ExternalCommentsPart,
+    AmbiguousCommentsPart,
+    InvalidCommentsPart,
 }
 
 impl CommentError {
@@ -325,6 +419,9 @@ impl CommentError {
             Self::InvalidCommentsRoot => "INVALID_COMMENTS_ROOT",
             Self::MalformedComments => "MALFORMED_COMMENTS",
             Self::ExternalCommentsPart => "EXTERNAL_COMMENTS_PART",
+            Self::AmbiguousCommentsPart | Self::InvalidCommentsPart => {
+                "MALFORMED_COMMENT_STRUCTURE"
+            }
         }
     }
 }
@@ -407,4 +504,161 @@ mod tests {
         assert_eq!(comments.comments().count(), 0);
         assert_eq!(comments.errors().count(), 0);
     }
+}
+
+/// Bounded standard-comment inspection. Missing anchors remain visible as diagnostics.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentInspection {
+    pub ok: bool,
+    pub comments: Vec<CommentSummary>,
+    pub total: usize,
+    pub offset: usize,
+    pub has_more: bool,
+    pub diagnostics: Vec<crate::style_inspection::StyleInspectionDiagnostic>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentSummary {
+    pub id: Option<String>,
+    pub handle: Option<String>,
+    pub author: Option<String>,
+    pub initials: Option<String>,
+    pub date: Option<String>,
+    pub text: String,
+    pub anchored_text: Option<String>,
+    /// Source-order paragraph indexes, including paragraphs in tables.
+    pub paragraph_index: Option<usize>,
+    pub end_paragraph_index: Option<usize>,
+    pub has_range: bool,
+    pub has_reference: bool,
+    pub structure: &'static str,
+    pub truncated: bool,
+}
+
+pub(crate) fn comment_stamp(source: &SourceDocument, comments: &CommentSet) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for bytes in [
+        source.original_bytes(),
+        comments
+            .source
+            .as_ref()
+            .map_or(&[][..], SourceDocument::original_bytes),
+    ] {
+        for byte in bytes {
+            hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("{hash:016x}")
+}
+
+fn bounded(text: String) -> (String, bool) {
+    let truncated = text.chars().count() > 2_000;
+    (text.chars().take(2_000).collect(), truncated)
+}
+
+pub fn inspect_docx_comments(input: Vec<u8>, offset: usize, limit: usize) -> CommentInspection {
+    let mut result = CommentInspection {
+        ok: true,
+        comments: Vec::new(),
+        total: 0,
+        offset,
+        has_more: false,
+        diagnostics: Vec::new(),
+    };
+    let read = || -> Result<_, String> {
+        let package = Package::from_bytes(input).map_err(|e| e.code().to_owned())?;
+        let (main, source) = crate::open_main_source(&package).map_err(|e| e.code().to_owned())?;
+        let comments = load(&package, &main, &source).map_err(|e| e.code().to_owned())?;
+        Ok((source, comments))
+    };
+    let (source, comments) = match read() {
+        Ok(value) => value,
+        Err(code) => {
+            result.ok = false;
+            result
+                .diagnostics
+                .push(crate::style_inspection::StyleInspectionDiagnostic {
+                    code,
+                    message: "could not inspect comments".into(),
+                });
+            return result;
+        }
+    };
+    result.total = comments.comments.len();
+    let stamp = comment_stamp(&source, &comments);
+    let paragraphs: Vec<_> = source
+        .node_ids()
+        .filter(|id| word(&source, *id, "p"))
+        .collect();
+    let paragraph_index = |id: Option<NodeId>| {
+        let span = source.node(id?)?.span();
+        paragraphs.iter().position(|p| {
+            source
+                .node(*p)
+                .is_some_and(|n| n.span().start <= span.start && n.span().end >= span.end)
+        })
+    };
+    for comment in comments.comments().skip(offset).take(limit.clamp(1, 100)) {
+        let data = comment.data;
+        let (text, mut truncated) = bounded(comment.text().unwrap_or_default());
+        let anchored_text = comment
+            .anchored_text(&source)
+            .unwrap_or_default()
+            .map(|value| {
+                let (text, cut) = bounded(value);
+                truncated |= cut;
+                text
+            });
+        let structure = if comments
+            .errors()
+            .any(|issue| issue.comment_id() == comment.id())
+        {
+            "malformed"
+        } else if !comment.has_reference() {
+            "orphaned"
+        } else if comment.has_range() {
+            "range"
+        } else {
+            "point"
+        };
+        result.comments.push(CommentSummary {
+            id: data.id.clone().map(|v| bounded(v).0),
+            handle: data
+                .id
+                .as_ref()
+                .filter(|id| id.len() <= 64)
+                .map(|id| format!("comment:{stamp}:{id}")),
+            author: data.author.clone().map(|v| bounded(v).0),
+            initials: data.initials.clone().map(|v| bounded(v).0),
+            date: data.date.clone().map(|v| bounded(v).0),
+            text,
+            anchored_text,
+            paragraph_index: paragraph_index(data.range_start.or(data.reference)),
+            end_paragraph_index: paragraph_index(data.range_end),
+            has_range: comment.has_range(),
+            has_reference: comment.has_reference(),
+            structure,
+            truncated,
+        });
+    }
+    result.has_more = offset.saturating_add(result.comments.len()) < result.total;
+    for issue in comments.errors().take(100) {
+        result
+            .diagnostics
+            .push(crate::style_inspection::StyleInspectionDiagnostic {
+                code: issue.code().into(),
+                message: bounded(format!("{issue:?}")).0,
+            });
+    }
+    if comments.comments.iter().any(|c| c.reference.is_none()) {
+        result
+            .diagnostics
+            .push(crate::style_inspection::StyleInspectionDiagnostic {
+                code: "ORPHANED_COMMENT".into(),
+                message: "comment records without a document reference exist".into(),
+            });
+    }
+    result
 }

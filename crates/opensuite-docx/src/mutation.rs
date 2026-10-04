@@ -55,6 +55,8 @@ enum ResolvedParagraphPlacement {
     After(NodeId),
 }
 
+mod comments;
+pub use comments::*;
 mod common;
 mod content_control;
 mod formatting;
