@@ -296,3 +296,163 @@ pub(super) fn is_cdata(source: &SourceDocument, id: NodeId) -> bool {
     let span = source.node(id).expect("source node exists").span();
     source.original_bytes()[..span.start].ends_with(b"<![CDATA[")
 }
+
+/// Exact selection shared by comment anchors and tracked text authoring.
+pub(super) fn simple_body_text_range(
+    source: &SourceDocument,
+    target: &TextTarget,
+    range_reason: &'static str,
+) -> Result<(crate::text_search::ResolvedTextMatch, NodeId), OperationResult> {
+    let matched = hyperlink::resolve_single_hyperlink_match(source, target)?;
+    let paragraph = matched
+        .segments
+        .first()
+        .and_then(|s| paragraph_ancestor(source, s.id))
+        .ok_or_else(|| unsupported("selection has no paragraph"))?;
+    if !safe_body_paragraph(source, paragraph)
+        || source.node_ids().any(|id| {
+            let span = source.node(id).unwrap().span();
+            let p = source.node(paragraph).unwrap().span();
+            span.start >= p.start
+                && span.end <= p.end
+                && ["fldChar", "instrText", "fldSimple"]
+                    .iter()
+                    .any(|local| word(source, id, local))
+        })
+        || matched
+            .segments
+            .iter()
+            .any(|s| s.inside_tracked_change || paragraph_ancestor(source, s.id) != Some(paragraph))
+    {
+        return Err(
+            unsupported("selection requires ordinary text in one direct body paragraph")
+                .with_reason_code(range_reason),
+        );
+    }
+    let mut runs = Vec::new();
+    for segment in &matched.segments {
+        let run = ordinary_run(source, segment.id).ok_or_else(|| {
+            unsupported("selection crosses an inline wrapper")
+                .with_reason_code("UNSUPPORTED_WRAPPER")
+        })?;
+        if source
+            .children(run)
+            .filter(|id| word(source, *id, "rPr"))
+            .count()
+            > 1
+            || source
+                .children(run)
+                .filter(|id| word(source, *id, "t"))
+                .count()
+                != 1
+            || source
+                .children(run)
+                .any(|id| !word(source, id, "rPr") && !word(source, id, "t"))
+            || source.children(segment.id).count() != 1
+            || is_cdata(source, segment.id)
+            || source.children(run).any(|id| {
+                word(source, id, "rPr") && source.children(id).any(|c| word(source, c, "rPrChange"))
+            })
+        {
+            return Err(unsupported("selection boundary requires a simple text run")
+                .with_reason_code("UNSAFE_RUN_STRUCTURE"));
+        }
+        runs.push((
+            run,
+            matched.start.max(segment.start) - segment.start,
+            matched.end.min(segment.end) - segment.start,
+            segment.source_text.as_str(),
+        ));
+    }
+    // Reject hidden field/wrapper content between selected runs, rather than skipping it.
+    let first = source.node(runs[0].0).unwrap().span();
+    let last = source.node(runs.last().unwrap().0).unwrap().span();
+    if source.children(paragraph).any(|id| {
+        let span = source.node(id).unwrap().span();
+        span.start >= first.start
+            && span.end <= last.end
+            && !runs.iter().any(|r| r.0 == id)
+            && !matches!(source.node(id).unwrap().kind(), SourceNodeKind::Text)
+            && ![
+                "bookmarkStart",
+                "bookmarkEnd",
+                "commentRangeStart",
+                "commentRangeEnd",
+            ]
+            .iter()
+            .any(|name| word(source, id, name))
+    }) {
+        return Err(
+            unsupported("selection contains unsupported field or wrapper boundaries")
+                .with_reason_code(range_reason),
+        );
+    }
+    Ok((matched, paragraph))
+}
+
+pub(super) fn text_run_pieces(
+    source: &SourceDocument,
+    run: NodeId,
+    text: &str,
+    start: usize,
+    end: usize,
+    deleted: bool,
+) -> Result<(String, String, String), OperationResult> {
+    let node = source.node(run).unwrap();
+    let SourceNodeKind::Element {
+        start_tag,
+        end_tag: Some(end_tag),
+        ..
+    } = node.kind()
+    else {
+        return Err(unsupported("run has no source boundaries"));
+    };
+    let text_node = source
+        .children(run)
+        .find(|id| word(source, *id, "t"))
+        .ok_or_else(|| unsupported("run has no text"))?;
+    let SourceNodeKind::Element {
+        start_tag: text_start,
+        end_tag: Some(text_end),
+        ..
+    } = source.node(text_node).unwrap().kind()
+    else {
+        return Err(unsupported("text has no source boundaries"));
+    };
+    let bytes = source.original_bytes();
+    let xml =
+        |span: &SourceSpan| String::from_utf8_lossy(&bytes[span.start..span.end]).into_owned();
+    let open = xml(start_tag);
+    let close = xml(end_tag);
+    let text_open = xml(text_start);
+    let text_close = xml(text_end);
+    let prefix = word_prefix_for(source, text_node, "t")?;
+    let rpr = String::from_utf8_lossy(&run_properties(source, run)).into_owned();
+    let make = |value: &str, deleted: bool| {
+        let mut text_open = text_open.clone();
+        let mut text_close = text_close.clone();
+        if deleted {
+            let name = qualify(&prefix, "t");
+            let deleted_name = qualify(&prefix, "delText");
+            text_open.replace_range(1..1 + name.len(), &deleted_name);
+            text_close = format!("</{deleted_name}>");
+        }
+        if requires_space_preservation(value) {
+            text_open = edit_attribute(text_open, "xml:space", Some("preserve"));
+        }
+        format!("{open}{rpr}{text_open}{}{text_close}{close}", escape(value))
+    };
+    Ok((
+        if start > 0 {
+            make(&text[..start], false)
+        } else {
+            String::new()
+        },
+        make(&text[start..end], deleted),
+        if end < text.len() {
+            make(&text[end..], false)
+        } else {
+            String::new()
+        },
+    ))
+}

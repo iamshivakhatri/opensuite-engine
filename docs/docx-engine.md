@@ -63,7 +63,24 @@ not logical edit groups. Headers/footers and other parts are outside this snapsh
 Existing current-text inspection includes insertions/move-to and excludes
 deletions/move-from; original-text views do the reverse. Those semantics and
 mutation guards remain unchanged. Unrelated safe text edits preserve revision
-XML byte-for-byte. No revision authoring or accept/reject operations are exposed.
+XML byte-for-byte.
+
+Typed `insert_tracked_text`, `delete_tracked_text`, and
+`replace_text_with_tracked_change` author real Word revisions in one ordinary
+body paragraph. Insert before/after an exact text anchor (default after in Node),
+track-delete an exact selection, or replace with a deletion followed by insertion.
+Simple multi-run replacement requires identical source run properties; deletion
+retains each run's formatting. Rust receives explicit author and UTC ISO date;
+engine-client supplies current UTC when omitted. Text is limited to 32,000 bytes
+and excludes control characters/newlines. IDs are allocated above numeric IDs
+already present in the main document, without renumbering imported records.
+Missing/invalid imported revision IDs and exhausted IDs fail safely.
+
+Shared exact-selection/run-splitting helpers preserve source formatting and
+unrelated payloads. Fields, inline wrappers, tables, marker-crossing ranges, and
+paragraphs containing revisions are unsupported authoring targets. Reopen checks
+verify original/current text plus new revision type, ID, order, author/date, and
+full text using existing revision inspection. Accept/reject remains unavailable.
 
 ## Add Only When Benchmarks Need It
 

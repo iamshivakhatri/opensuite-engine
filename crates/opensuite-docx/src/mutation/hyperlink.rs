@@ -114,7 +114,7 @@ pub(super) fn apply_supported_hyperlink(
     let mut selected = String::new();
     let mut after = String::new();
     for (index, (run, start, end, text)) in runs.iter().enumerate() {
-        let (a, b, c) = hyperlink_run_pieces(source, *run, text, *start, *end)?;
+        let (a, b, c) = text::text_run_pieces(source, *run, text, *start, *end, false)?;
         if index == 0 {
             before = a;
         }
@@ -136,65 +136,6 @@ pub(super) fn apply_supported_hyperlink(
         rels_exist,
         rels,
     )
-}
-
-pub(super) fn hyperlink_run_pieces(
-    source: &SourceDocument,
-    run: NodeId,
-    text: &str,
-    start: usize,
-    end: usize,
-) -> Result<(String, String, String), OperationResult> {
-    let node = source.node(run).unwrap();
-    let SourceNodeKind::Element {
-        start_tag,
-        end_tag: Some(end_tag),
-        ..
-    } = node.kind()
-    else {
-        return Err(unsupported("run has no source boundaries"));
-    };
-    let text_node = source
-        .children(run)
-        .find(|id| word(source, *id, "t"))
-        .ok_or_else(|| unsupported("run has no text"))?;
-    let SourceNodeKind::Element {
-        start_tag: text_start,
-        end_tag: Some(text_end),
-        ..
-    } = source.node(text_node).unwrap().kind()
-    else {
-        return Err(unsupported("text has no source boundaries"));
-    };
-    let bytes = source.original_bytes();
-    let xml =
-        |span: &SourceSpan| String::from_utf8_lossy(&bytes[span.start..span.end]).into_owned();
-    let open = xml(start_tag);
-    let close = xml(end_tag);
-    let text_open = xml(text_start);
-    let text_close = xml(text_end);
-    let rpr = String::from_utf8_lossy(&run_properties(source, run)).into_owned();
-    let make = |value: &str| {
-        let text_open = if requires_space_preservation(value) {
-            edit_attribute(text_open.clone(), "xml:space", Some("preserve"))
-        } else {
-            text_open.clone()
-        };
-        format!("{open}{rpr}{text_open}{}{text_close}{close}", escape(value))
-    };
-    Ok((
-        if start > 0 {
-            make(&text[..start])
-        } else {
-            String::new()
-        },
-        make(&text[start..end]),
-        if end < text.len() {
-            make(&text[end..])
-        } else {
-            String::new()
-        },
-    ))
 }
 
 pub(super) fn exact_hyperlink(

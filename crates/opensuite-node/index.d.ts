@@ -230,3 +230,11 @@ export function executeDocxDeleteComment(input: Buffer, operation: {handle: stri
 
 /** Read-only, bounded main-document insertion/deletion inspection. JSON RevisionInspection. */
 export function inspectDocxTrackedChanges(input: Buffer, options?: { offset?: number; limit?: number }): Promise<string>
+
+export interface TrackedTextMetadata { author: string; date: string }
+export interface InsertTrackedTextInput extends TrackedTextMetadata { target: TextTarget; text: string; position?: 'before' | 'after' }
+export interface DeleteTrackedTextInput extends TrackedTextMetadata { target: TextTarget }
+export interface ReplaceTextWithTrackedChangeInput extends TrackedTextMetadata { target: TextTarget; replacement: string }
+export function executeDocxInsertTrackedText(input: Buffer, operation: InsertTrackedTextInput): Promise<ExecuteDocxResult>
+export function executeDocxDeleteTrackedText(input: Buffer, operation: DeleteTrackedTextInput): Promise<ExecuteDocxResult>
+export function executeDocxReplaceTextWithTrackedChange(input: Buffer, operation: ReplaceTextWithTrackedChangeInput): Promise<ExecuteDocxResult>

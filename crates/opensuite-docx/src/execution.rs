@@ -434,6 +434,28 @@ macro_rules! execute_paragraph_mutation {
         }
     };
 }
+use crate::{
+    delete_tracked_text_to_vec, insert_tracked_text_to_vec, replace_text_with_tracked_change_to_vec,
+};
+use opensuite_protocol::{DeleteTrackedText, InsertTrackedText, ReplaceTextWithTrackedChange};
+execute_paragraph_mutation!(
+    execute_docx_insert_tracked_text,
+    InsertTrackedText,
+    insert_tracked_text_to_vec,
+    "insert_tracked_text"
+);
+execute_paragraph_mutation!(
+    execute_docx_delete_tracked_text,
+    DeleteTrackedText,
+    delete_tracked_text_to_vec,
+    "delete_tracked_text"
+);
+execute_paragraph_mutation!(
+    execute_docx_replace_text_with_tracked_change,
+    ReplaceTextWithTrackedChange,
+    replace_text_with_tracked_change_to_vec,
+    "replace_text_with_tracked_change"
+);
 use crate::{add_comment_to_vec, delete_comment_to_vec, update_comment_to_vec};
 use opensuite_protocol::{AddComment, DeleteComment, UpdateComment};
 execute_paragraph_mutation!(

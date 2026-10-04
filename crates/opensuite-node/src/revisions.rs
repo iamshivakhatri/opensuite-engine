@@ -44,3 +44,84 @@ impl Task for RevisionInspectionTask {
         Ok(output)
     }
 }
+
+use crate::{SimpleTask, TextTargetInput, text_target};
+use opensuite_protocol::{
+    DeleteTrackedText, InsertTrackedText, ReplaceTextWithTrackedChange, TrackedTextPosition,
+};
+
+#[napi(object)]
+pub struct InsertTrackedTextInput {
+    pub target: TextTargetInput,
+    pub text: String,
+    pub position: Option<String>,
+    pub author: String,
+    pub date: String,
+}
+#[napi(object)]
+pub struct DeleteTrackedTextInput {
+    pub target: TextTargetInput,
+    pub author: String,
+    pub date: String,
+}
+#[napi(object)]
+pub struct ReplaceTextWithTrackedChangeInput {
+    pub target: TextTargetInput,
+    pub replacement: String,
+    pub author: String,
+    pub date: String,
+}
+
+#[napi(js_name = "executeDocxInsertTrackedText")]
+pub fn insert_tracked_text(
+    input: Buffer,
+    op: InsertTrackedTextInput,
+) -> Result<AsyncTask<SimpleTask<InsertTrackedText>>> {
+    let position = match op.position.as_deref().unwrap_or("after") {
+        "before" => TrackedTextPosition::Before,
+        "after" => TrackedTextPosition::After,
+        _ => return Err(napi::Error::from_reason("position must be before or after")),
+    };
+    Ok(AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: InsertTrackedText {
+            target: text_target(op.target),
+            text: op.text,
+            position,
+            author: op.author,
+            date: op.date,
+        },
+        run: opensuite_docx::execute_docx_insert_tracked_text,
+    }))
+}
+#[napi(js_name = "executeDocxDeleteTrackedText")]
+pub fn delete_tracked_text(
+    input: Buffer,
+    op: DeleteTrackedTextInput,
+) -> AsyncTask<SimpleTask<DeleteTrackedText>> {
+    AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: DeleteTrackedText {
+            target: text_target(op.target),
+            author: op.author,
+            date: op.date,
+        },
+        run: opensuite_docx::execute_docx_delete_tracked_text,
+    })
+}
+#[napi(js_name = "executeDocxReplaceTextWithTrackedChange")]
+pub fn replace_text_with_tracked_change(
+    input: Buffer,
+    op: ReplaceTextWithTrackedChangeInput,
+) -> AsyncTask<SimpleTask<ReplaceTextWithTrackedChange>> {
+    AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: ReplaceTextWithTrackedChange {
+            target: text_target(op.target),
+            replacement: op.replacement,
+            author: op.author,
+            date: op.date,
+        },
+        run: opensuite_docx::execute_docx_replace_text_with_tracked_change,
+    })
+}

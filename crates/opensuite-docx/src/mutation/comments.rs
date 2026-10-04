@@ -126,92 +126,27 @@ pub fn add_comment_to_vec(
                     || v.chars()
                         .any(|c| c.is_control() || matches!(c, '\u{fffe}' | '\u{ffff}'))
             })
-        || !valid_date(&operation.date)
+        || !valid_review_date(&operation.date)
     {
         return Err(comment_failure(
             "INVALID_OPERATION",
             "provide a nonempty author and ISO date without control characters",
         ));
     }
-    let matched = hyperlink::resolve_single_hyperlink_match(source, &operation.target)?;
-    let paragraph = matched
+    let (matched, paragraph) =
+        text::simple_body_text_range(source, &operation.target, "UNSUPPORTED_COMMENT_RANGE")?;
+    let runs: Vec<_> = matched
         .segments
-        .first()
-        .and_then(|s| paragraph_ancestor(source, s.id))
-        .ok_or_else(|| unsupported("selection has no paragraph"))?;
-    if !safe_body_paragraph(source, paragraph)
-        || source.node_ids().any(|id| {
-            let span = source.node(id).unwrap().span();
-            let p = source.node(paragraph).unwrap().span();
-            span.start >= p.start
-                && span.end <= p.end
-                && ["fldChar", "instrText", "fldSimple"]
-                    .iter()
-                    .any(|local| word(source, id, local))
+        .iter()
+        .map(|segment| {
+            (
+                ordinary_run(source, segment.id).unwrap(),
+                matched.start.max(segment.start) - segment.start,
+                matched.end.min(segment.end) - segment.start,
+                segment.source_text.as_str(),
+            )
         })
-        || matched
-            .segments
-            .iter()
-            .any(|s| s.inside_tracked_change || paragraph_ancestor(source, s.id) != Some(paragraph))
-    {
-        return Err(
-            unsupported("comments require ordinary text in one direct body paragraph")
-                .with_reason_code("UNSUPPORTED_COMMENT_RANGE"),
-        );
-    }
-    let mut runs = Vec::new();
-    for segment in &matched.segments {
-        let run = ordinary_run(source, segment.id).ok_or_else(|| {
-            unsupported("comment selection crosses an inline wrapper")
-                .with_reason_code("UNSUPPORTED_WRAPPER")
-        })?;
-        if source
-            .children(run)
-            .filter(|id| word(source, *id, "t"))
-            .count()
-            != 1
-            || source
-                .children(run)
-                .any(|id| !word(source, id, "rPr") && !word(source, id, "t"))
-            || source.children(segment.id).count() != 1
-            || is_cdata(source, segment.id)
-            || source.children(run).any(|id| {
-                word(source, id, "rPr") && source.children(id).any(|c| word(source, c, "rPrChange"))
-            })
-        {
-            return Err(unsupported("comment boundary requires a simple text run")
-                .with_reason_code("UNSAFE_RUN_STRUCTURE"));
-        }
-        runs.push((
-            run,
-            matched.start.max(segment.start) - segment.start,
-            matched.end.min(segment.end) - segment.start,
-            segment.source_text.as_str(),
-        ));
-    }
-    // Reject hidden field/wrapper content between selected runs, rather than skipping it.
-    let first = source.node(runs[0].0).unwrap().span();
-    let last = source.node(runs.last().unwrap().0).unwrap().span();
-    if source.children(paragraph).any(|id| {
-        let span = source.node(id).unwrap().span();
-        span.start >= first.start
-            && span.end <= last.end
-            && !runs.iter().any(|r| r.0 == id)
-            && !matches!(source.node(id).unwrap().kind(), SourceNodeKind::Text)
-            && ![
-                "bookmarkStart",
-                "bookmarkEnd",
-                "commentRangeStart",
-                "commentRangeEnd",
-            ]
-            .iter()
-            .any(|name| word(source, id, name))
-    }) {
-        return Err(
-            unsupported("selection contains unsupported field or wrapper boundaries")
-                .with_reason_code("UNSUPPORTED_COMMENT_RANGE"),
-        );
-    }
+        .collect();
     let max = comments
         .comments
         .iter()
@@ -250,7 +185,7 @@ pub fn add_comment_to_vec(
             });
         } else {
             let (before, selected, after) =
-                hyperlink::hyperlink_run_pieces(source, *run, text, *a, *b)?;
+                text::text_run_pieces(source, *run, text, *a, *b, false)?;
             patches.push(Patch {
                 span,
                 replacement: format!(
@@ -522,52 +457,6 @@ fn verify_comments(
     Ok(output)
 }
 
-fn valid_date(value: &str) -> bool {
-    // Accept UTC ISO 8601 with optional fractional seconds. Other zones can be normalized by the caller.
-    if !value.is_ascii() || value.len() < 20 || !value.ends_with('Z') {
-        return false;
-    }
-    let base = &value[..19];
-    for (at, separator) in [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')] {
-        if base.as_bytes()[at] != separator {
-            return false;
-        }
-    }
-    let fields: Option<Vec<u32>> = [0..4, 5..7, 8..10, 11..13, 14..16, 17..19]
-        .into_iter()
-        .map(|range| {
-            let digits = &base[range];
-            digits
-                .bytes()
-                .all(|b| b.is_ascii_digit())
-                .then(|| digits.parse().ok())
-                .flatten()
-        })
-        .collect();
-    let Some(fields) = fields else {
-        return false;
-    };
-    let (year, month, day) = (fields[0], fields[1], fields[2]);
-    let days = match month {
-        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        _ => 0,
-    };
-    let fraction = &value[19..value.len() - 1];
-    year > 0
-        && day > 0
-        && day <= days
-        && fields[3] < 24
-        && fields[4] < 60
-        && fields[5] < 60
-        && (fraction.is_empty()
-            || fraction
-                .strip_prefix('.')
-                .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())))
-}
-
 fn comment_failure(code: &str, message: impl Into<String>) -> OperationResult {
     OperationResult::failed(code, message).with_reason_code(code)
 }
@@ -787,9 +676,9 @@ mod tests {
             assert!(!result.operation.diagnostics.is_empty());
             assert!(result.output_artifact.is_none());
         }
-        assert!(!valid_date("2026-02-30T12:00:00Z"));
-        assert!(!valid_date("2026-+1-01T12:00:00Z"));
+        assert!(!valid_review_date("2026-02-30T12:00:00Z"));
+        assert!(!valid_review_date("2026-+1-01T12:00:00Z"));
         assert!(plain_text("invalid \u{fffe}", NS[0]).is_err());
-        assert!(valid_date("2024-02-29T12:00:00.123Z"));
+        assert!(valid_review_date("2024-02-29T12:00:00.123Z"));
     }
 }

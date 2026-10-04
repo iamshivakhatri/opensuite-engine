@@ -374,3 +374,49 @@ pub(super) fn element_insertion(
         replacement: value,
     })
 }
+
+pub(super) fn valid_review_date(value: &str) -> bool {
+    // Accept UTC ISO 8601 with optional fractional seconds. Other zones can be normalized by the caller.
+    if !value.is_ascii() || value.len() < 20 || !value.ends_with('Z') {
+        return false;
+    }
+    let base = &value[..19];
+    for (at, separator) in [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')] {
+        if base.as_bytes()[at] != separator {
+            return false;
+        }
+    }
+    let fields: Option<Vec<u32>> = [0..4, 5..7, 8..10, 11..13, 14..16, 17..19]
+        .into_iter()
+        .map(|range| {
+            let digits = &base[range];
+            digits
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+                .then(|| digits.parse().ok())
+                .flatten()
+        })
+        .collect();
+    let Some(fields) = fields else {
+        return false;
+    };
+    let (year, month, day) = (fields[0], fields[1], fields[2]);
+    let days = match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => 0,
+    };
+    let fraction = &value[19..value.len() - 1];
+    year > 0
+        && day > 0
+        && day <= days
+        && fields[3] < 24
+        && fields[4] < 60
+        && fields[5] < 60
+        && (fraction.is_empty()
+            || fraction
+                .strip_prefix('.')
+                .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())))
+}

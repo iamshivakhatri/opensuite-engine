@@ -193,7 +193,7 @@ pub enum RevisionKind {
     Unsupported,
 }
 
-fn revision_node(source: &SourceDocument, id: NodeId) -> bool {
+pub(crate) fn revision_node(source: &SourceDocument, id: NodeId) -> bool {
     kind(source, id).is_some()
         || [
             "pPrChange",
