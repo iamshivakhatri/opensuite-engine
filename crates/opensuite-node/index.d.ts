@@ -124,3 +124,53 @@ export function executeDocxDeletePageBreak(input: Buffer, operation: PageBreakHa
 export function executeDocxSetPageSetup(input: Buffer, operation: SetPageSetupInput): Promise<ExecuteDocxResult>
 export function executeDocxSetHeaderFooterText(input: Buffer, operation: SetHeaderFooterTextInput): Promise<ExecuteDocxResult>
 export function executeDocxSetPageNumber(input: Buffer, operation: SetPageNumberInput): Promise<ExecuteDocxResult>
+
+/** Real Word sections, ordered by their boundaries. Handles expire after edits. */
+export interface SectionHeaderFooterInspection {
+  kind: 'header' | 'footer'
+  variant: 'default' | 'first' | 'even'
+  linkedToPrevious: boolean
+  relationshipId: string | null
+  partName: string | null
+  text: string | null
+  pageNumberAlignment: 'left' | 'center' | 'right' | null
+  supported: boolean
+}
+export interface SectionInspection {
+  handle: string
+  index: number
+  breakType: string
+  pageWidthTwips: number | null
+  pageHeightTwips: number | null
+  orientation: string | null
+  marginsTwips: Record<string, number>
+  columnCount: number | null
+  differentFirstPage: boolean
+  oddEvenHeaders: boolean
+  pageNumberStart: number | null
+  pageNumberFormat: string | null
+  headersFooters: SectionHeaderFooterInspection[]
+}
+export interface SetSectionPropertiesInput {
+  handle: string
+  pageSetup?: SetPageSetupInput
+  differentFirstPage?: boolean
+  breakType?: 'nextPage' | 'continuous' | 'oddPage' | 'evenPage'
+  pageNumberStart?: number
+  continuePageNumbering?: boolean
+}
+export interface SetSectionHeaderFooterInput {
+  handle: string
+  kind: 'header' | 'footer'
+  variant: 'default' | 'first' | 'even'
+  action: 'text' | 'pageNumber' | 'inherit' | 'unlink'
+  text?: string
+  alignment?: 'left' | 'center' | 'right'
+}
+/** Returns JSON { ok, sections, diagnostics }. */
+export function inspectDocxSections(input: Buffer): Promise<string>
+export function executeDocxInsertSectionBreak(input: Buffer, operation: { placement: ParagraphPlacement; breakType: 'nextPage' | 'continuous' | 'oddPage' | 'evenPage' }): Promise<ExecuteDocxResult>
+export function executeDocxSetSectionProperties(input: Buffer, operation: SetSectionPropertiesInput): Promise<ExecuteDocxResult>
+export function executeDocxSetSectionHeaderFooter(input: Buffer, operation: SetSectionHeaderFooterInput): Promise<ExecuteDocxResult>
+/** Explicit document-wide setting; even variants never enable it implicitly. */
+export function executeDocxSetOddEvenHeaders(input: Buffer, operation: { enabled: boolean }): Promise<ExecuteDocxResult>

@@ -13,6 +13,33 @@ pub fn set_page_setup_to_vec(
     source: &SourceDocument,
     operation: &SetPageSetup,
 ) -> Result<Vec<u8>, OperationResult> {
+    let section = main_section(source, true)?;
+    let patches = page_setup_patches(source, section, operation)?;
+    let before = page_setup_from_section(source, section)?;
+    let margins = merged_margins(before.margins, operation.margins.as_ref())?;
+    let orientation = operation.orientation.unwrap_or(before.orientation);
+    let output = write_patches_to_vec(package, main, source, section_patches(source, patches)?)?;
+    let (_, output_source) =
+        crate::open_main_source(&Package::from_bytes(output.clone()).map_err(document_invalid)?)
+            .map_err(document_invalid)?;
+    let after = inspect_page_setup(&output_source)?;
+    if operation.paper_size.is_some() && after.paper_size != operation.paper_size
+        || operation.orientation.is_some() && after.orientation != orientation
+        || operation.margins.is_some() && after.margins != margins
+    {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "output page setup does not match request",
+        ));
+    }
+    Ok(output)
+}
+
+pub(super) fn page_setup_patches(
+    source: &SourceDocument,
+    section: NodeId,
+    operation: &SetPageSetup,
+) -> Result<Vec<Patch>, OperationResult> {
     if operation.margins.is_none()
         && operation.paper_size.is_none()
         && operation.orientation.is_none()
@@ -22,7 +49,6 @@ pub fn set_page_setup_to_vec(
             "set_page_setup requires at least one change",
         ));
     }
-    let section = main_section(source, true)?;
     let before = page_setup_from_section(source, section)?;
     let prefix = word_prefix_for(source, section, "sectPr")?;
     let name = |local: &str| qualify(&prefix, local);
@@ -86,21 +112,7 @@ pub fn set_page_setup_to_vec(
             &mut patches,
         )?;
     }
-    let output = write_patches_to_vec(package, main, source, patches)?;
-    let (_, output_source) =
-        crate::open_main_source(&Package::from_bytes(output.clone()).map_err(document_invalid)?)
-            .map_err(document_invalid)?;
-    let after = inspect_page_setup(&output_source)?;
-    if operation.paper_size.is_some() && after.paper_size != operation.paper_size
-        || operation.orientation.is_some() && after.orientation != orientation
-        || operation.margins.is_some() && after.margins != margins
-    {
-        return Err(OperationResult::failed(
-            "DOCUMENT_INVALID",
-            "output page setup does not match request",
-        ));
-    }
-    Ok(output)
+    Ok(patches)
 }
 
 pub fn set_page_setup(
@@ -333,16 +345,110 @@ pub(super) fn section_property_patch(
         });
         return Ok(());
     }
-    let at = source.node(section).expect("section exists").span().end
-        - format!(
-            "</{}>",
-            qualify(&word_prefix_for(source, section, "sectPr")?, "sectPr")
-        )
-        .len();
-    let _ = local;
+    let node = source.node(section).expect("section exists");
+    let end = match node.kind() {
+        SourceNodeKind::Element {
+            end_tag: Some(span),
+            ..
+        } => span.start,
+        _ => node.span().end - 2,
+    };
+    let at = source
+        .children(section)
+        .find(|id| match source.node(*id).map(|n| n.kind()) {
+            Some(SourceNodeKind::Element { name, .. }) => {
+                name.namespace_uri().is_some_and(|uri| NS.contains(&uri))
+                    && section_property_order(name.local_name()) > section_property_order(local)
+            }
+            _ => false,
+        })
+        .map(|id| source.node(id).unwrap().span().start)
+        .unwrap_or(end);
     patches.push(Patch {
         span: SourceSpan { start: at, end: at },
         replacement: replacement.into_bytes(),
     });
     Ok(())
+}
+
+pub(super) fn section_property_order(name: &str) -> usize {
+    [
+        "headerReference",
+        "footerReference",
+        "footnotePr",
+        "endnotePr",
+        "type",
+        "pgSz",
+        "pgMar",
+        "paperSrc",
+        "pgBorders",
+        "lnNumType",
+        "pgNumType",
+        "cols",
+        "formProt",
+        "vAlign",
+        "noEndnote",
+        "titlePg",
+        "textDirection",
+        "bidi",
+        "rtlGutter",
+        "docGrid",
+        "printerSettings",
+        "sectPrChange",
+    ]
+    .iter()
+    .position(|v| *v == name)
+    .unwrap_or(0)
+}
+
+/// Combines insertions in schema order and expands an empty section once.
+pub(super) fn section_patches(
+    source: &SourceDocument,
+    mut patches: Vec<Patch>,
+) -> Result<Vec<Patch>, OperationResult> {
+    let rank = |patch: &Patch| -> usize {
+        let xml = String::from_utf8_lossy(&patch.replacement);
+        let tag = xml
+            .trim_start_matches('<')
+            .split([' ', '/', '>'])
+            .next()
+            .unwrap_or("");
+        section_property_order(tag.rsplit(':').next().unwrap_or(tag))
+    };
+    patches.sort_by_key(|p| (p.span.start, p.span.end, rank(p)));
+    for id in source.node_ids().filter(|id| word(source, *id, "sectPr")) {
+        let node = source.node(id).unwrap();
+        if matches!(node.kind(), SourceNodeKind::Element { end_tag: None, .. }) {
+            let at = node.span().end - 2;
+            if patches
+                .iter()
+                .any(|p| p.span.start == at && p.span.end == at)
+            {
+                let mut content = Vec::new();
+                patches.retain(|p| {
+                    if p.span.start == at && p.span.end == at {
+                        content.extend_from_slice(&p.replacement);
+                        false
+                    } else {
+                        true
+                    }
+                });
+                let mut replacement = source.original_bytes()[node.span().start..at].to_vec();
+                replacement.push(b'>');
+                replacement.extend(content);
+                replacement.extend_from_slice(
+                    format!(
+                        "</{}>",
+                        qualify(&word_prefix_for(source, id, "sectPr")?, "sectPr")
+                    )
+                    .as_bytes(),
+                );
+                patches.push(Patch {
+                    span: node.span(),
+                    replacement,
+                });
+            }
+        }
+    }
+    Ok(patches)
 }

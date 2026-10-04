@@ -68,8 +68,14 @@ pub fn set_header_footer_text_to_vec(
             };
             replaced.push((part.name, apply_patches(&part_source, vec![patch])?));
         } else {
-            let part_name = next_header_footer_part_name(package, operation.kind)?;
-            let relationship_id = next_relationship_id(package, main)?;
+            let relationship_id = add_header_footer_part(
+                package,
+                main,
+                operation.kind,
+                canonical_header_footer_xml(operation.kind, text).into_bytes(),
+                &mut replaced,
+                &mut added,
+            )?;
             let reference =
                 header_footer_reference_xml(source, section, operation.kind, &relationship_id)?;
             document = apply_patches(
@@ -81,48 +87,6 @@ pub fn set_header_footer_text_to_vec(
                     reference,
                 )?],
             )?;
-            let rels_name = relationship_part_name(main)?;
-            let (exists, rels) = relationship_xml(package, main)?;
-            let target = part_name
-                .as_str()
-                .rsplit('/')
-                .next()
-                .expect("part file name");
-            let relation = format!(
-                r#"<Relationship Id="{relationship_id}" Type="{}" Target="{target}"/>"#,
-                header_footer_relationship_type(operation.kind)
-            );
-            let rels = append_xml_element(&rels, &relation)?;
-            if exists {
-                replaced.push((rels_name, rels));
-            } else {
-                added.push((rels_name, rels));
-            }
-            added.push((
-                part_name.clone(),
-                canonical_header_footer_xml(operation.kind, text).into_bytes(),
-            ));
-            let types_name = PartName::parse("/[Content_Types].xml").map_err(package_failure)?;
-            let types = package
-                .read_part_by_name(&types_name)
-                .map_err(package_failure)?;
-            let marker = format!(r#"PartName="{}""#, part_name.as_str());
-            if !types
-                .windows(marker.len())
-                .any(|value| value == marker.as_bytes())
-            {
-                replaced.push((
-                    types_name,
-                    append_xml_element(
-                        &types,
-                        &format!(
-                            r#"<Override PartName="{}" ContentType="{}"/>"#,
-                            part_name.as_str(),
-                            header_footer_content_type(operation.kind)
-                        ),
-                    )?,
-                ));
-            }
         }
     } else if let Some(reference) = references.first().copied() {
         let part = header_footer_part(package, main, source, reference, operation.kind)?;
@@ -217,14 +181,28 @@ pub(super) fn header_footer_part(
     reference: NodeId,
     kind: HeaderFooterKind,
 ) -> Result<Part, OperationResult> {
+    header_footer_part_from_relationships(
+        package,
+        &package.part_relationships(main).map_err(package_failure)?,
+        source,
+        reference,
+        kind,
+    )
+}
+
+pub(super) fn header_footer_part_from_relationships(
+    package: &Package,
+    relationships: &[opensuite_opc::Relationship],
+    source: &SourceDocument,
+    reference: NodeId,
+    kind: HeaderFooterKind,
+) -> Result<Part, OperationResult> {
     let id = source
         .node(reference)
         .and_then(|node| node.attribute("id"))
         .ok_or_else(|| unsupported("header/footer reference has no relationship id"))?;
-    let relationship = package
-        .part_relationships(main)
-        .map_err(package_failure)?
-        .into_iter()
+    let relationship = relationships
+        .iter()
         .find(|value| value.id.as_str() == id)
         .ok_or_else(|| unsupported("header/footer relationship is missing"))?;
     if relationship.relationship_type.as_str() != header_footer_relationship_type(kind) {
@@ -232,12 +210,12 @@ pub(super) fn header_footer_part(
             "header/footer relationship has an unexpected type",
         ));
     }
-    let RelationshipTarget::Internal { part_name, .. } = relationship.target else {
+    let RelationshipTarget::Internal { part_name, .. } = &relationship.target else {
         return Err(unsupported(
             "header/footer relationship must target an internal part",
         ));
     };
-    let part = package.part(&part_name).map_err(package_failure)?;
+    let part = package.part(part_name).map_err(package_failure)?;
     if part.content_type.as_str() != header_footer_content_type(kind) {
         return Err(unsupported(
             "header/footer part has an unexpected content type",
@@ -399,27 +377,6 @@ pub(super) fn next_header_footer_part_name(
     PartName::parse(format!("/word/{stem}{next}.xml")).map_err(package_failure)
 }
 
-pub(super) fn next_relationship_id(
-    package: &Package,
-    main: &Part,
-) -> Result<String, OperationResult> {
-    let used = package
-        .part_relationships(main)
-        .map_err(package_failure)?
-        .into_iter()
-        .map(|value| value.id.as_str().to_owned())
-        .collect::<HashSet<_>>();
-    (1u32..)
-        .map(|number| format!("rId{number}"))
-        .find(|id| !used.contains(id))
-        .ok_or_else(|| {
-            OperationResult::failed(
-                "PACKAGE_CONFLICT",
-                "cannot allocate header/footer relationship",
-            )
-        })
-}
-
 pub(super) fn relationship_xml(
     package: &Package,
     main: &Part,
@@ -457,7 +414,7 @@ pub(super) fn section_reference_patch(
                 SourceNodeKind::Element { end_tag, .. } => end_tag.map(|span| span.start),
                 _ => None,
             })
-            .expect("section end tag")
+            .unwrap_or_else(|| source.node(section).unwrap().span().end - 2)
     });
     Ok(Patch {
         span: SourceSpan { start: at, end: at },
@@ -588,4 +545,427 @@ pub(super) fn verify_header_footer_output(
         ));
     }
     Ok(())
+}
+
+pub(super) fn variant_name(value: HeaderFooterVariant) -> &'static str {
+    match value {
+        HeaderFooterVariant::Default => "default",
+        HeaderFooterVariant::First => "first",
+        HeaderFooterVariant::Even => "even",
+    }
+}
+
+pub(super) fn variant_reference(
+    source: &SourceDocument,
+    section: NodeId,
+    kind: HeaderFooterKind,
+    variant: HeaderFooterVariant,
+) -> Result<Option<NodeId>, OperationResult> {
+    let mut refs = source.children(section).filter(|id| {
+        word(source, *id, header_footer_reference_name(kind))
+            && source.node(*id).and_then(|v| v.attribute("type")) == Some(variant_name(variant))
+    });
+    let first = refs.next();
+    if refs.next().is_some() {
+        return Err(unsupported("header/footer variant reference is ambiguous"));
+    }
+    Ok(first)
+}
+
+fn variant_reference_xml(
+    source: &SourceDocument,
+    section: NodeId,
+    kind: HeaderFooterKind,
+    variant: HeaderFooterVariant,
+    id: &str,
+) -> Result<String, OperationResult> {
+    Ok(
+        header_footer_reference_xml(source, section, kind, id)?.replace(
+            "type=\"default\"",
+            &format!("type=\"{}\"", variant_name(variant)),
+        ),
+    )
+}
+
+// The same OPC allocation path serves text, PAGE fields, and section-owned parts.
+pub(super) fn add_header_footer_part(
+    package: &Package,
+    main: &Part,
+    kind: HeaderFooterKind,
+    bytes: Vec<u8>,
+    replaced: &mut Vec<(PartName, Vec<u8>)>,
+    added: &mut Vec<(PartName, Vec<u8>)>,
+) -> Result<String, OperationResult> {
+    let mut name = next_header_footer_part_name(package, kind)?;
+    while added.iter().any(|(n, _)| n == &name) {
+        let value = name.as_str();
+        let stem = if kind == HeaderFooterKind::Header {
+            "header"
+        } else {
+            "footer"
+        };
+        let number = value
+            .strip_prefix(&format!("/word/{stem}"))
+            .and_then(|v| v.strip_suffix(".xml"))
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap();
+        name =
+            PartName::parse(format!("/word/{stem}{}.xml", number + 1)).map_err(package_failure)?;
+    }
+    let rels_name = relationship_part_name(main)?;
+    let (exists, original) = relationship_xml(package, main)?;
+    let rels = replaced
+        .iter()
+        .chain(added.iter())
+        .find(|(n, _)| n == &rels_name)
+        .map(|(_, v)| v.as_slice())
+        .unwrap_or(&original);
+    let rels_source = SourceDocument::parse(rels.to_vec()).map_err(document_invalid)?;
+    let used: HashSet<_> = rels_source
+        .children(rels_source.root())
+        .filter_map(|id| rels_source.node(id)?.attribute("Id"))
+        .collect();
+    let id = (1u32..)
+        .map(|v| format!("rId{v}"))
+        .find(|id| !used.contains(id.as_str()))
+        .unwrap();
+    let target = name.as_str().rsplit('/').next().unwrap();
+    let rels = append_xml_element(
+        rels,
+        &format!(
+            r#"<Relationship Id="{id}" Type="{}" Target="{target}"/>"#,
+            header_footer_relationship_type(kind)
+        ),
+    )?;
+    let list = if exists { &mut *replaced } else { &mut *added };
+    if let Some((_, value)) = list.iter_mut().find(|(n, _)| n == &rels_name) {
+        *value = rels;
+    } else {
+        list.push((rels_name, rels));
+    }
+    let types_name = PartName::parse("/[Content_Types].xml").map_err(package_failure)?;
+    let original = package
+        .read_part_by_name(&types_name)
+        .map_err(package_failure)?;
+    let types = replaced
+        .iter()
+        .find(|(n, _)| n == &types_name)
+        .map(|(_, v)| v.as_slice())
+        .unwrap_or(&original);
+    let types = append_xml_element(
+        types,
+        &format!(
+            r#"<Override PartName="{}" ContentType="{}"/>"#,
+            name.as_str(),
+            header_footer_content_type(kind)
+        ),
+    )?;
+    if let Some((_, value)) = replaced.iter_mut().find(|(n, _)| n == &types_name) {
+        *value = types;
+    } else {
+        replaced.push((types_name, types));
+    }
+    added.push((name, bytes));
+    Ok(id)
+}
+
+pub fn set_section_header_footer_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &SetSectionHeaderFooter,
+) -> Result<Vec<u8>, OperationResult> {
+    use super::sections::*;
+    let (ids, index) = resolve_section(package, main, source, &operation.target)?;
+    let section = ids[index];
+    if source.node(section).is_some_and(|node| matches!(node.kind(), SourceNodeKind::Element { name, .. } if name.namespace_uri()==Some(NS[1]))) {
+        return Err(unsupported("section header/footer authoring supports transitional DOCX only"));
+    }
+    let own = variant_reference(source, section, operation.kind, operation.variant)?;
+    let effective = ids[..=index]
+        .iter()
+        .rev()
+        .find_map(
+            |id| match variant_reference(source, *id, operation.kind, operation.variant) {
+                Ok(Some(reference)) => Some(Ok(reference)),
+                Err(error) => Some(Err(error)),
+                _ => None,
+            },
+        )
+        .transpose()?;
+    let mut patches = Vec::new();
+    let mut replaced = Vec::new();
+    let mut added = Vec::new();
+    let new_id = match &operation.change {
+        SectionHeaderFooterChange::Inherit => {
+            if index == 0 {
+                return Err(OperationResult::failed(
+                    "INVALID_OPERATION",
+                    "first section has no previous section",
+                ));
+            }
+            None
+        }
+        change => {
+            if operation.variant == HeaderFooterVariant::Even
+                && !odd_even_headers_enabled(package, main)?
+            {
+                return Err(unsupported(
+                    "enable document-wide odd/even headers explicitly before editing the even variant",
+                ));
+            }
+            let (old_part, bytes) = if let Some(reference) = effective {
+                let part = header_footer_part(package, main, source, reference, operation.kind)?;
+                let bytes = package.read_part(&part).map_err(package_failure)?;
+                (Some(part), bytes)
+            } else {
+                (
+                    None,
+                    canonical_header_footer_xml(operation.kind, "").into_bytes(),
+                )
+            };
+            let part_source = SourceDocument::parse(bytes).map_err(document_invalid)?;
+            let content =
+                simple_header_footer_content(&part_source, operation.kind).ok_or_else(|| {
+                    unsupported("section header/footer is not a supported simple part")
+                })?;
+            let bytes = match change {
+                SectionHeaderFooterChange::Unlink => part_source.original_bytes().to_vec(),
+                SectionHeaderFooterChange::SetText(text) => {
+                    let patch = if content.text.is_some() {
+                        simple_header_footer_patch(&part_source, operation.kind, text)?
+                    } else {
+                        let at = source_end_tag_start(&part_source, part_source.root())?;
+                        Patch {
+                            span: SourceSpan { start: at, end: at },
+                            replacement: simple_header_footer_text_xml(
+                                &part_source,
+                                operation.kind,
+                                text,
+                            )?
+                            .into_bytes(),
+                        }
+                    };
+                    apply_patches(&part_source, vec![patch])?
+                }
+                SectionHeaderFooterChange::SetPageNumber(alignment) => {
+                    let patch = match (alignment, content.page_number) {
+                        (Some(alignment), Some(_)) => {
+                            page_number_alignment_patch(&part_source, *alignment)?
+                        }
+                        (Some(alignment), None) => {
+                            let at = source_end_tag_start(&part_source, part_source.root())?;
+                            Patch {
+                                span: SourceSpan { start: at, end: at },
+                                replacement: page_number_xml(&part_source, *alignment)?
+                                    .into_bytes(),
+                            }
+                        }
+                        (None, Some(_)) => Patch {
+                            span: part_source
+                                .node(page_number_paragraph(&part_source).unwrap())
+                                .unwrap()
+                                .span(),
+                            replacement: Vec::new(),
+                        },
+                        (None, None) => {
+                            return Err(OperationResult::failed(
+                                "TARGET_NOT_FOUND",
+                                "section header/footer has no PAGE field",
+                            ));
+                        }
+                    };
+                    apply_patches(&part_source, vec![patch])?
+                }
+                SectionHeaderFooterChange::Inherit => unreachable!(),
+            };
+            // Only edit an existing part when nobody else owns or inherits it.
+            let part_shared = if let Some(part) = &old_part {
+                let relationships = package.part_relationships(main).map_err(package_failure)?;
+                let same_part_ids: HashSet<_> = relationships.iter().filter(|rel| matches!(&rel.target, RelationshipTarget::Internal { part_name, .. } if part_name==&part.name)).map(|rel| rel.id.as_str()).collect();
+                ids.get(index + 1).is_some_and(|next| {
+                    variant_reference(source, *next, operation.kind, operation.variant)
+                        .ok()
+                        .flatten()
+                        .is_none()
+                }) || source
+                    .node_ids()
+                    .filter(|id| {
+                        word(source, *id, "headerReference") || word(source, *id, "footerReference")
+                    })
+                    .filter(|id| Some(*id) != own)
+                    .any(|id| {
+                        source
+                            .node(id)
+                            .and_then(|n| n.attribute("id"))
+                            .is_some_and(|id| same_part_ids.contains(id))
+                    })
+            } else {
+                false
+            };
+            if own.is_some() && !part_shared {
+                let part = old_part.unwrap();
+                replaced.push((part.name, bytes));
+                Some(
+                    source
+                        .node(own.unwrap())
+                        .unwrap()
+                        .attribute("id")
+                        .unwrap()
+                        .to_owned(),
+                )
+            } else {
+                if let Some(part) = old_part {
+                    let has_relationships = match package.part_relationships(&part) {
+                        Ok(relationships) => !relationships.is_empty(),
+                        Err(PackageError::MissingPartRelationships(_)) => false,
+                        Err(error) => return Err(package_failure(error)),
+                    };
+                    if has_relationships {
+                        return Err(unsupported(
+                            "cannot copy a header/footer with its own relationships",
+                        ));
+                    }
+                }
+                Some(add_header_footer_part(
+                    package,
+                    main,
+                    operation.kind,
+                    bytes,
+                    &mut replaced,
+                    &mut added,
+                )?)
+            }
+        }
+    };
+    let reference = new_id
+        .as_ref()
+        .map(|id| variant_reference_xml(source, section, operation.kind, operation.variant, id))
+        .transpose()?
+        .unwrap_or_default();
+    if let Some(own) = own {
+        patches.push(Patch {
+            span: source.node(own).unwrap().span(),
+            replacement: reference.into_bytes(),
+        });
+    } else if !reference.is_empty() {
+        patches.push(section_reference_patch(
+            source,
+            section,
+            operation.kind,
+            reference,
+        )?);
+    }
+    // Preserve the following section's previous effective content when its reference
+    // is absent. An explicit link request changes only the selected section as well.
+    if let Some(next) = ids.get(index + 1).copied() {
+        if variant_reference(source, next, operation.kind, operation.variant)?.is_none() {
+            let id = if let Some(reference) = effective {
+                source
+                    .node(reference)
+                    .unwrap()
+                    .attribute("id")
+                    .unwrap()
+                    .to_owned()
+            } else {
+                add_header_footer_part(
+                    package,
+                    main,
+                    operation.kind,
+                    canonical_header_footer_xml(operation.kind, "").into_bytes(),
+                    &mut replaced,
+                    &mut added,
+                )?
+            };
+            patches.push(section_reference_patch(
+                source,
+                next,
+                operation.kind,
+                variant_reference_xml(source, next, operation.kind, operation.variant, &id)?,
+            )?);
+        }
+    }
+    replaced.push((
+        main.name.clone(),
+        apply_patches(source, section_patches(source, patches)?)?,
+    ));
+    let replaced_refs: Vec<_> = replaced
+        .iter()
+        .map(|(n, b)| (n.clone(), b.as_slice()))
+        .collect();
+    let added_refs: Vec<_> = added
+        .iter()
+        .map(|(n, b)| (n.clone(), b.as_slice()))
+        .collect();
+    let output = package
+        .write_package_with_named_changes_to_vec(&replaced_refs, &added_refs)
+        .map_err(package_failure)?;
+    let check = Package::from_bytes(output.clone()).map_err(document_invalid)?;
+    check.verify().map_err(document_invalid)?;
+    let (check_main, after) = crate::open_main_source(&check).map_err(document_invalid)?;
+    if body_block_signatures(source)? != body_block_signatures(&after)? {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "header/footer edit changed body content",
+        ));
+    }
+    let before = inspect_sections(package, main, source)?;
+    let actual = inspect_sections(&check, &check_main, &after)?;
+    if before.len() != actual.len() {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "header/footer edit changed section count",
+        ));
+    }
+    let selected = actual[index]
+        .headers_footers
+        .iter()
+        .find(|item| {
+            item.kind
+                == if operation.kind == HeaderFooterKind::Header {
+                    "header"
+                } else {
+                    "footer"
+                }
+                && item.variant == variant_name(operation.variant)
+        })
+        .unwrap();
+    let matches = match &operation.change {
+        SectionHeaderFooterChange::Inherit => selected.linked_to_previous,
+        SectionHeaderFooterChange::Unlink => !selected.linked_to_previous,
+        SectionHeaderFooterChange::SetText(text) => {
+            selected.text.as_deref() == Some(text.as_str()) && !selected.linked_to_previous
+        }
+        SectionHeaderFooterChange::SetPageNumber(alignment) => {
+            selected.page_number_alignment.as_deref() == alignment.map(page_number_alignment_name)
+        }
+    };
+    if !matches {
+        return Err(OperationResult::failed(
+            "DOCUMENT_INVALID",
+            "section header/footer does not match request",
+        ));
+    }
+    for (other, (before, after)) in before.iter().zip(&actual).enumerate() {
+        for (a, b) in before.headers_footers.iter().zip(&after.headers_footers) {
+            if (other != index
+                || a.kind
+                    != if operation.kind == HeaderFooterKind::Header {
+                        "header"
+                    } else {
+                        "footer"
+                    }
+                || a.variant != variant_name(operation.variant))
+                && (a.text.as_deref().unwrap_or("") != b.text.as_deref().unwrap_or("")
+                    || a.page_number_alignment != b.page_number_alignment
+                    || a.supported != b.supported)
+            {
+                return Err(OperationResult::failed(
+                    "DOCUMENT_INVALID",
+                    "header/footer edit changed another variant or section",
+                ));
+            }
+        }
+    }
+    Ok(output)
 }

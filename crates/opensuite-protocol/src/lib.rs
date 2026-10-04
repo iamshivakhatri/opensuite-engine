@@ -108,6 +108,11 @@ const DOCX_CAPABILITIES: &[&str] = &[
     "set_page_setup",
     "set_header_footer_text",
     "set_page_number",
+    "inspect_sections",
+    "insert_section_break",
+    "set_section_properties",
+    "set_section_header_footer",
+    "set_odd_even_headers",
     "insert_paragraph",
     "insert_paragraphs",
     "insert_paragraph_after",
@@ -240,7 +245,66 @@ pub struct SetPageSetup {
     pub base_revision: Option<String>,
 }
 
-/// The default header or footer of the supported single document section.
+/// A section handle returned by inspection. Re-inspect after any mutation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SectionTarget {
+    pub handle: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SectionBreakType {
+    NextPage,
+    Continuous,
+    OddPage,
+    EvenPage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InsertSectionBreak {
+    pub placement: ParagraphPlacement,
+    pub break_type: SectionBreakType,
+}
+
+/// Edits only the selected section. None leaves a property unchanged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetSectionProperties {
+    pub target: SectionTarget,
+    pub page_setup: Option<SetPageSetup>,
+    pub different_first_page: Option<bool>,
+    pub break_type: Option<SectionBreakType>,
+    pub page_number_start: Option<PropertyPatch<u32>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HeaderFooterVariant {
+    Default,
+    First,
+    Even,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SectionHeaderFooterChange {
+    Inherit,
+    Unlink,
+    SetText(String),
+    SetPageNumber(Option<PageNumberAlignment>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetSectionHeaderFooter {
+    pub target: SectionTarget,
+    pub kind: HeaderFooterKind,
+    pub variant: HeaderFooterVariant,
+    pub change: SectionHeaderFooterChange,
+}
+
+/// Explicit document-wide setting; affects every section.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetOddEvenHeaders {
+    pub enabled: bool,
+}
+
+/// A header or footer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HeaderFooterKind {
     Header,
@@ -1591,7 +1655,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","pictures","fields","content_controls","tracked_changes","comments","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(!json.contains("mutation"));
         assert!(!json.contains("render"));

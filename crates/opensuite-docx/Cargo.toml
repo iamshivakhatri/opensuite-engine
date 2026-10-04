@@ -11,6 +11,7 @@ publish = false
 opensuite-opc = { path = "../opensuite-opc" }
 opensuite-protocol = { path = "../opensuite-protocol" }
 quick-xml = "0.37"
+serde = { version = "1", features = ["derive"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

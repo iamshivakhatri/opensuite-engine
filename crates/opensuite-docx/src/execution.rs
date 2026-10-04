@@ -2,26 +2,29 @@ use opensuite_opc::Package;
 use opensuite_protocol::{
     CreateTable, DeletePageBreak, DeleteParagraph, DeletePicture, DeleteTable, DeleteTableColumn,
     DeleteTableRow, DeleteTableRowTarget, Diagnostic, DiagnosticSeverity, FindText, FindTextResult,
-    InsertPageBreak, InsertParagraph, InsertParagraphs, InsertPicture, InsertTableColumnAfter,
-    InsertTableRowAfter, InsertTableRowsAfter, InspectDocx, InspectDocxResult, InspectTextContext,
-    InspectTextContextResult, OperationResult, ReplacePicture, ReplaceText, SetContentControlText,
-    SetHeaderFooterText, SetHyperlink, SetPageNumber, SetPageSetup, SetParagraphFormatting,
-    SetParagraphStyle, SetParagraphsList, SetPictureSize, SetTableCellShading,
-    SetTableCellsFormatting, SetTableCellsText, SetTableColumnWidths, SetTableFormatting,
-    SetTextFormatting,
+    InsertPageBreak, InsertParagraph, InsertParagraphs, InsertPicture, InsertSectionBreak,
+    InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter, InspectDocx,
+    InspectDocxResult, InspectTextContext, InspectTextContextResult, OperationResult,
+    ReplacePicture, ReplaceText, SetContentControlText, SetHeaderFooterText, SetHyperlink,
+    SetOddEvenHeaders, SetPageNumber, SetPageSetup, SetParagraphFormatting, SetParagraphStyle,
+    SetParagraphsList, SetPictureSize, SetSectionHeaderFooter, SetSectionProperties,
+    SetTableCellShading, SetTableCellsFormatting, SetTableCellsText, SetTableColumnWidths,
+    SetTableFormatting, SetTextFormatting,
 };
 
 use crate::{
     create_table_to_vec, delete_page_break_to_vec, delete_paragraph_to_vec, delete_picture_to_vec,
     delete_table_column_to_vec, delete_table_row_to_vec, delete_table_to_vec,
     insert_page_break_to_vec, insert_paragraph_to_vec, insert_paragraphs_to_vec,
-    insert_picture_to_vec, insert_table_column_after_to_vec, insert_table_row_after_to_vec,
-    insert_table_rows_after_to_vec, open_main_source, replace_picture_to_vec, replace_text_to_vec,
-    set_content_control_text_to_vec, set_header_footer_text_to_vec, set_hyperlink_to_vec,
+    insert_picture_to_vec, insert_section_break_to_vec, insert_table_column_after_to_vec,
+    insert_table_row_after_to_vec, insert_table_rows_after_to_vec, open_main_source,
+    replace_picture_to_vec, replace_text_to_vec, set_content_control_text_to_vec,
+    set_header_footer_text_to_vec, set_hyperlink_to_vec, set_odd_even_headers_to_vec,
     set_page_number_to_vec, set_page_setup_to_vec, set_paragraph_formatting_to_vec,
     set_paragraph_style_to_vec, set_paragraphs_list_to_vec, set_picture_size_to_vec,
-    set_table_cell_shading_to_vec, set_table_cells_formatting_to_vec, set_table_cells_text_to_vec,
-    set_table_column_widths_to_vec, set_table_formatting_to_vec, set_text_formatting_to_vec,
+    set_section_header_footer_to_vec, set_section_properties_to_vec, set_table_cell_shading_to_vec,
+    set_table_cells_formatting_to_vec, set_table_cells_text_to_vec, set_table_column_widths_to_vec,
+    set_table_formatting_to_vec, set_text_formatting_to_vec,
 };
 
 /// The result of executing one DOCX operation against an immutable artifact.
@@ -400,6 +403,30 @@ macro_rules! execute_paragraph_mutation {
         }
     };
 }
+execute_paragraph_mutation!(
+    execute_docx_insert_section_break,
+    InsertSectionBreak,
+    insert_section_break_to_vec,
+    "insert_section_break"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_section_properties,
+    SetSectionProperties,
+    set_section_properties_to_vec,
+    "set_section_properties"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_section_header_footer,
+    SetSectionHeaderFooter,
+    set_section_header_footer_to_vec,
+    "set_section_header_footer"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_odd_even_headers,
+    SetOddEvenHeaders,
+    set_odd_even_headers_to_vec,
+    "set_odd_even_headers"
+);
 execute_paragraph_mutation!(
     execute_docx_delete_paragraph,
     DeleteParagraph,
@@ -797,6 +824,17 @@ fn structured_failure(
         }
     }
     result
+}
+
+/// Loads one immutable artifact for ordered section inspection.
+pub fn inspect_docx_sections(
+    input_artifact: Vec<u8>,
+) -> Result<Vec<crate::SectionInspection>, OperationResult> {
+    let package = Package::from_bytes(input_artifact)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    let (main, source) = open_main_source(&package)
+        .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+    crate::inspect_sections(&package, &main, &source)
 }
 
 #[cfg(test)]

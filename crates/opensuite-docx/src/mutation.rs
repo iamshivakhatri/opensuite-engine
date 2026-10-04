@@ -6,16 +6,18 @@ use opensuite_opc::{Package, PackageError, Part, PartName, RelationshipTarget};
 use opensuite_protocol::{
     AffordanceReason, ContentControlTarget, CreateTable, DeletePageBreak, DeleteParagraph,
     DeletePicture, DeleteTable, DeleteTableColumn, DeleteTableRow, DeleteTableRowTarget,
-    HeaderFooterKind, InsertPageBreak, InsertParagraph, InsertParagraphAfter, InsertParagraphs,
-    InsertPicture, InsertTableColumnAfter, InsertTableRowAfter, InsertTableRowsAfter,
-    OperationResult, PageBreakTarget, PageMargins, PageNumberAlignment, PageOrientation, PaperSize,
-    ParagraphFormattingPatch, ParagraphListKind, ParagraphPlacement, PropertyPatch, ReplacePicture,
-    ReplaceText, SetContentControlText, SetHeaderFooterText, SetHyperlink, SetPageNumber,
-    SetPageSetup, SetParagraphFormatting, SetParagraphStyle, SetParagraphsList, SetPictureSize,
-    SetTableCellShading, SetTableCellText, SetTableCellsFormatting, SetTableCellsText,
-    SetTableColumnWidths, SetTableFormatting, SetTextFormatting, TableAlignment, TableBorders,
-    TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget, TableFormattingPatch,
-    TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
+    HeaderFooterKind, HeaderFooterVariant, InsertPageBreak, InsertParagraph, InsertParagraphAfter,
+    InsertParagraphs, InsertPicture, InsertSectionBreak, InsertTableColumnAfter,
+    InsertTableRowAfter, InsertTableRowsAfter, OperationResult, PageBreakTarget, PageMargins,
+    PageNumberAlignment, PageOrientation, PaperSize, ParagraphFormattingPatch, ParagraphListKind,
+    ParagraphPlacement, PropertyPatch, ReplacePicture, ReplaceText, SectionBreakType,
+    SectionHeaderFooterChange, SectionTarget, SetContentControlText, SetHeaderFooterText,
+    SetHyperlink, SetOddEvenHeaders, SetPageNumber, SetPageSetup, SetParagraphFormatting,
+    SetParagraphStyle, SetParagraphsList, SetPictureSize, SetSectionHeaderFooter,
+    SetSectionProperties, SetTableCellShading, SetTableCellText, SetTableCellsFormatting,
+    SetTableCellsText, SetTableColumnWidths, SetTableFormatting, SetTextFormatting, TableAlignment,
+    TableBorders, TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget,
+    TableFormattingPatch, TableRowTarget, TableTarget, TextFormattingPatch, TextTarget,
 };
 
 use crate::{NodeId, RevisionView, SemanticError, SourceDocument, SourceNodeKind, SourceSpan};
@@ -64,6 +66,7 @@ mod page_number;
 mod page_setup;
 mod paragraph;
 mod picture;
+mod sections;
 mod table;
 mod text;
 
@@ -89,6 +92,7 @@ pub use page_number::*;
 pub use page_setup::*;
 pub use paragraph::*;
 pub use picture::*;
+pub use sections::*;
 pub use table::*;
 pub use text::*;
 

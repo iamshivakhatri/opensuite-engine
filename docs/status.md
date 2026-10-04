@@ -31,8 +31,10 @@ not started.
   request may safely target separate source-ordered direct-body runs,
   external HTTP(S) hyperlinks, inline PNG/JPEG insertion and replacement,
   supported picture deletion and proportional resizing.
-- Supports dedicated page breaks, single-section page setup, simple default
-  header/footer text, and simple header/footer PAGE fields.
+- Supports real next/continuous/odd/even-page section breaks, independently
+  targeted page setup, first-page behavior, numbering restart/continue, simple
+  default/first/even header/footer text and PAGE fields, and safe link/unlink.
+  Odd/even behavior is explicitly document-wide; legacy single-section APIs remain.
 - Uses typed operations, structured diagnostics, source-local safety checks,
   package verification, reopen checks, and operation-specific postconditions.
   Semantic edit failures now report bounded ambiguity candidates, failed row or
@@ -43,7 +45,7 @@ not started.
 The adapter exposes capability discovery, blank-document creation, inspection,
 text search, text replacement, paragraph insertion/deletion/style/formatting,
 text formatting, table operations, page breaks, page setup, default
-headers/footers, page numbers, lists, hyperlinks, and picture insertion,
+headers/footers, page numbers, section inspection/editing/linkage, lists, hyperlinks, and picture insertion,
 deletion, resizing, replacement, and targeting inspection, plus simple
 content-control text updates. DOCX mutation capabilities are Node-exposed.
 

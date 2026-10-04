@@ -80,8 +80,14 @@ pub fn set_page_number_to_vec(
         };
         replaced.push((part.name, apply_patches(&part_source, vec![patch])?));
     } else if let Some(alignment) = operation.alignment {
-        let part_name = next_header_footer_part_name(package, operation.kind)?;
-        let relationship_id = next_relationship_id(package, main)?;
+        let relationship_id = add_header_footer_part(
+            package,
+            main,
+            operation.kind,
+            canonical_page_number_header_footer_xml(operation.kind, alignment).into_bytes(),
+            &mut replaced,
+            &mut added,
+        )?;
         document = apply_patches(
             source,
             vec![section_reference_patch(
@@ -91,48 +97,6 @@ pub fn set_page_number_to_vec(
                 header_footer_reference_xml(source, section, operation.kind, &relationship_id)?,
             )?],
         )?;
-        let rels_name = relationship_part_name(main)?;
-        let (exists, rels) = relationship_xml(package, main)?;
-        let target = part_name
-            .as_str()
-            .rsplit('/')
-            .next()
-            .expect("part file name");
-        let relation = format!(
-            r#"<Relationship Id="{relationship_id}" Type="{}" Target="{target}"/>"#,
-            header_footer_relationship_type(operation.kind)
-        );
-        let rels = append_xml_element(&rels, &relation)?;
-        if exists {
-            replaced.push((rels_name, rels));
-        } else {
-            added.push((rels_name, rels));
-        }
-        added.push((
-            part_name.clone(),
-            canonical_page_number_header_footer_xml(operation.kind, alignment).into_bytes(),
-        ));
-        let types_name = PartName::parse("/[Content_Types].xml").map_err(package_failure)?;
-        let types = package
-            .read_part_by_name(&types_name)
-            .map_err(package_failure)?;
-        let marker = format!(r#"PartName="{}""#, part_name.as_str());
-        if !types
-            .windows(marker.len())
-            .any(|value| value == marker.as_bytes())
-        {
-            replaced.push((
-                types_name,
-                append_xml_element(
-                    &types,
-                    &format!(
-                        r#"<Override PartName="{}" ContentType="{}"/>"#,
-                        part_name.as_str(),
-                        header_footer_content_type(operation.kind)
-                    ),
-                )?,
-            ));
-        }
     } else {
         return Err(OperationResult::failed(
             "TARGET_NOT_FOUND",

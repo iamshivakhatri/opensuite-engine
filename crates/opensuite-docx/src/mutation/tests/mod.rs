@@ -17,3 +17,5 @@ mod table_quality;
 mod table_row;
 mod text;
 mod text_formatting;
+
+mod sections;

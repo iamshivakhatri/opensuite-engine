@@ -6,6 +6,7 @@ mod hyperlinks;
 mod lists;
 mod page_composition;
 mod pictures;
+mod sections;
 mod table_cell_formatting;
 mod text_formatting;
 pub use content_controls::execute_docx_set_content_control_text_node;
@@ -43,6 +44,10 @@ pub use page_composition::{
 pub use pictures::{
     execute_docx_delete_picture_node, execute_docx_insert_picture_node,
     execute_docx_replace_picture_node, execute_docx_set_picture_size_node,
+};
+pub use sections::{
+    insert_section_break, inspect_docx_sections, set_odd_even_headers, set_section_header_footer,
+    set_section_properties,
 };
 pub use table_cell_formatting::execute_docx_set_table_cells_formatting_node;
 pub use text_formatting::execute_docx_set_text_formatting_node;
@@ -553,6 +558,11 @@ fn node_docx_capability(capability: &str) -> bool {
             | "set_page_setup"
             | "set_header_footer_text"
             | "set_page_number"
+            | "inspect_sections"
+            | "insert_section_break"
+            | "set_section_properties"
+            | "set_section_header_footer"
+            | "set_odd_even_headers"
             | "insert_paragraph"
             | "insert_paragraphs"
             | "delete_paragraph"

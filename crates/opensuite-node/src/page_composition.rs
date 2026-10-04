@@ -131,7 +131,7 @@ pub struct PageCompositionTask<T> {
 }
 
 impl<T: Send> PageCompositionTask<T> {
-    fn new(
+    pub(crate) fn new(
         input: Buffer,
         operation: std::result::Result<T, &'static str>,
         run: fn(Vec<u8>, &T) -> DocxExecutionResult,
@@ -166,7 +166,7 @@ impl<T: Send> Task for PageCompositionTask<T> {
     }
 }
 
-fn paragraph_placement(
+pub(crate) fn paragraph_placement(
     input: ParagraphPlacementInput,
 ) -> std::result::Result<ParagraphPlacement, &'static str> {
     match input.kind.as_str() {
@@ -184,7 +184,9 @@ fn paragraph_placement(
     }
 }
 
-fn page_setup(input: SetPageSetupInput) -> std::result::Result<SetPageSetup, &'static str> {
+pub(crate) fn page_setup(
+    input: SetPageSetupInput,
+) -> std::result::Result<SetPageSetup, &'static str> {
     let margins = [
         input.top_margin_twips,
         input.right_margin_twips,
@@ -216,7 +218,9 @@ fn page_setup(input: SetPageSetupInput) -> std::result::Result<SetPageSetup, &'s
     })
 }
 
-fn header_footer_kind(value: &str) -> std::result::Result<HeaderFooterKind, &'static str> {
+pub(crate) fn header_footer_kind(
+    value: &str,
+) -> std::result::Result<HeaderFooterKind, &'static str> {
     match value {
         "header" => Ok(HeaderFooterKind::Header),
         "footer" => Ok(HeaderFooterKind::Footer),
@@ -224,7 +228,7 @@ fn header_footer_kind(value: &str) -> std::result::Result<HeaderFooterKind, &'st
     }
 }
 
-fn page_number_alignment(
+pub(crate) fn page_number_alignment(
     value: Option<String>,
 ) -> std::result::Result<Option<PageNumberAlignment>, &'static str> {
     match value.as_deref() {
