@@ -744,3 +744,5 @@ module.exports.executeDocxSetOddEvenHeaders = nativeBinding.executeDocxSetOddEve
 
 module.exports.executeDocxCreateStyle = nativeBinding.executeDocxCreateStyle
 module.exports.executeDocxUpdateStyle = nativeBinding.executeDocxUpdateStyle
+
+module.exports.inspectDocxLayout = nativeBinding.inspectDocxLayout

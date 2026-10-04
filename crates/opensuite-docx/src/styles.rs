@@ -123,6 +123,8 @@ pub struct ParagraphFormatting {
     pub hanging_indent_twips: Option<i32>,
     pub keep_with_next: Option<bool>,
     pub keep_lines: Option<bool>,
+    pub page_break_before: Option<bool>,
+    pub widow_control: Option<bool>,
 }
 
 impl ParagraphFormatting {
@@ -156,6 +158,12 @@ impl ParagraphFormatting {
         }
         if other.keep_lines.is_some() {
             self.keep_lines = other.keep_lines;
+        }
+        if other.page_break_before.is_some() {
+            self.page_break_before = other.page_break_before;
+        }
+        if other.widow_control.is_some() {
+            self.widow_control = other.widow_control;
         }
     }
 }
@@ -607,6 +615,10 @@ pub(crate) fn paragraph_formatting(
             }
             "keepNext" => formatting.keep_with_next = Some(is_enabled(node.attribute("val"))?),
             "keepLines" => formatting.keep_lines = Some(is_enabled(node.attribute("val"))?),
+            "pageBreakBefore" => {
+                formatting.page_break_before = Some(is_enabled(node.attribute("val"))?)
+            }
+            "widowControl" => formatting.widow_control = Some(is_enabled(node.attribute("val"))?),
             _ => {}
         }
     }

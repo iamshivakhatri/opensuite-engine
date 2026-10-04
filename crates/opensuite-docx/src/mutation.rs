@@ -93,6 +93,7 @@ pub use page_number::*;
 pub use page_setup::*;
 pub use paragraph::*;
 pub use picture::*;
+pub(crate) use sections::section_fingerprint;
 pub use sections::*;
 pub use styles::*;
 pub use table::*;

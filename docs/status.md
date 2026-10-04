@@ -46,10 +46,15 @@ not started.
   Semantic edit failures now report bounded ambiguity candidates, failed row or
   column selectors, unsafe-source reasons, and the failing atomic update index.
 
+- Provides bounded, read-only structural layout snapshots: section geometry and
+  block ownership, effective paragraph controls, table row/width inputs, and image
+  dimensions with safe width diagnostics. See [E1 layout inspection](e1-layout-inspection.md).
+  Rendered page counts are supplied only by an optional application-side renderer.
+
 ## Node/N-API
 
 The adapter exposes capability discovery, blank-document creation, inspection,
-bounded style snapshots,
+bounded style and layout snapshots,
 text search, text replacement, paragraph insertion/deletion/style/formatting,
 text formatting, table operations, page breaks, page setup, default
 headers/footers, page numbers, section inspection/editing/linkage, lists, hyperlinks, and picture insertion,

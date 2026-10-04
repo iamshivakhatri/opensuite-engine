@@ -91,6 +91,10 @@ pub struct ParagraphFormattingSnapshot {
     pub keep_with_next: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_lines: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_break_before: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub widow_control: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -117,6 +121,8 @@ impl From<&ParagraphFormatting> for ParagraphFormattingSnapshot {
             hanging_indent_twips: value.hanging_indent_twips,
             keep_with_next: value.keep_with_next,
             keep_lines: value.keep_lines,
+            page_break_before: value.page_break_before,
+            widow_control: value.widow_control,
         }
     }
 }
@@ -758,64 +764,67 @@ fn inspect_sections(
         .sections()
         .enumerate()
         .take(MAX_ITEMS)
-        .map(|(index, section)| {
-            let properties = section.properties();
-            let page_size = properties.page_size().unwrap_or_else(|error| {
-                collector.diagnostic(error.code(), "could not read section page size");
-                None
-            });
-            let margins = properties.page_margins().unwrap_or_else(|error| {
-                collector.diagnostic(error.code(), "could not read section margins");
-                None
-            });
-            let columns = properties.columns().unwrap_or_else(|error| {
-                collector.diagnostic(error.code(), "could not read section columns");
-                None
-            });
-            let page_number =
-                child(source, properties.source_id(), "pgNumType").and_then(|id| source.node(id));
-            let mut margin_values = BTreeMap::new();
-            if let Some(value) = margins {
-                for (name, item) in [
-                    ("top", value.top_twips),
-                    ("right", value.right_twips),
-                    ("bottom", value.bottom_twips),
-                    ("left", value.left_twips),
-                    ("header", value.header_twips),
-                    ("footer", value.footer_twips),
-                    ("gutter", value.gutter_twips),
-                ] {
-                    if let Some(item) = item {
-                        margin_values.insert(name.to_owned(), item);
-                    }
-                }
-            }
-            SectionSnapshot {
-                index: index as u32,
-                section_type: properties.section_type().map(section_type_name),
-                page_width_twips: page_size.as_ref().and_then(|value| value.width_twips),
-                page_height_twips: page_size.as_ref().and_then(|value| value.height_twips),
-                orientation: page_size
-                    .and_then(|value| value.orientation)
-                    .map(orientation_name),
-                margins_twips: margin_values,
-                column_count: columns.as_ref().and_then(|value| value.count),
-                column_spacing_twips: columns.as_ref().and_then(|value| value.spacing_twips),
-                equal_column_width: columns.and_then(|value| value.equal_width),
-                different_first_page: has_child(source, properties.source_id(), "titlePg"),
-                odd_even_headers: section
-                    .header_references()
-                    .chain(section.footer_references())
-                    .any(|reference| reference.reference_type() == &HeaderFooterType::Even),
-                page_number_start: page_number
-                    .and_then(|node| node.attribute("start"))
-                    .and_then(|value| value.parse().ok()),
-                page_number_format: page_number
-                    .and_then(|node| node.attribute("fmt"))
-                    .map(str::to_owned),
-            }
+        .filter_map(|(index, section)| {
+            section_snapshot(&section, source, index)
+                .map_err(|error| {
+                    collector.diagnostic(error.code(), "could not read section geometry")
+                })
+                .ok()
         })
         .collect()
+}
+
+pub(crate) fn section_snapshot(
+    section: &crate::Section<'_>,
+    source: &SourceDocument,
+    index: usize,
+) -> Result<SectionSnapshot, crate::SectionError> {
+    let properties = section.properties();
+    let page_size = properties.page_size()?;
+    let margins = properties.page_margins()?;
+    let columns = properties.columns()?;
+    let page_number =
+        child(source, properties.source_id(), "pgNumType").and_then(|id| source.node(id));
+    let mut margin_values = BTreeMap::new();
+    if let Some(value) = margins {
+        for (name, item) in [
+            ("top", value.top_twips),
+            ("right", value.right_twips),
+            ("bottom", value.bottom_twips),
+            ("left", value.left_twips),
+            ("header", value.header_twips),
+            ("footer", value.footer_twips),
+            ("gutter", value.gutter_twips),
+        ] {
+            if let Some(item) = item {
+                margin_values.insert(name.to_owned(), item);
+            }
+        }
+    }
+    Ok(SectionSnapshot {
+        index: index as u32,
+        section_type: properties.section_type().map(section_type_name),
+        page_width_twips: page_size.as_ref().and_then(|value| value.width_twips),
+        page_height_twips: page_size.as_ref().and_then(|value| value.height_twips),
+        orientation: page_size
+            .and_then(|value| value.orientation)
+            .map(orientation_name),
+        margins_twips: margin_values,
+        column_count: columns.as_ref().and_then(|value| value.count),
+        column_spacing_twips: columns.as_ref().and_then(|value| value.spacing_twips),
+        equal_column_width: columns.and_then(|value| value.equal_width),
+        different_first_page: has_child(source, properties.source_id(), "titlePg"),
+        odd_even_headers: section
+            .header_references()
+            .chain(section.footer_references())
+            .any(|reference| reference.reference_type() == &HeaderFooterType::Even),
+        page_number_start: page_number
+            .and_then(|node| node.attribute("start"))
+            .and_then(|value| value.parse().ok()),
+        page_number_format: page_number
+            .and_then(|node| node.attribute("fmt"))
+            .map(str::to_owned),
+    })
 }
 
 fn inspect_headers_footers(
@@ -931,7 +940,11 @@ fn inspect_headers_footers(
     result
 }
 
-fn inspect_table(source: &SourceDocument, table_id: crate::NodeId, index: u32) -> TableSnapshot {
+pub(crate) fn inspect_table(
+    source: &SourceDocument,
+    table_id: crate::NodeId,
+    index: u32,
+) -> TableSnapshot {
     let properties = child(source, table_id, "tblPr");
     let width_node = properties
         .and_then(|id| child(source, id, "tblW"))

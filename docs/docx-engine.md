@@ -14,6 +14,10 @@ does not aim to reproduce every Microsoft Word feature.
   list patterns, table appearance, sections, headers/footers, and theme references.
 - Custom paragraph and character style creation/update, with clear-to-inherit
   patches, parent/cycle and next-style validation. See [E1 style details](e1-custom-styles.md).
+- Read-only structural layout inspection, bounded section/block details, inherited
+  pagination controls, and table/image width diagnostics. Optional LibreOffice PDF
+  rendering lives outside Rust; exact block-to-page mapping remains deferred.
+  See [E1 layout inspection](e1-layout-inspection.md).
 - Paragraph creation and deletion, text replacement, existing paragraph styles,
   direct paragraph formatting, and direct text formatting including color,
   underline, highlight, strikethrough, and superscript/subscript.

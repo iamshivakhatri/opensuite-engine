@@ -1,3 +1,5 @@
+mod layout;
+pub use layout::inspect_layout;
 mod styles;
 use napi::bindgen_prelude::{AsyncTask, Buffer, Task};
 use napi::{Env, Result};
@@ -562,6 +564,7 @@ fn node_docx_capability(capability: &str) -> bool {
             | "set_header_footer_text"
             | "set_page_number"
             | "inspect_sections"
+            | "layout_snapshot"
             | "insert_section_break"
             | "set_section_properties"
             | "set_section_header_footer"

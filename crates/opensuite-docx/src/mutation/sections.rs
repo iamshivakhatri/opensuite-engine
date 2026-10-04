@@ -170,7 +170,7 @@ pub fn inspect_sections(
 }
 
 // Fixed FNV-1a fingerprint: deterministic, version-local safety, not a security identity.
-fn section_fingerprint(
+pub(crate) fn section_fingerprint(
     package: &Package,
     main: &Part,
     source: &SourceDocument,

@@ -7,6 +7,7 @@ mod field;
 mod header_footer;
 mod image_dimensions;
 mod inspection;
+mod layout_inspection;
 mod mutation;
 mod numbering;
 mod picture;
@@ -50,6 +51,7 @@ pub use image_dimensions::{
     read_jpeg_dimensions, read_png_dimensions,
 };
 pub use inspection::inspect_docx_document;
+pub use layout_inspection::{LayoutOptions, LayoutSnapshot, inspect_docx_layout};
 pub use mutation::{
     HeaderFooterInspection, PageNumberInspection, PageSetupInspection,
     SectionHeaderFooterInspection, SectionInspection, create_style_to_vec, create_table_to_vec,

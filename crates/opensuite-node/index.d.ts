@@ -199,3 +199,7 @@ export interface StyleInput {
 }
 export function executeDocxCreateStyle(input: Buffer, operation: StyleInput & { name: string }): Promise<ExecuteDocxResult>
 export function executeDocxUpdateStyle(input: Buffer, operation: StyleInput): Promise<ExecuteDocxResult>
+
+export interface LayoutOptions { blockOffset?: number; blockLimit?: number; sectionIndex?: number }
+/** JSON structural LayoutSnapshot. No rendered pagination or mutation. */
+export function inspectDocxLayout(input: Buffer, options?: LayoutOptions): Promise<string>

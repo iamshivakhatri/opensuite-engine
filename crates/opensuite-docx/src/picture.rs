@@ -98,6 +98,19 @@ impl Picture<'_> {
         package: &Package,
         owner: &Part,
     ) -> Result<ImageReference, PictureError> {
+        self.image_reference_with_relationships(
+            package,
+            &package
+                .part_relationships(owner)
+                .map_err(PictureError::Package)?,
+        )
+    }
+
+    pub(crate) fn image_reference_with_relationships(
+        &self,
+        package: &Package,
+        relationships: &[opensuite_opc::Relationship],
+    ) -> Result<ImageReference, PictureError> {
         let node = self
             .source
             .node(self.blip()?.ok_or(PictureError::MalformedPicture)?)
@@ -107,24 +120,22 @@ impl Picture<'_> {
             (None, Some(id)) => (id, false),
             (None, None) => return Err(PictureError::MissingImageRelationshipId),
         };
-        let relationship = package
-            .part_relationships(owner)
-            .map_err(PictureError::Package)?
-            .into_iter()
+        let relationship = relationships
+            .iter()
             .find(|relationship| relationship.id.as_str() == id)
             .ok_or_else(|| PictureError::MissingImageRelationship(id.to_owned()))?;
         if !IMAGE_REL.contains(&relationship.relationship_type.as_str()) {
             return Err(PictureError::WrongImageRelationshipType);
         }
-        match relationship.target {
+        match &relationship.target {
             RelationshipTarget::External { original: _ } if embedded => {
                 Err(PictureError::ExternalEmbeddedImage)
             }
             RelationshipTarget::External { original } => {
-                Ok(ImageReference::LinkedExternal(original))
+                Ok(ImageReference::LinkedExternal(original.clone()))
             }
             RelationshipTarget::Internal { part_name, .. } => {
-                let part = package.part(&part_name).map_err(PictureError::Package)?;
+                let part = package.part(part_name).map_err(PictureError::Package)?;
                 if embedded {
                     Ok(ImageReference::Embedded(ImagePart {
                         size_bytes: package.part_size(&part).map_err(PictureError::Package)?,
