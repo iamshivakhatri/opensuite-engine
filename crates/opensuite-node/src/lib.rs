@@ -1,7 +1,7 @@
 mod revisions;
 pub use revisions::{
-    delete_tracked_text, insert_tracked_text, inspect_tracked_changes,
-    replace_text_with_tracked_change,
+    accept_revision, delete_tracked_text, insert_tracked_text, inspect_tracked_changes,
+    reject_revision, replace_text_with_tracked_change,
 };
 mod comments;
 pub use comments::{add_comment, delete_comment, inspect_comments, update_comment};
@@ -564,6 +564,8 @@ fn node_docx_capability(capability: &str) -> bool {
             | "style_snapshot"
             | "inspect_comments"
             | "inspect_tracked_changes"
+            | "accept_revision"
+            | "reject_revision"
             | "insert_tracked_text"
             | "delete_tracked_text"
             | "replace_text_with_tracked_change"

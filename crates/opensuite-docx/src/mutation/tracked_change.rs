@@ -1,4 +1,4 @@
-//! Author ordinary text revisions using the existing exact selection and run splitter.
+//! Author and decide ordinary text revisions using source-preserving patches.
 use super::*;
 use crate::TrackedChangeKind;
 use opensuite_protocol::{
@@ -355,6 +355,261 @@ fn verify_authored(
     Ok(output)
 }
 
+pub fn accept_revision_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    op: &opensuite_protocol::AcceptRevision,
+) -> Result<Vec<u8>, OperationResult> {
+    decide_revision(package, main, source, &op.handle, true)
+}
+pub fn reject_revision_to_vec(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    op: &opensuite_protocol::RejectRevision,
+) -> Result<Vec<u8>, OperationResult> {
+    decide_revision(package, main, source, &op.handle, false)
+}
+
+fn decide_revision(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    handle: &str,
+    accept: bool,
+) -> Result<Vec<u8>, OperationResult> {
+    use crate::tracked_change::{inspect_source_revisions, revision_node, revision_stamp};
+    let parts: Vec<_> = handle.split(':').collect();
+    if parts.len() != 4 || parts[0] != "revision" {
+        return Err(failure(
+            "REVISION_NOT_FOUND",
+            "use a revision handle from fresh inspection",
+        ));
+    }
+    if parts[1] != revision_stamp(source) {
+        return Err(failure(
+            "STALE_HANDLE",
+            "document changed; inspect revisions again",
+        ));
+    }
+    let index = parts[2]
+        .parse::<usize>()
+        .map_err(|_| failure("REVISION_NOT_FOUND", "invalid revision handle"))?;
+    let before = inspect_source_revisions(source, index, 1);
+    let snapshot = before
+        .revisions
+        .first()
+        .filter(|r| r.handle == handle)
+        .ok_or_else(|| {
+            failure(
+                "REVISION_NOT_FOUND",
+                "revision handle does not identify a source revision",
+            )
+        })?;
+    if snapshot.structure != "supported" {
+        return Err(failure(
+            if snapshot.structure == "malformed" {
+                "MALFORMED_REVISION"
+            } else {
+                "UNSUPPORTED_REVISION_TYPE"
+            },
+            "only supported insertion/deletion revisions can be decided",
+        ));
+    }
+    let id = source
+        .node_ids()
+        .filter(|id| revision_node(source, *id))
+        .nth(index)
+        .unwrap();
+    let node = source.node(id).unwrap();
+    let SourceNodeKind::Element {
+        name,
+        start_tag,
+        end_tag: Some(end_tag),
+        ..
+    } = node.kind()
+    else {
+        return Err(failure(
+            "MALFORMED_REVISION",
+            "revision must have a content wrapper",
+        ));
+    };
+    // Keep this pass to run revisions directly inside a paragraph. Inspection can
+    // still describe richer content, but decisions never guess at its structure.
+    let parent = node.parent().unwrap();
+    if !word_element(source, parent, "p")
+        || source.children(id).any(|child| {
+            !matches!(source.node(child).unwrap().kind(), SourceNodeKind::Text)
+                && !word_element(source, child, "r")
+        })
+    {
+        return Err(failure(
+            "UNSUPPORTED_REVISION_TYPE",
+            "revision decisions require ordinary runs in a paragraph",
+        ));
+    }
+    for run in source
+        .children(id)
+        .filter(|child| word_element(source, *child, "r"))
+    {
+        if source.children(run).any(|child| {
+            !matches!(source.node(child).unwrap().kind(), SourceNodeKind::Text)
+                && !["rPr", "t", "delText", "tab", "br", "cr"]
+                    .iter()
+                    .any(|local| word_element(source, child, local))
+        }) {
+            return Err(failure(
+                "UNSUPPORTED_REVISION_TYPE",
+                "revision runs contain unsupported content",
+            ));
+        }
+    }
+    // Non-whitespace text outside a text element would become invalid paragraph/run content.
+    if source
+        .children(id)
+        .chain(source.children(id).flat_map(|run| source.children(run)))
+        .any(|child| {
+            matches!(source.node(child).unwrap().kind(), SourceNodeKind::Text)
+                && source
+                    .text_bytes(child)
+                    .is_some_and(|bytes| bytes.iter().any(|byte| !byte.is_ascii_whitespace()))
+        })
+    {
+        return Err(failure(
+            "MALFORMED_REVISION",
+            "revision contains text outside a text element",
+        ));
+    }
+    let deletion = name.local_name() == "del";
+    let span = node.span();
+    for child in source.node_ids().filter(|child| {
+        let s = source.node(*child).unwrap().span();
+        s.start >= start_tag.end && s.end <= end_tag.start
+    }) {
+        if (word_element(source, child, "delText") && !deletion)
+            || (word_element(source, child, "t") && deletion)
+        {
+            return Err(failure(
+                "MALFORMED_REVISION",
+                "revision uses incompatible text elements",
+            ));
+        }
+    }
+    let keep_content = accept != deletion;
+    let expected_text =
+        crate::tracked_change::text_after_decision(source, parent, id, keep_content)
+            .map_err(document_invalid)?;
+    let mut patches = Vec::new();
+    if keep_content {
+        // Dropping a wrapper must not drop namespace or inherited XML context used
+        // by retained content. Unused local prefixes (including ours) are safe.
+        let xml = std::str::from_utf8(source.original_bytes()).map_err(document_invalid)?;
+        let tag = &xml[start_tag.start + 1..start_tag.end - 1];
+        let element = quick_xml::events::BytesStart::from_content(
+            tag,
+            tag.find(char::is_whitespace).unwrap_or(tag.len()),
+        );
+        let content = &xml[start_tag.end..end_tag.start];
+        for attribute in element.attributes() {
+            let attribute = attribute.map_err(document_invalid)?;
+            let key = std::str::from_utf8(attribute.key.as_ref()).map_err(document_invalid)?;
+            if key == "xmlns"
+                || key.starts_with("xml:")
+                || key
+                    .strip_prefix("xmlns:")
+                    .is_some_and(|prefix| content.contains(&format!("{prefix}:")))
+            {
+                return Err(failure(
+                    "UNSUPPORTED_REVISION_TYPE",
+                    "retained content depends on wrapper XML context",
+                ));
+            }
+        }
+        patches.push(Patch {
+            span: *start_tag,
+            replacement: Vec::new(),
+        });
+        patches.push(Patch {
+            span: *end_tag,
+            replacement: Vec::new(),
+        });
+        if deletion {
+            for child in source
+                .node_ids()
+                .filter(|child| word_element(source, *child, "delText"))
+            {
+                let child = source.node(child).unwrap();
+                if child.span().start < start_tag.end || child.span().end > end_tag.start {
+                    continue;
+                }
+                if let SourceNodeKind::Element {
+                    start_tag, end_tag, ..
+                } = child.kind()
+                {
+                    for tag in std::iter::once(start_tag).chain(end_tag.iter()) {
+                        patches.push(Patch {
+                            span: *tag,
+                            replacement: text::rename_text_tag(&xml[tag.start..tag.end], "t")
+                                .into_bytes(),
+                        });
+                    }
+                }
+            }
+        }
+    } else {
+        patches.push(Patch {
+            span,
+            replacement: Vec::new(),
+        });
+    }
+    let xml = apply_patches(source, patches)?;
+    let output = package
+        .write_replaced_part_to_vec(main, &xml)
+        .map_err(document_invalid)?;
+    let reopened = Package::from_bytes(output.clone()).map_err(document_invalid)?;
+    reopened.verify().map_err(document_invalid)?;
+    let (_, after) = crate::open_main_source(&reopened).map_err(document_invalid)?;
+    let inspection = inspect_source_revisions(&after, 0, 1);
+    let after_paragraph = after
+        .node_ids()
+        .filter(|id| word_element(&after, *id, "p"))
+        .nth(snapshot.paragraph_index.unwrap())
+        .ok_or_else(|| failure("DOCUMENT_INVALID", "revision paragraph moved"))?;
+    if crate::tracked_change::text_for_view(&after, after_paragraph, RevisionView::Current)
+        .map_err(document_invalid)?
+        != expected_text
+    {
+        return Err(failure(
+            "DOCUMENT_INVALID",
+            "revision decision current text verification failed",
+        ));
+    }
+    let remaining = |source: &SourceDocument, skipped: Option<NodeId>| {
+        source
+            .node_ids()
+            .filter(|id| Some(*id) != skipped && revision_node(source, *id))
+            .map(|id| {
+                let span = source.node(id).unwrap().span();
+                source.original_bytes()[span.start..span.end].to_vec()
+            })
+            .collect::<Vec<_>>()
+    };
+    if inspection.total + 1 != before.total
+        || remaining(source, Some(id)) != remaining(&after, None)
+    {
+        return Err(failure(
+            "DOCUMENT_INVALID",
+            "revision count or unrelated revision preservation failed",
+        ));
+    }
+    Ok(output)
+}
+
+fn word_element(source: &SourceDocument, id: NodeId, local: &str) -> bool {
+    matches!(source.node(id).map(|n| n.kind()), Some(SourceNodeKind::Element { name, .. }) if name.local_name() == local && name.namespace_uri().is_some_and(|uri| NS.contains(&uri)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +629,68 @@ mod tests {
         .unwrap();
         let (main, source) = crate::open_main_source(&package).unwrap();
         (package, main, source)
+    }
+    #[test]
+    fn revision_decisions_preserve_runs_and_other_revisions() {
+        let properties = r#"<w:rPr><w:b/><w:color w:val="006400"/></w:rPr>"#;
+        for (kind, tag, accept, expected) in [
+            ("ins", "t", true, "A oldB"),
+            ("ins", "t", false, "AB"),
+            ("del", "delText", true, "AB"),
+            ("del", "delText", false, "A oldB"),
+        ] {
+            let other =
+                r#"<w:p><w:ins w:id="7" w:author="Lee"><w:r><w:t>other</w:t></w:r></w:ins></w:p>"#;
+            let (package, main, source) = document(&format!(
+                r#"<w:p><w:r><w:t>A</w:t></w:r><w:{kind} w:id="7" w:author="Sarah"><w:r>{properties}<w:{tag} xml:space="preserve"> old</w:{tag}><w:tab/><w:br/></w:r></w:{kind}><w:r><w:t>B</w:t></w:r></w:p>{other}"#
+            ));
+            let snapshot = crate::tracked_change::inspect_source_revisions(&source, 0, 20);
+            let handle = &snapshot.revisions[0].handle;
+            let output = decide_revision(&package, &main, &source, handle, accept).unwrap();
+            let after_package = Package::from_bytes(output.clone()).unwrap();
+            let (after_main, after) = crate::open_main_source(&after_package).unwrap();
+            assert_eq!(
+                crate::DocxDocument::new(&after)
+                    .unwrap()
+                    .paragraphs()
+                    .next()
+                    .unwrap()
+                    .text()
+                    .unwrap(),
+                expected
+            );
+            let xml = std::str::from_utf8(after.original_bytes()).unwrap();
+            assert!(xml.contains(other));
+            if accept == (kind == "ins") {
+                assert!(xml.contains(&format!(
+                    r#"{properties}<w:t xml:space="preserve"> old</w:t><w:tab/><w:br/>"#
+                )));
+            }
+            assert_eq!(crate::inspect_docx_tracked_changes(output, 0, 20).total, 1);
+            assert!(decide_revision(&after_package, &after_main, &after, handle, accept).is_err());
+            assert!(decide_revision(&package, &main, &source, "7", accept).is_err());
+        }
+    }
+
+    #[test]
+    fn revision_decisions_fail_without_output_on_unsafe_content() {
+        for revision in [
+            r#"<w:ins w:id="1"><w:del w:id="2"><w:r><w:delText>nested</w:delText></w:r></w:del></w:ins>"#,
+            r#"<w:moveFrom w:id="1"><w:r><w:delText>move</w:delText></w:r></w:moveFrom>"#,
+            r#"<w:ins><w:r><w:t>missing ID</w:t></w:r></w:ins>"#,
+            r#"<w:ins w:id="1"><w:r><w:rPr><w:rPrChange w:id="2"><w:rPr/></w:rPrChange></w:rPr><w:t>property</w:t></w:r></w:ins>"#,
+            r#"<w:ins w:id="1"><w:hyperlink><w:r><w:t>link</w:t></w:r></w:hyperlink></w:ins>"#,
+            r#"<w:ins w:id="1" xmlns:x="urn:unknown"><w:r x:flag="yes"><w:t>context</w:t></w:r></w:ins>"#,
+        ] {
+            let (package, main, source) = document(&format!("<w:p>{revision}</w:p>"));
+            let handle = crate::tracked_change::inspect_source_revisions(&source, 0, 1)
+                .revisions
+                .remove(0)
+                .handle;
+            let before = source.original_bytes().to_vec();
+            assert!(decide_revision(&package, &main, &source, &handle, true).is_err());
+            assert_eq!(source.original_bytes(), before);
+        }
     }
     #[test]
     fn tracked_replacement_preserves_formatting_and_imported_revisions() {

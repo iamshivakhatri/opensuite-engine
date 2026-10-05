@@ -426,16 +426,13 @@ pub(super) fn text_run_pieces(
     let close = xml(end_tag);
     let text_open = xml(text_start);
     let text_close = xml(text_end);
-    let prefix = word_prefix_for(source, text_node, "t")?;
     let rpr = String::from_utf8_lossy(&run_properties(source, run)).into_owned();
     let make = |value: &str, deleted: bool| {
         let mut text_open = text_open.clone();
         let mut text_close = text_close.clone();
         if deleted {
-            let name = qualify(&prefix, "t");
-            let deleted_name = qualify(&prefix, "delText");
-            text_open.replace_range(1..1 + name.len(), &deleted_name);
-            text_close = format!("</{deleted_name}>");
+            text_open = rename_text_tag(&text_open, "delText");
+            text_close = rename_text_tag(&text_close, "delText");
         }
         if requires_space_preservation(value) {
             text_open = edit_attribute(text_open, "xml:space", Some("preserve"));
@@ -455,4 +452,19 @@ pub(super) fn text_run_pieces(
             String::new()
         },
     ))
+}
+
+// Rename only a parsed text tag's local name, preserving its prefix and attributes.
+pub(super) fn rename_text_tag(tag: &str, local: &str) -> String {
+    let name_start = if tag.starts_with("</") { 2 } else { 1 };
+    let name_end = name_start
+        + tag[name_start..]
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .unwrap();
+    let local_start = tag[name_start..name_end]
+        .rfind(':')
+        .map_or(name_start, |n| name_start + n + 1);
+    let mut renamed = tag.to_owned();
+    renamed.replace_range(local_start..name_end, local);
+    renamed
 }

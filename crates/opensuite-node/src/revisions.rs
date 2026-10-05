@@ -125,3 +125,31 @@ pub fn replace_text_with_tracked_change(
         run: opensuite_docx::execute_docx_replace_text_with_tracked_change,
     })
 }
+
+#[napi(object)]
+pub struct RevisionDecisionInput {
+    pub handle: String,
+}
+
+#[napi(js_name = "executeDocxAcceptRevision")]
+pub fn accept_revision(
+    input: Buffer,
+    op: RevisionDecisionInput,
+) -> AsyncTask<SimpleTask<opensuite_protocol::AcceptRevision>> {
+    AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: opensuite_protocol::AcceptRevision { handle: op.handle },
+        run: opensuite_docx::execute_docx_accept_revision,
+    })
+}
+#[napi(js_name = "executeDocxRejectRevision")]
+pub fn reject_revision(
+    input: Buffer,
+    op: RevisionDecisionInput,
+) -> AsyncTask<SimpleTask<opensuite_protocol::RejectRevision>> {
+    AsyncTask::new(SimpleTask {
+        input: input.to_vec(),
+        operation: opensuite_protocol::RejectRevision { handle: op.handle },
+        run: opensuite_docx::execute_docx_reject_revision,
+    })
+}

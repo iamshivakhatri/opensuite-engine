@@ -434,10 +434,26 @@ macro_rules! execute_paragraph_mutation {
         }
     };
 }
+use crate::{accept_revision_to_vec, reject_revision_to_vec};
 use crate::{
     delete_tracked_text_to_vec, insert_tracked_text_to_vec, replace_text_with_tracked_change_to_vec,
 };
-use opensuite_protocol::{DeleteTrackedText, InsertTrackedText, ReplaceTextWithTrackedChange};
+use opensuite_protocol::{
+    AcceptRevision, DeleteTrackedText, InsertTrackedText, RejectRevision,
+    ReplaceTextWithTrackedChange,
+};
+execute_paragraph_mutation!(
+    execute_docx_accept_revision,
+    AcceptRevision,
+    accept_revision_to_vec,
+    "accept_revision"
+);
+execute_paragraph_mutation!(
+    execute_docx_reject_revision,
+    RejectRevision,
+    reject_revision_to_vec,
+    "reject_revision"
+);
 execute_paragraph_mutation!(
     execute_docx_insert_tracked_text,
     InsertTrackedText,

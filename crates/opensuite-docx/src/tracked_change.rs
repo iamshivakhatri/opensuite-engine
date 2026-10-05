@@ -92,6 +92,26 @@ pub(crate) fn text_for_view(
     text_inside(source, container_id, view, false)
 }
 
+// Calculate the selected paragraph's expected current text using the same collector.
+pub(crate) fn text_after_decision(
+    source: &SourceDocument,
+    paragraph: NodeId,
+    revision: NodeId,
+    keep: bool,
+) -> Result<String, SemanticError> {
+    let mut text = String::new();
+    for child in source.children(paragraph) {
+        if child == revision {
+            if keep {
+                text.push_str(&text_inside(source, child, RevisionView::Current, false)?);
+            }
+        } else {
+            collect_text(source, child, RevisionView::Current, true, false, &mut text)?;
+        }
+    }
+    Ok(text)
+}
+
 fn text_inside(
     source: &SourceDocument,
     container_id: NodeId,
@@ -174,6 +194,7 @@ pub struct RevisionInspection {
 #[serde(rename_all = "camelCase")]
 pub struct RevisionSnapshot {
     pub index: usize,
+    pub handle: String,
     pub id: Option<String>,
     pub kind: RevisionKind,
     pub author: Option<String>,
@@ -294,15 +315,45 @@ pub fn inspect_docx_tracked_changes(
             return result;
         }
     };
+    inspect_source_revisions(&source, offset, limit)
+}
+
+pub(crate) fn revision_stamp(source: &SourceDocument) -> String {
+    let hash = source
+        .original_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+    format!("{hash:016x}")
+}
+
+pub(crate) fn inspect_source_revisions(
+    source: &SourceDocument,
+    offset: usize,
+    limit: usize,
+) -> RevisionInspection {
+    let mut result = RevisionInspection {
+        ok: true,
+        total: 0,
+        insertion_count: 0,
+        deletion_count: 0,
+        unsupported_count: 0,
+        offset,
+        has_more: false,
+        revisions: Vec::new(),
+        diagnostics: Vec::new(),
+    };
+    let stamp = revision_stamp(source);
     // Reuse the source index; no additional XML parser or document tree.
     let mut paragraphs = std::collections::HashMap::new();
     let mut changes = Vec::new();
     let mut nested = std::collections::HashSet::new();
     for id in source.node_ids() {
-        if word(&source, id, "p") {
+        if word(source, id, "p") {
             paragraphs.insert(id, paragraphs.len());
         }
-        if !revision_node(&source, id) {
+        if !revision_node(source, id) {
             continue;
         }
         let mut paragraph = None;
@@ -314,8 +365,8 @@ pub fn inspect_docx_tracked_changes(
             }
             property |= ["pPr", "rPr", "trPr", "tcPr"]
                 .iter()
-                .any(|name| word(&source, ancestor, name));
-            if revision_node(&source, ancestor) {
+                .any(|name| word(source, ancestor, name));
+            if revision_node(source, ancestor) {
                 nested.insert(id);
                 nested.insert(ancestor);
             }
@@ -326,7 +377,7 @@ pub fn inspect_docx_tracked_changes(
     result.total = changes.len();
     let limit = limit.clamp(1, 100);
     for (index, (id, paragraph_index, property)) in changes.into_iter().enumerate() {
-        let kind = match kind(&source, id) {
+        let kind = match kind(source, id) {
             Some(TrackedChangeKind::Insertion) => RevisionKind::Insertion,
             Some(TrackedChangeKind::Deletion) => RevisionKind::Deletion,
             _ => RevisionKind::Unsupported,
@@ -334,7 +385,7 @@ pub fn inspect_docx_tracked_changes(
         let unavailable = !property
             && !nested.contains(&id)
             && !matches!(kind, RevisionKind::Unsupported)
-            && !simple_revision_content(&source, id);
+            && !simple_revision_content(source, id);
         let unsupported = unavailable
             || property
             || paragraph_index.is_none()
@@ -384,9 +435,9 @@ pub fn inspect_docx_tracked_changes(
             None
         } else {
             match (TrackedChange {
-                source: &source,
+                source,
                 source_id: id,
-                kind: self::kind(&source, id).unwrap(),
+                kind: self::kind(source, id).unwrap(),
             })
             .text()
             {
@@ -403,6 +454,7 @@ pub fn inspect_docx_tracked_changes(
         };
         result.revisions.push(RevisionSnapshot {
             index,
+            handle: format!("revision:{stamp}:{index}:{}", node.span().start),
             id: revision_id,
             kind,
             author,

@@ -238,3 +238,7 @@ export interface ReplaceTextWithTrackedChangeInput extends TrackedTextMetadata {
 export function executeDocxInsertTrackedText(input: Buffer, operation: InsertTrackedTextInput): Promise<ExecuteDocxResult>
 export function executeDocxDeleteTrackedText(input: Buffer, operation: DeleteTrackedTextInput): Promise<ExecuteDocxResult>
 export function executeDocxReplaceTextWithTrackedChange(input: Buffer, operation: ReplaceTextWithTrackedChangeInput): Promise<ExecuteDocxResult>
+
+export interface RevisionDecisionInput { handle: string }
+export function executeDocxAcceptRevision(input: Buffer, operation: RevisionDecisionInput): Promise<ExecuteDocxResult>
+export function executeDocxRejectRevision(input: Buffer, operation: RevisionDecisionInput): Promise<ExecuteDocxResult>
