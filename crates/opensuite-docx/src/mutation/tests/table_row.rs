@@ -435,3 +435,39 @@ fn delete_row_execute(
     let (main, source) = crate::open_main_source(&package).unwrap();
     delete_table_row_to_vec(&package, &main, &source, operation)
 }
+
+#[test]
+fn unsafe_row_deletion_refuses_without_output() {
+    let xml = format!(
+        r#"<w:document xmlns:w="{WORD}"><w:body><w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:p><w:bookmarkStart w:id="8" w:name="Keep"/><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:bookmarkEnd w:id="8"/><w:r><w:t>one</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>two</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#
+    );
+    let input = table_fixture(&xml);
+    let bytes = fs::read(&input).unwrap();
+    let table = TableTarget {
+        header_cells: Vec::new(),
+        occurrence: None,
+        handle: Some("t0".to_owned()),
+    };
+    let result = crate::execute_docx_delete_table_row(
+        bytes.clone(),
+        &DeleteTableRow {
+            table,
+            row: DeleteTableRowTarget::Semantic(TableCellRow::Index {
+                index: 1,
+                expected_first_cell_text: "one".to_owned(),
+            }),
+            base_revision: None,
+        },
+    );
+    assert_eq!(
+        result.operation.status,
+        opensuite_protocol::OperationStatus::Failed
+    );
+    assert!(result.output_artifact.is_none());
+    assert_eq!(
+        result.operation.diagnostics[0].reason_code.as_deref(),
+        Some("UNSUPPORTED_STRUCTURAL_DELETE")
+    );
+    assert_eq!(fs::read(&input).unwrap(), bytes);
+    fs::remove_file(input).unwrap();
+}

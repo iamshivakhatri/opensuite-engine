@@ -55,6 +55,8 @@ pub fn delete_table_to_vec(
                 .with_reason_code(reason.as_str()),
         );
     }
+    let span = source.node(table).expect("table exists").span();
+    deletion::ensure_safe_deletion(source, &[span])?;
     let mut expected = all_table_rows(source)?;
     expected.remove(table_index);
     write_patches_to_vec(
@@ -62,7 +64,7 @@ pub fn delete_table_to_vec(
         main,
         source,
         vec![Patch {
-            span: source.node(table).expect("table exists").span(),
+            span,
             replacement: Vec::new(),
         }],
     )

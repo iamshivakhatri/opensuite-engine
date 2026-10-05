@@ -105,3 +105,37 @@ fn inserts_a_column_in_the_google_docs_table_without_rewriting_its_grid_change()
     assert!(output_xml.contains("<w:tblGrid><w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/><w:tblGridChange"));
     fs::remove_file(output_path).unwrap();
 }
+
+#[test]
+fn unsafe_column_deletion_refuses_without_output() {
+    let xml = format!(
+        r#"<w:document xmlns:w="{WORD}"><w:body><w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:bookmarkStart w:id="8" w:name="Keep"/><w:r><w:t>one</w:t></w:r></w:p></w:tc><w:tc><w:p><w:bookmarkEnd w:id="8"/><w:r><w:t>two</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#
+    );
+    let input = table_fixture(&xml);
+    let bytes = fs::read(&input).unwrap();
+    let table = TableTarget {
+        header_cells: Vec::new(),
+        occurrence: None,
+        handle: Some("t0".to_owned()),
+    };
+    let result = crate::execute_docx_delete_table_column(
+        bytes.clone(),
+        &DeleteTableColumn {
+            table,
+            column_header: String::new(),
+            column_handle: Some("t0:c0".to_owned()),
+            base_revision: None,
+        },
+    );
+    assert_eq!(
+        result.operation.status,
+        opensuite_protocol::OperationStatus::Failed
+    );
+    assert!(result.output_artifact.is_none());
+    assert_eq!(
+        result.operation.diagnostics[0].reason_code.as_deref(),
+        Some("UNSUPPORTED_STRUCTURAL_DELETE")
+    );
+    assert_eq!(fs::read(&input).unwrap(), bytes);
+    fs::remove_file(input).unwrap();
+}

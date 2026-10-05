@@ -3,6 +3,7 @@ use super::*;
 mod cell;
 mod cell_formatting;
 mod column;
+mod deletion;
 mod formatting;
 mod lifecycle;
 mod row;

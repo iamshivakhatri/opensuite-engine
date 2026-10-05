@@ -1,4 +1,5 @@
 use super::super::*;
+use super::support::*;
 
 #[test]
 fn creates_a_readable_table_with_positive_grid_widths() {
@@ -35,4 +36,36 @@ fn creates_a_readable_table_with_positive_grid_widths() {
             vec!["1".to_owned(), "2".to_owned()]
         ]]
     );
+}
+
+#[test]
+fn unsafe_table_deletion_refuses_without_output() {
+    let xml = format!(
+        r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:commentRangeStart w:id="7"/><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:p><w:commentRangeEnd w:id="7"/><w:r><w:commentReference w:id="7"/></w:r><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>one</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>two</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#
+    );
+    let input = table_fixture(&xml);
+    let bytes = fs::read(&input).unwrap();
+    let table = TableTarget {
+        header_cells: Vec::new(),
+        occurrence: None,
+        handle: Some("t0".to_owned()),
+    };
+    let result = crate::execute_docx_delete_table(
+        bytes.clone(),
+        &DeleteTable {
+            table,
+            base_revision: None,
+        },
+    );
+    assert_eq!(
+        result.operation.status,
+        opensuite_protocol::OperationStatus::Failed
+    );
+    assert!(result.output_artifact.is_none());
+    assert_eq!(
+        result.operation.diagnostics[0].reason_code.as_deref(),
+        Some("UNSUPPORTED_STRUCTURAL_DELETE")
+    );
+    assert_eq!(fs::read(&input).unwrap(), bytes);
+    fs::remove_file(input).unwrap();
 }

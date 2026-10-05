@@ -67,6 +67,25 @@ not started.
   Rendered page counts are supplied only by an optional application-side renderer.
 
 
+## Protected structural deletion
+
+Table, row, and column deletion validate every planned source region before
+writing output. One shared guard uses the existing parsed source index and field
+parser to refuse intersections with comment/bookmark/field ranges, including
+ranges enclosing deleted content. Permission, move/custom-XML, and proof/error
+ranges are also protected. Fully contained protected ranges, comment references,
+content controls, hyperlinks, note/media/object references, section properties,
+and tracked property changes are conservatively refused; no dependent cleanup
+or range repair is attempted. Malformed paired ranges or fields in the main part
+also refuse deletion. Existing table shape and revision-wrapper guards remain.
+
+Failures return `UNSUPPORTED_OPERATION` with `UNSUPPORTED_STRUCTURAL_DELETE`,
+a concise structure-specific message, and no output artifact through Rust and
+N-API. Column regions are checked together before any patch; ordinary simple
+deletions still reopen and verify table shape while retaining unrelated parts.
+Three generated regressions cover unsafe table/row/column deletion. No protocol,
+application, dependency, or version change.
+
 ## Word fields and table of contents
 
 `inspect_docx_fields` / Node `inspectDocxFields` uses the existing source-backed

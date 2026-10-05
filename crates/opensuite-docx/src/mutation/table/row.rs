@@ -122,6 +122,11 @@ pub fn delete_table_row_to_vec(
             }
         }
     };
+    let span = source
+        .node(rows[row_index].source_id())
+        .expect("row exists")
+        .span();
+    deletion::ensure_safe_deletion(source, &[span])?;
     let mut expected = all_table_rows(source)?;
     expected[table_index].remove(row_index);
     write_patches_to_vec(
@@ -129,10 +134,7 @@ pub fn delete_table_row_to_vec(
         main,
         source,
         vec![Patch {
-            span: source
-                .node(rows[row_index].source_id())
-                .expect("row exists")
-                .span(),
+            span,
             replacement: Vec::new(),
         }],
     )

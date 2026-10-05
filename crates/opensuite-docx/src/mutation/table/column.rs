@@ -217,6 +217,9 @@ pub fn delete_table_column_to_vec(
             replacement: Vec::new(),
         });
     }
+    let mut regions = patches.iter().map(|patch| patch.span).collect::<Vec<_>>();
+    regions.sort_unstable_by_key(|span| span.start);
+    deletion::ensure_safe_deletion(source, &regions)?;
     let mut expected = all_table_rows(source)?;
     for row in &mut expected[table_index] {
         row.remove(column);

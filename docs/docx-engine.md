@@ -49,6 +49,23 @@ DOCX mutations, including section editing, are exposed through Node/N-API.
 Capability details are kept in [status.md](status.md).
 
 
+## Structural deletion safety
+
+Deleting a table, row, or column refuses before mutation when any affected source
+region intersects a protected Word range or dependent structure. Comments,
+bookmarks, complex/simple fields, permission ranges, move/custom-XML ranges, and
+proof/error ranges remain intact. Fully contained protected structures are also
+refused in this pass: table deletion does not remove comment records or repair
+bookmark references. Affected content controls, hyperlinks, notes, media/objects,
+section properties, and tracked property changes fail safely. Malformed ranges
+or field markers in the main part conservatively block structural deletion.
+
+The existing Rust/N-API failure response identifies the unsafe structure with
+`UNSUPPORTED_STRUCTURAL_DELETE` and returns no output bytes. All column cells are
+checked together before applying patches. Safe deletions retain existing reopen,
+package, and table-shape verification; no separate whole-document range validator
+is needed because accepted deletions leave every protected range untouched.
+
 ## Word fields and table of contents
 
 `inspect_docx_fields` / Node `inspectDocxFields` uses the existing source-backed
