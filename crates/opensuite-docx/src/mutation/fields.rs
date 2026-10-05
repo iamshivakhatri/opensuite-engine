@@ -2,9 +2,10 @@
 use super::*;
 use opensuite_protocol::{FieldContent, InsertFields, InsertToc};
 
-// A local namespace on new paragraphs also supports imported documents that
-// use a default XML namespace (which cannot qualify field attributes).
-const FIELD_PREFIX: &str = "opensuiteField";
+// Qualify new field markup with the standard `w` prefix. Casual (and other
+// editors) look up field attributes on the `w` prefix; a custom prefix with the
+// same URI is valid OOXML but is dropped on editor round-trip.
+const FIELD_PREFIX: &str = "w";
 fn field_namespace(source: &SourceDocument, id: NodeId) -> Result<String, OperationResult> {
     match source.node(id).map(|n| n.kind()) {
         Some(SourceNodeKind::Element { name, .. })
@@ -373,7 +374,7 @@ mod tests {
         )
         .output_artifact
         .unwrap();
-        let snapshot = crate::inspect_docx_fields(bytes, 0, 20);
+        let snapshot = crate::inspect_docx_fields(bytes.clone(), 0, 20);
         let toc = &snapshot.fields[0];
         assert_eq!(
             (
@@ -388,6 +389,13 @@ mod tests {
         assert_eq!(
             toc.instruction.as_deref(),
             Some(" TOC \\o \"1-3\" \\h \\z \\u ")
+        );
+        let (_, source) = crate::open_main_source(&Package::from_bytes(bytes).unwrap()).unwrap();
+        let xml = String::from_utf8_lossy(source.original_bytes());
+        assert!(xml.contains("w:fldChar"), "TOC must use standard w: field markup");
+        assert!(
+            !xml.contains("opensuiteField"),
+            "custom field prefixes break Casual editor round-trip"
         );
     }
     #[test]
