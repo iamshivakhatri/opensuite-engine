@@ -1163,3 +1163,24 @@ execute_paragraph_mutation!(
     insert_toc_to_vec,
     "insert_toc"
 );
+
+use crate::{delete_note_to_vec, insert_note_to_vec, update_note_to_vec};
+use opensuite_protocol::{DeleteNote, InsertNote, UpdateNote};
+execute_paragraph_mutation!(
+    execute_docx_insert_note,
+    InsertNote,
+    insert_note_to_vec,
+    "insert_note"
+);
+execute_paragraph_mutation!(
+    execute_docx_update_note,
+    UpdateNote,
+    update_note_to_vec,
+    "update_note"
+);
+execute_paragraph_mutation!(
+    execute_docx_delete_note,
+    DeleteNote,
+    delete_note_to_vec,
+    "delete_note"
+);

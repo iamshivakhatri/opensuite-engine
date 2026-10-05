@@ -420,3 +420,64 @@ pub(super) fn valid_review_date(value: &str) -> bool {
                 .strip_prefix('.')
                 .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())))
 }
+
+/// Write an existing related XML part, or add its part/relationship/content type once.
+pub(super) fn write_related_xml_part(
+    package: &Package,
+    main: &Part,
+    document: &[u8],
+    part: Option<&Part>,
+    bytes: &[u8],
+    rel_type: &str,
+    content_type: &str,
+) -> Result<Vec<u8>, OperationResult> {
+    let filename = format!("{}.xml", rel_type.rsplit('/').next().unwrap());
+    let mut replaced = vec![(main.name.clone(), document)];
+    let mut added = Vec::new();
+    let rels_bytes;
+    let types_bytes;
+    if let Some(part) = part {
+        replaced.push((part.name.clone(), bytes));
+    } else {
+        let directory = main.name.as_str().rsplit_once('/').unwrap().0;
+        let part_name =
+            PartName::parse(format!("{directory}/{filename}")).map_err(document_invalid)?;
+        if package.read_part_by_name(&part_name).is_ok() {
+            return Err(OperationResult::failed(
+                "PACKAGE_CONFLICT",
+                "unlinked XML part already exists",
+            ));
+        }
+        added.push((part_name.clone(), bytes));
+        let (rels_name, exists, rels, rel_id) = picture_relationships(package, main)?;
+        rels_bytes = append_xml_element(
+            &rels,
+            &format!(r#"<Relationship Id="{rel_id}" Type="{rel_type}" Target="{filename}"/>"#),
+        )?;
+        if exists {
+            replaced.push((rels_name, rels_bytes.as_slice()));
+        } else {
+            added.push((rels_name, rels_bytes.as_slice()));
+        }
+        let types_name = PartName::parse("/[Content_Types].xml").map_err(document_invalid)?;
+        let types = package
+            .read_part_by_name(&types_name)
+            .map_err(document_invalid)?;
+        let default = if package.content_type_default("rels").is_none() {
+            r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#
+        } else {
+            ""
+        };
+        types_bytes = append_xml_element(
+            &types,
+            &format!(
+                r#"{default}<Override PartName="{}" ContentType="{content_type}"/>"#,
+                part_name.as_str()
+            ),
+        )?;
+        replaced.push((types_name, types_bytes.as_slice()));
+    }
+    package
+        .write_package_with_named_changes_to_vec(&replaced, &added)
+        .map_err(document_invalid)
+}

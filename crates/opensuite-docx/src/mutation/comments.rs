@@ -209,65 +209,23 @@ pub fn add_comment_to_vec(
         escape(&operation.date)
     );
     let document = apply_patches(source, patches)?;
-    let mut replaced = vec![(main.name.clone(), document.as_slice())];
-    let mut added = Vec::new();
-    let bytes;
-    let rels_bytes;
-    let types_bytes;
-    if let Some(part) = &comments.part {
-        let comment_source = comments.source.as_ref().unwrap();
+    let bytes = if let Some(comment_source) = comments.source.as_ref() {
         let insertion =
             element_insertion(comment_source, comment_source.root(), record.into_bytes())?;
-        bytes = apply_patches(comment_source, vec![insertion])?;
-        replaced.push((part.name.clone(), bytes.as_slice()));
+        apply_patches(comment_source, vec![insertion])?
     } else {
-        let directory = main.name.as_str().rsplit_once('/').unwrap().0;
-        let part_name =
-            PartName::parse(format!("{directory}/comments.xml")).map_err(document_invalid)?;
-        if package.read_part_by_name(&part_name).is_ok() {
-            return Err(comment_failure(
-                "PACKAGE_CONFLICT",
-                "unlinked comments part already exists",
-            ));
-        }
-        bytes = format!(r#"<?xml version="1.0" encoding="UTF-8"?><w:comments xmlns:w="{namespace}">{record}</w:comments>"#).into_bytes();
-        added.push((part_name.clone(), bytes.as_slice()));
-        let (rels_name, exists, rels, rel_id) = picture_relationships(package, main)?;
-        let rel_type = if namespace == NS[1] {
-            crate::comment::REL[1]
-        } else {
-            crate::comment::REL[0]
-        };
-        rels_bytes = append_xml_element(
-            &rels,
-            &format!(r#"<Relationship Id="{rel_id}" Type="{rel_type}" Target="comments.xml"/>"#),
-        )?;
-        if exists {
-            replaced.push((rels_name, rels_bytes.as_slice()));
-        } else {
-            added.push((rels_name, rels_bytes.as_slice()));
-        }
-        let types_name = PartName::parse("/[Content_Types].xml").map_err(document_invalid)?;
-        let types = package
-            .read_part_by_name(&types_name)
-            .map_err(document_invalid)?;
-        let default = if package.content_type_default("rels").is_none() {
-            r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#
-        } else {
-            ""
-        };
-        types_bytes = append_xml_element(
-            &types,
-            &format!(
-                r#"{default}<Override PartName="{}" ContentType="{CONTENT_TYPE}"/>"#,
-                part_name.as_str()
-            ),
-        )?;
-        replaced.push((types_name, types_bytes.as_slice()));
-    }
-    let output = package
-        .write_package_with_named_changes_to_vec(&replaced, &added)
-        .map_err(document_invalid)?;
+        format!(r#"<?xml version="1.0" encoding="UTF-8"?><w:comments xmlns:w="{namespace}">{record}</w:comments>"#).into_bytes()
+    };
+    let rel_type = crate::comment::REL[usize::from(namespace == NS[1])];
+    let output = write_related_xml_part(
+        package,
+        main,
+        &document,
+        comments.part.as_ref(),
+        &bytes,
+        rel_type,
+        CONTENT_TYPE,
+    )?;
     verify_comments(
         output,
         source,

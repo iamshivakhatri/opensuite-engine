@@ -758,3 +758,7 @@ module.exports.executeDocxRejectRevision = nativeBinding.executeDocxRejectRevisi
 module.exports.inspectDocxFields = nativeBinding.inspectDocxFields
 module.exports.executeDocxInsertFields = nativeBinding.executeDocxInsertFields
 module.exports.executeDocxInsertToc = nativeBinding.executeDocxInsertToc
+module.exports.inspectDocxNotes = nativeBinding.inspectDocxNotes
+module.exports.executeDocxInsertNote = nativeBinding.executeDocxInsertNote
+module.exports.executeDocxUpdateNote = nativeBinding.executeDocxUpdateNote
+module.exports.executeDocxDeleteNote = nativeBinding.executeDocxDeleteNote

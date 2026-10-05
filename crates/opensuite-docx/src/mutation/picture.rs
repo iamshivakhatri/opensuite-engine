@@ -300,9 +300,7 @@ pub(super) fn picture_relationships(
         Err(error) => return Err(OperationResult::failed(error.code(), error.to_string())),
     }
     .checked_add(1)
-    .ok_or_else(|| {
-        OperationResult::failed("PACKAGE_CONFLICT", "cannot allocate image relationship")
-    })?;
+    .ok_or_else(|| OperationResult::failed("PACKAGE_CONFLICT", "cannot allocate relationship"))?;
     Ok((
         relationships_part_name,
         relationships_exist,

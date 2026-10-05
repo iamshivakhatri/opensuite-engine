@@ -183,6 +183,48 @@ alignment. Direct text patches can clear every supported property; oversized
 font sizes and invalid alignment values fail rather than wrap or disappear.
 Rust mutation semantics, engine version, and npm packages are unchanged.
 
+
+## Footnotes and endnotes
+
+Bounded `inspect_docx_notes` / Node `inspectDocxNotes` reports ordinary footnotes
+and endnotes together, with separate totals, IDs, fresh source-stamped handles,
+body paragraph and source reference indexes, text, and structural diagnostics.
+Default 20 records, maximum 100, 2,000-character text bounds. Separator,
+continuation separator, and continuation notice records are excluded and
+protected by type. Imported document/section numbering format, restart, position,
+and start settings are inspectable and remain unchanged; IDs are not displayed
+note numbers.
+
+Typed `insert_note`, `update_note`, and `delete_note` share one source-backed
+implementation with a footnote/endnote kind. Insertion places a reference after
+exact ordinary body text using the existing selection, run-splitting, and
+protected-range checks. First use adds the related part, relationship, content
+type, and separator records; existing parts are patched. IDs are allocated above
+all existing IDs of that kind, including special records, without renumbering.
+Existing FootnoteText/EndnoteText paragraph styles are reused when present.
+
+Updates patch the text source of a simple one-paragraph, one-text-run note;
+formatting, automatic note marks, IDs, and body references stay unchanged.
+Deletion removes the reference and record together, retaining the valid related
+part and remaining IDs. All writes reopen, verify record/reference coherence,
+expected text/counts, and unchanged body text. Fresh inspection is required after
+any body or note-part mutation. Malformed/orphan/duplicate records or references
+refuse mutation. Rich/multi-paragraph notes remain inspectable and preserved,
+but update/delete refuse; custom reference marks and protected body references
+cannot be deleted.
+
+Rust/N-API expose the same typed primitives. OpenSuite's engine-client and lazy
+`document.notes` tools use them with existing run-local save and blocking
+verification. No numbering configuration, header/footer note workflows,
+notes-body review authoring, rich note authoring, citation/bibliography framework,
+new dependencies, engine publication, or version changes.
+
+Generated lifecycle, preservation, review/field coexistence, malformed refusal,
+and 30-note paging/timing scenarios passed. A LibreOffice-produced 3-footnote /
+1-endnote import was inspected, edited, extended, and deleted with unrelated note,
+separator, settings, style, and body payloads preserved. LibreOffice rendered the
+manual-review DOCX; Microsoft Word/Google Docs review remains pending.
+
 ## Node/N-API
 
 The adapter exposes capability discovery, blank-document creation, inspection,

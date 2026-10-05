@@ -1,3 +1,5 @@
+mod notes;
+pub use notes::{delete_note, insert_note, inspect_notes, update_note};
 mod fields;
 pub use fields::{insert_fields, insert_toc, inspect_fields};
 mod revisions;
@@ -570,6 +572,10 @@ fn node_docx_capability(capability: &str) -> bool {
         capability,
         "inspect"
             | "style_snapshot"
+            | "inspect_notes"
+            | "insert_note"
+            | "update_note"
+            | "delete_note"
             | "inspect_comments"
             | "inspect_fields"
             | "insert_fields"

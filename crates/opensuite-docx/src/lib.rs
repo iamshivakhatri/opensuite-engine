@@ -141,3 +141,8 @@ mod blank;
 
 pub use execution::{execute_docx_insert_fields, execute_docx_insert_toc};
 pub use mutation::{insert_fields_to_vec, insert_toc_to_vec};
+
+mod note;
+pub use execution::{execute_docx_delete_note, execute_docx_insert_note, execute_docx_update_note};
+pub use mutation::{delete_note_to_vec, insert_note_to_vec, update_note_to_vec};
+pub use note::{NoteDiagnostic, NoteInspection, NoteSettings, NoteSummary, inspect_docx_notes};

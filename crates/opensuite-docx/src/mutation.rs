@@ -59,6 +59,8 @@ mod fields;
 pub use fields::*;
 mod tracked_change;
 pub use tracked_change::*;
+mod notes;
+pub use notes::*;
 mod comments;
 pub use comments::*;
 mod common;

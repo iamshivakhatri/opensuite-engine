@@ -262,3 +262,14 @@ export interface InsertFieldsInput { content: FieldContentInput[]; location?: 'b
 export interface InsertTocInput { placement: ParagraphPlacement; maxHeadingLevel?: number; title?: string }
 export function executeDocxInsertFields(input: Buffer, operation: InsertFieldsInput): Promise<ExecuteDocxResult>
 export function executeDocxInsertToc(input: Buffer, operation: InsertTocInput): Promise<ExecuteDocxResult>
+
+/** Ordinary notes only; separators are excluded, imported numbering settings are read-only. */
+export interface NoteInspectionOptions { offset?: number; limit?: number }
+export interface NoteSummary { kind: 'footnote' | 'endnote'; id: number | null; handle: string | null; text: string; paragraphIndex: number | null; referenceIndex: number | null; referenceCount: number; structure: 'supported' | 'unsupported' | 'malformed'; truncated: boolean }
+export interface NoteSettings { kind: 'footnote' | 'endnote'; partName: string; sectionIndex: number | null; numberFormat: string | null; restart: string | null; position: string | null; start: string | null }
+export interface NoteInspection { ok: boolean; notes: NoteSummary[]; total: number; footnoteCount: number; endnoteCount: number; unsupportedCount: number; offset: number; hasMore: boolean; settings: NoteSettings[]; diagnostics: Array<{code: string; message: string}> }
+export interface InsertNoteInput { kind: 'footnote' | 'endnote'; target: TextTarget; text: string }
+export function inspectDocxNotes(input: Buffer, options?: NoteInspectionOptions): Promise<string>
+export function executeDocxInsertNote(input: Buffer, operation: InsertNoteInput): Promise<ExecuteDocxResult>
+export function executeDocxUpdateNote(input: Buffer, operation: {handle: string; text: string}): Promise<ExecuteDocxResult>
+export function executeDocxDeleteNote(input: Buffer, operation: {handle: string}): Promise<ExecuteDocxResult>
