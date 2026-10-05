@@ -72,6 +72,7 @@ mod page_number;
 mod page_setup;
 mod paragraph;
 mod picture;
+mod protected_range;
 mod sections;
 mod styles;
 mod table;

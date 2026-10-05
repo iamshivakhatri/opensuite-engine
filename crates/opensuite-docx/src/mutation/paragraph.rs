@@ -316,6 +316,10 @@ pub(super) fn paragraph_ancestor(source: &SourceDocument, mut id: NodeId) -> Opt
 }
 
 pub(crate) fn safe_body_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
+    ordinary_body_paragraph(source, paragraph) && !has_revision_wrapper(source, paragraph)
+}
+
+pub(super) fn ordinary_body_paragraph(source: &SourceDocument, paragraph: NodeId) -> bool {
     let Some(body) = source.node(paragraph).and_then(|node| node.parent()) else {
         return false;
     };
@@ -330,7 +334,6 @@ pub(crate) fn safe_body_paragraph(source: &SourceDocument, paragraph: NodeId) ->
                     .children(id)
                     .any(|child| word(source, child, "sectPr"))
         })
-        && !has_revision_wrapper(source, paragraph)
 }
 
 pub(super) fn safe_to_delete(source: &SourceDocument, paragraph: NodeId) -> bool {

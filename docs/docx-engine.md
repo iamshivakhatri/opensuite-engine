@@ -44,7 +44,8 @@ does not aim to reproduce every Microsoft Word feature.
   text and delete matching records/markers through fresh source-stamped handles.
   Creates missing comments package pieces and preserves unrelated comments/parts.
   Threaded metadata, replies/resolve, rich-content editing, field/wrapper/revision
-  selections, and cross-paragraph authoring remain unsupported.
+  selections, and cross-paragraph authoring remain unsupported. Comments and
+  revisions may coexist on independent ordinary ranges in the same paragraph.
 - Reopen and semantic postcondition verification for mutations, while untouched
   package content remains preserved where practical.
 
@@ -138,14 +139,21 @@ already present in the main document, without renumbering imported records.
 Missing/invalid imported revision IDs and exhausted IDs fail safely.
 
 Shared exact-selection/run-splitting helpers preserve source formatting and
-unrelated payloads. Fields, inline wrappers, tables, marker-crossing ranges, and
-paragraphs containing revisions are unsupported authoring targets. Reopen checks
-verify original/current text plus new revision type, ID, order, author/date, and
+unrelated payloads. Independent ordinary ranges in one paragraph can contain
+several tracked edits and comments. Existing revisions and comment markers remain source-backed.
+A shared source-range guard refuses targets inside/crossing revisions, comment
+boundaries, and other protected Word ranges; tracked authoring also refuses
+text enclosed by an existing comment. Comment authoring retains supported
+overlap with existing comments without moving their markers. Fields, inline
+wrappers, tables, and paragraph property revisions remain unsupported targets.
+Reopen checks verify original/current text plus new revision type, ID, order, author/date, and
 full text using existing revision inspection.
 
 Typed `accept_revision` / `reject_revision` decide one insertion/deletion through a fresh source-stamped inspection handle (source order plus byte location). Any changed main XML requires fresh inspection; duplicate numeric IDs remain safe. Accept insertion unwraps runs; reject insertion removes content. Accept deletion removes content; reject deletion unwraps runs and renames only `delText` tags to `t`. Original run formatting, whitespace, tabs/breaks, other revision source bytes, and untouched parts are preserved. Reopen verifies current text, revision count, and remaining source bytes with the existing inspector. Node exposes `executeDocxAcceptRevision` / `executeDocxRejectRevision` with `{ handle }`.
 
-Decisions require ordinary runs directly inside a paragraph, including simple table-cell paragraphs. Nested/move/property/structural revisions, malformed wrappers/IDs, richer containers, incompatible text tags, and retained content depending on wrapper XML context fail safely. Replacement uses two decisions, with fresh inspection between them. No accept-all or batch operation.
+Decisions require ordinary runs directly inside a paragraph, including simple table-cell paragraphs. Nested/move/property/structural revisions, malformed wrappers/IDs, richer containers, incompatible text tags, and retained content depending on wrapper XML context fail safely. Replacement uses two decisions, with fresh inspection between them. Removing a revision that intersects an existing comment anchor fails safely;
+comments on unrelated ordinary text survive decisions unchanged. No accept-all
+or batch operation.
 
 ## Add Only When Benchmarks Need It
 

@@ -88,19 +88,7 @@ fn author_text_change(
         ));
     }
     let (matched, paragraph) =
-        text::simple_body_text_range(source, target, "UNSUPPORTED_REVISION_SELECTION")?;
-    let paragraph_span = source.node(paragraph).unwrap().span();
-    if source.node_ids().any(|id| {
-        let span = source.node(id).unwrap().span();
-        span.start >= paragraph_span.start
-            && span.end <= paragraph_span.end
-            && crate::tracked_change::revision_node(source, id)
-    }) {
-        return Err(
-            unsupported("authoring in a paragraph containing revisions is unsupported")
-                .with_reason_code("UNSUPPORTED_REVISION_SELECTION"),
-        );
-    }
+        text::simple_body_text_range(source, target, "UNSUPPORTED_REVISION_SELECTION", false)?;
     let runs: Vec<_> = matched
         .segments
         .iter()
@@ -108,19 +96,6 @@ fn author_text_change(
         .collect();
     let first = source.node(runs[0]).unwrap().span();
     let last = source.node(*runs.last().unwrap()).unwrap().span();
-    // Unlike comment anchors, revision wrapping must not relocate review/bookmark markers.
-    if source.children(paragraph).any(|id| {
-        let span = source.node(id).unwrap().span();
-        span.start >= first.start
-            && span.end <= last.end
-            && !runs.contains(&id)
-            && !matches!(source.node(id).unwrap().kind(), SourceNodeKind::Text)
-    }) {
-        return Err(
-            unsupported("revision selection crosses a marker or wrapper")
-                .with_reason_code("UNSUPPORTED_REVISION_SELECTION"),
-        );
-    }
     let formatting = run_properties(source, runs[0]);
     if matches!(edit, TextChange::Replace(_))
         && runs
@@ -316,7 +291,8 @@ fn verify_authored(
     if after_paragraph
         .text_for_view(RevisionView::Original)
         .map_err(document_invalid)?
-        != original[block_index].1
+        != crate::tracked_change::text_for_view(before, paragraph, RevisionView::Original)
+            .map_err(document_invalid)?
     {
         return Err(failure(
             "DOCUMENT_INVALID",
@@ -497,6 +473,23 @@ fn decide_revision(
         }
     }
     let keep_content = accept != deletion;
+    if !keep_content {
+        let comments = crate::comment::load(package, main, source).map_err(document_invalid)?;
+        if comments.errors().next().is_some()
+            || comments.comments.iter().any(|comment| {
+                let range = comment.range_start.zip(comment.range_end);
+                range.is_some_and(|(start, end)| {
+                    source.node(start).unwrap().span().start < span.end
+                        && source.node(end).unwrap().span().end > span.start
+                })
+            })
+        {
+            return Err(
+                unsupported("revision removal intersects a protected comment range")
+                    .with_reason_code("UNSUPPORTED_COMMENT_RANGE"),
+            );
+        }
+    }
     let expected_text =
         crate::tracked_change::text_after_decision(source, parent, id, keep_content)
             .map_err(document_invalid)?;
@@ -752,6 +745,190 @@ mod tests {
                 .any(|m| m.text == "$2.1M")
         );
     }
+    fn replace(bytes: Vec<u8>, target: &str, replacement: &str) -> Vec<u8> {
+        crate::execute_docx_replace_text_with_tracked_change(
+            bytes,
+            &ReplaceTextWithTrackedChange {
+                target: TextTarget {
+                    text: target.into(),
+                    occurrence: None,
+                },
+                replacement: replacement.into(),
+                author: "Sarah".into(),
+                date: DATE.into(),
+            },
+        )
+        .output_artifact
+        .unwrap()
+    }
+
+    #[test]
+    fn independent_replacements_preserve_revisions_and_support_decisions() {
+        let (package, main, source) = document(
+            "<w:p><w:r><w:t>Revenue was $2.1M and operating margin was 18%.</w:t></w:r></w:p>",
+        );
+        let first = replace(
+            package
+                .write_replaced_part_to_vec(&main, source.original_bytes())
+                .unwrap(),
+            "$2.1M",
+            "$2.4M",
+        );
+        let package = Package::from_bytes(first.clone()).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        let existing: Vec<_> = source
+            .node_ids()
+            .filter(|id| crate::tracked_change::revision_node(&source, *id))
+            .map(|id| {
+                let span = source.node(id).unwrap().span();
+                source.original_bytes()[span.start..span.end].to_vec()
+            })
+            .collect();
+        let mut bytes = replace(first, "18%", "20%");
+        let inspection = crate::inspect_docx_tracked_changes(bytes.clone(), 0, 20);
+        assert_eq!(inspection.total, 4);
+        assert_eq!(
+            inspection
+                .revisions
+                .iter()
+                .map(|r| r.text.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            ["$2.1M", "$2.4M", "18%", "20%"]
+        );
+        let package = Package::from_bytes(bytes.clone()).unwrap();
+        let (_, source) = crate::open_main_source(&package).unwrap();
+        for xml in existing {
+            assert!(source.original_bytes().windows(xml.len()).any(|w| w == xml));
+        }
+        assert_eq!(
+            body_texts(&source).unwrap()[0].1,
+            "Revenue was $2.4M and operating margin was 20%."
+        );
+        let old_handle = inspection.revisions[0].handle.clone();
+        for (accept, text) in [
+            (true, "$2.1M"),
+            (true, "$2.4M"),
+            (false, "18%"),
+            (false, "20%"),
+        ] {
+            let handle = crate::inspect_docx_tracked_changes(bytes.clone(), 0, 20)
+                .revisions
+                .into_iter()
+                .find(|r| r.text.as_deref() == Some(text))
+                .unwrap()
+                .handle;
+            let package = Package::from_bytes(bytes).unwrap();
+            let (main, source) = crate::open_main_source(&package).unwrap();
+            bytes = decide_revision(&package, &main, &source, &handle, accept).unwrap();
+        }
+        let package = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        assert_eq!(
+            body_texts(&source).unwrap()[0].1,
+            "Revenue was $2.4M and operating margin was 18%."
+        );
+        assert_eq!(
+            crate::tracked_change::inspect_source_revisions(&source, 0, 20).total,
+            0
+        );
+        assert!(decide_revision(&package, &main, &source, &old_handle, true).is_err());
+    }
+
+    #[test]
+    fn comments_and_independent_revisions_compose_in_both_orders() {
+        for comment_first in [false, true] {
+            let (package, main, source) = document(
+                "<w:p><w:r><w:t>Revenue was $2.1M and operating margin was 18%.</w:t></w:r></w:p>",
+            );
+            let mut bytes = package
+                .write_replaced_part_to_vec(&main, source.original_bytes())
+                .unwrap();
+            let add = |bytes| {
+                crate::execute_docx_add_comment(
+                    bytes,
+                    &opensuite_protocol::AddComment {
+                        target: TextTarget {
+                            text: "operating margin".into(),
+                            occurrence: None,
+                        },
+                        text: "Check finance".into(),
+                        author: "Lee".into(),
+                        initials: None,
+                        date: DATE.into(),
+                    },
+                )
+                .output_artifact
+                .unwrap()
+            };
+            if comment_first {
+                bytes = add(bytes);
+            }
+            bytes = replace(bytes, "$2.1M", "$2.4M");
+            if !comment_first {
+                bytes = add(bytes);
+            }
+            let package = Package::from_bytes(bytes.clone()).unwrap();
+            let comments_part = PartName::parse("/word/comments.xml").unwrap();
+            let record = package.read_part_by_name(&comments_part).unwrap();
+            bytes = replace(bytes, "18%", "20%");
+            let handle = crate::inspect_docx_tracked_changes(bytes.clone(), 0, 20).revisions[0]
+                .handle
+                .clone();
+            bytes = crate::execute_docx_accept_revision(
+                bytes,
+                &opensuite_protocol::AcceptRevision { handle },
+            )
+            .output_artifact
+            .unwrap();
+            let inspection = crate::inspect_docx_comments(bytes.clone(), 0, 20);
+            assert!(inspection.diagnostics.is_empty());
+            assert_eq!(
+                inspection.comments[0].anchored_text.as_deref(),
+                Some("operating margin")
+            );
+            let package = Package::from_bytes(bytes).unwrap();
+            assert_eq!(record, package.read_part_by_name(&comments_part).unwrap());
+        }
+    }
+
+    #[test]
+    fn review_crossings_refuse_without_output() {
+        let (package, main, source) = document(
+            r#"<w:p><w:r><w:t>A</w:t></w:r><w:del w:id="1"><w:r><w:delText>hidden</w:delText></w:r></w:del><w:r><w:t>B</w:t></w:r></w:p>"#,
+        );
+        let bytes = package
+            .write_replaced_part_to_vec(&main, source.original_bytes())
+            .unwrap();
+        let op = ReplaceTextWithTrackedChange {
+            target: TextTarget {
+                text: "AB".into(),
+                occurrence: None,
+            },
+            replacement: "C".into(),
+            author: "Lee".into(),
+            date: DATE.into(),
+        };
+        assert!(
+            crate::execute_docx_replace_text_with_tracked_change(bytes.clone(), &op)
+                .output_artifact
+                .is_none()
+        );
+        assert!(
+            crate::execute_docx_add_comment(
+                bytes,
+                &opensuite_protocol::AddComment {
+                    target: op.target,
+                    text: "Check".into(),
+                    author: "Lee".into(),
+                    initials: None,
+                    date: DATE.into(),
+                }
+            )
+            .output_artifact
+            .is_none()
+        );
+    }
+
     #[test]
     fn tracked_authoring_rejects_unsafe_targets_and_exhausted_ids() {
         for body in [

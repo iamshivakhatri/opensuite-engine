@@ -331,6 +331,7 @@ pub(super) fn simple_body_text_range(
     source: &SourceDocument,
     target: &TextTarget,
     range_reason: &'static str,
+    allow_comment_overlap: bool,
 ) -> Result<(crate::text_search::ResolvedTextMatch, NodeId), OperationResult> {
     let matched = hyperlink::resolve_single_hyperlink_match(source, target)?;
     let paragraph = matched
@@ -338,25 +339,33 @@ pub(super) fn simple_body_text_range(
         .first()
         .and_then(|s| paragraph_ancestor(source, s.id))
         .ok_or_else(|| unsupported("selection has no paragraph"))?;
-    if !safe_body_paragraph(source, paragraph)
+    if !ordinary_body_paragraph(source, paragraph)
         || source.node_ids().any(|id| {
             let span = source.node(id).unwrap().span();
             let p = source.node(paragraph).unwrap().span();
             span.start >= p.start
                 && span.end <= p.end
-                && ["fldChar", "instrText", "fldSimple"]
+                && ["fldChar", "instrText", "fldSimple", "pPrChange"]
                     .iter()
                     .any(|local| word(source, id, local))
         })
         || matched
             .segments
             .iter()
-            .any(|s| s.inside_tracked_change || paragraph_ancestor(source, s.id) != Some(paragraph))
+            .any(|s| paragraph_ancestor(source, s.id) != Some(paragraph))
     {
         return Err(
             unsupported("selection requires ordinary text in one direct body paragraph")
                 .with_reason_code(range_reason),
         );
+    }
+    if matched.segments.iter().any(|s| s.inside_tracked_change) {
+        let message = if matched.segments.iter().all(|s| s.inside_tracked_change) {
+            "selection targets text inside an existing revision"
+        } else {
+            "selection crosses an existing revision boundary"
+        };
+        return Err(unsupported(message).with_reason_code(range_reason));
     }
     let mut runs = Vec::new();
     for segment in &matched.segments {
@@ -396,20 +405,21 @@ pub(super) fn simple_body_text_range(
     // Reject hidden field/wrapper content between selected runs, rather than skipping it.
     let first = source.node(runs[0].0).unwrap().span();
     let last = source.node(runs.last().unwrap().0).unwrap().span();
+    protected_range::ensure_safe_source_ranges(
+        source,
+        &[SourceSpan {
+            start: first.start,
+            end: last.end,
+        }],
+        range_reason,
+        allow_comment_overlap,
+    )?;
     if source.children(paragraph).any(|id| {
         let span = source.node(id).unwrap().span();
         span.start >= first.start
             && span.end <= last.end
             && !runs.iter().any(|r| r.0 == id)
             && !matches!(source.node(id).unwrap().kind(), SourceNodeKind::Text)
-            && ![
-                "bookmarkStart",
-                "bookmarkEnd",
-                "commentRangeStart",
-                "commentRangeEnd",
-            ]
-            .iter()
-            .any(|name| word(source, id, name))
     }) {
         return Err(
             unsupported("selection contains unsupported field or wrapper boundaries")

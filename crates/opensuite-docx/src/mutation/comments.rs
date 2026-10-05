@@ -134,7 +134,7 @@ pub fn add_comment_to_vec(
         ));
     }
     let (matched, paragraph) =
-        text::simple_body_text_range(source, &operation.target, "UNSUPPORTED_COMMENT_RANGE")?;
+        text::simple_body_text_range(source, &operation.target, "UNSUPPORTED_COMMENT_RANGE", true)?;
     let runs: Vec<_> = matched
         .segments
         .iter()
