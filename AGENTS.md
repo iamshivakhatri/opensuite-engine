@@ -49,3 +49,25 @@ details. Do not infer architecture from one incomplete file.
 - Update `docs/status.md` when present capability changes, and update
   `docs/docx-engine.md` when product capability or DOCX V1 direction changes.
 - Run formatting, compilation, linting, and relevant tests before completion.
+
+## Publishing / version tags
+
+Tag pushes matching `v*.*.*` publish `@opensuitehq/engine` to npm. After a new
+version is published, bump the **opensuite** consumer in the same release
+window — do not leave deploy docs or the lockfile on the previous pin.
+
+In the opensuite repo, update:
+
+1. `packages/engine-client/package.json` — exact `@opensuitehq/engine` version
+2. `pnpm-lock.yaml` — refresh in the same change; confirm package and snapshot
+   entries include the published Linux `x64-gnu` and `arm64-gnu` optional
+   binaries (a macOS-generated lockfile can omit them)
+3. `pnpm-workspace.yaml` — `minimumReleaseAgeExclude` for `@opensuitehq/engine`
+   and each platform package at the new version
+4. Version pins/comments in `Dockerfile`, `docker-compose.atlas.yml`,
+   `docs/deploy.md`, `docs/engine_integration.md`, and any
+   `docs/status.md` / `docs/agent_core.md` lines that state the pin
+
+Before deployment, build the opensuite API Docker image for the target Linux
+architecture and require the Dockerfile's engine-load check to pass. Do not
+deploy an image that lacks its native binding.
