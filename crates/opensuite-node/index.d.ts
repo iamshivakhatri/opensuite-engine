@@ -242,3 +242,11 @@ export function executeDocxReplaceTextWithTrackedChange(input: Buffer, operation
 export interface RevisionDecisionInput { handle: string }
 export function executeDocxAcceptRevision(input: Buffer, operation: RevisionDecisionInput): Promise<ExecuteDocxResult>
 export function executeDocxRejectRevision(input: Buffer, operation: RevisionDecisionInput): Promise<ExecuteDocxResult>
+
+/** JSON field snapshot: default 20, maximum 100 records; main and header/footer parts. */
+export function inspectDocxFields(input: Buffer, options?: { offset?: number; limit?: number }): Promise<string>
+export type FieldContentInput = { kind: 'text'; text: string } | { kind: 'page' | 'numPages' }
+export interface InsertFieldsInput { content: FieldContentInput[]; location?: 'body' | 'footer'; placement?: ParagraphPlacement }
+export interface InsertTocInput { placement: ParagraphPlacement; maxHeadingLevel?: number; title?: string }
+export function executeDocxInsertFields(input: Buffer, operation: InsertFieldsInput): Promise<ExecuteDocxResult>
+export function executeDocxInsertToc(input: Buffer, operation: InsertTocInput): Promise<ExecuteDocxResult>

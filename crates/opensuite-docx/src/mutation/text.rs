@@ -125,6 +125,35 @@ pub(super) fn patches_for_match(
     matched: &crate::text_search::ResolvedTextMatch,
     replacement: &str,
 ) -> Result<Vec<Patch>, OperationResult> {
+    let first = source
+        .node(matched.segments.first().unwrap().id)
+        .unwrap()
+        .span()
+        .start;
+    let last = source
+        .node(matched.segments.last().unwrap().id)
+        .unwrap()
+        .span()
+        .end;
+    let fields = crate::field::fields(source);
+    if fields
+        .iter()
+        .any(|f| f.span().start < last && f.span().end > first)
+        || fields.errors().any(|e| {
+            let Some(id) = e.source_id() else {
+                return true;
+            };
+            matched
+                .segments
+                .iter()
+                .any(|s| paragraph_ancestor(source, s.id) == paragraph_ancestor(source, id))
+        })
+    {
+        return Err(unsupported(
+            "replace_text does not edit field content or cross field boundaries",
+        )
+        .with_reason_code("UNSAFE_FIELD_SELECTION"));
+    }
     let mut runs = Vec::new();
     for segment in &matched.segments {
         if segment.inside_tracked_change {

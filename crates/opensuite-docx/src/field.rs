@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use crate::{NodeId, SemanticError, SourceDocument, SourceNodeKind};
 
@@ -26,6 +26,8 @@ pub struct Field<'a> {
     instruction_end_id: Option<NodeId>,
     separate_id: Option<NodeId>,
     end_id: Option<NodeId>,
+    text_nodes: Arc<[NodeId]>,
+    instruction_nodes: Arc<[NodeId]>,
 }
 
 impl Field<'_> {
@@ -48,28 +50,10 @@ impl Field<'_> {
         self.separate_id.is_some()
     }
     pub fn instruction(&self) -> Result<Option<String>, FieldError> {
-        match self.kind {
-            FieldKind::Simple => Ok(self
-                .source
-                .node(self.source_id)
-                .and_then(|node| node.attribute("instr"))
-                .map(str::to_owned)),
-            FieldKind::Complex => {
-                let end = self.separate_id.or(self.end_id).or(self.instruction_end_id);
-                Ok(end
-                    .map(|end| instruction_until(self.source, self.source_id, end))
-                    .transpose()?)
-            }
-        }
+        self.bounded_text(true, usize::MAX).map(|v| v.0)
     }
     pub fn result_text(&self) -> Result<Option<String>, FieldError> {
-        match self.kind {
-            FieldKind::Simple => Ok(Some(text_inside(self.source, self.source_id)?)),
-            FieldKind::Complex => match (self.separate_id, self.end_id) {
-                (Some(start), Some(end)) => Ok(Some(text_between(self.source, start, end)?)),
-                _ => Ok(None),
-            },
-        }
+        self.bounded_text(false, usize::MAX).map(|v| v.0)
     }
 }
 
@@ -93,6 +77,16 @@ impl<'a> FieldSet<'a> {
 }
 
 pub(crate) fn fields(source: &SourceDocument) -> FieldSet<'_> {
+    let text_nodes: Arc<[NodeId]> = source
+        .node_ids()
+        .filter(|id| word(source, *id, "t"))
+        .collect::<Vec<_>>()
+        .into();
+    let instruction_nodes: Arc<[NodeId]> = source
+        .node_ids()
+        .filter(|id| word(source, *id, "instrText"))
+        .collect::<Vec<_>>()
+        .into();
     let mut fields = source
         .node_ids()
         .filter(|id| word(source, *id, "fldSimple"))
@@ -104,6 +98,8 @@ pub(crate) fn fields(source: &SourceDocument) -> FieldSet<'_> {
             instruction_end_id: None,
             separate_id: None,
             end_id: None,
+            text_nodes: text_nodes.clone(),
+            instruction_nodes: instruction_nodes.clone(),
         })
         .collect::<Vec<_>>();
     let mut stack = Vec::new();
@@ -136,10 +132,12 @@ pub(crate) fn fields(source: &SourceDocument) -> FieldSet<'_> {
                     instruction_end_id,
                     separate_id: separate,
                     end_id: Some(id),
+                    text_nodes: text_nodes.clone(),
+                    instruction_nodes: instruction_nodes.clone(),
                 }),
                 None => errors.push(FieldError::UnmatchedEnd(id)),
             },
-            _ => {}
+            _ => errors.push(FieldError::InvalidMarker(id)),
         }
     }
     for (begin, separate, instruction_end_id) in stack {
@@ -152,69 +150,106 @@ pub(crate) fn fields(source: &SourceDocument) -> FieldSet<'_> {
             instruction_end_id,
             separate_id: separate,
             end_id: None,
+            text_nodes: text_nodes.clone(),
+            instruction_nodes: instruction_nodes.clone(),
         });
     }
     fields.sort_by_key(|field| source.node(field.source_id).map(|node| node.span().start));
     FieldSet { fields, errors }
 }
 
-fn text_inside(source: &SourceDocument, container: NodeId) -> Result<String, FieldError> {
-    let span = source
-        .node(container)
-        .ok_or(FieldError::MalformedField)?
-        .span();
-    text_matching(source, "t", |candidate| {
-        candidate.start > span.start && candidate.end < span.end
-    })
-}
-fn text_between(source: &SourceDocument, start: NodeId, end: NodeId) -> Result<String, FieldError> {
-    let start = source
-        .node(start)
-        .ok_or(FieldError::MalformedField)?
-        .span()
-        .end;
-    let end = source
-        .node(end)
-        .ok_or(FieldError::MalformedField)?
-        .span()
-        .start;
-    text_matching(source, "t", |candidate| {
-        candidate.start >= start && candidate.end <= end
-    })
-}
-fn instruction_until(
+fn read_range(
     source: &SourceDocument,
-    start: NodeId,
-    end: NodeId,
-) -> Result<String, FieldError> {
-    let start = source
-        .node(start)
-        .ok_or(FieldError::MalformedField)?
-        .span()
-        .end;
-    let end = source
-        .node(end)
-        .ok_or(FieldError::MalformedField)?
-        .span()
-        .end;
-    text_matching(source, "instrText", |candidate| {
-        candidate.start >= start && candidate.end <= end
-    })
+    nodes: &[NodeId],
+    start: usize,
+    end: usize,
+    limit: usize,
+) -> Result<(String, bool), FieldError> {
+    let first = nodes.partition_point(|id| source.node(*id).unwrap().span().start < start);
+    let last = nodes.partition_point(|id| source.node(*id).unwrap().span().start < end);
+    let mut text = String::new();
+    let mut count = 0;
+    for id in &nodes[first..last.max(first)] {
+        let value = crate::semantic::text_value(source, *id).map_err(FieldError::Semantic)?;
+        for c in value.chars() {
+            if count == limit {
+                return Ok((text, true));
+            }
+            text.push(c);
+            count += 1;
+        }
+    }
+    Ok((text, false))
 }
-fn text_matching(
-    source: &SourceDocument,
-    name: &str,
-    within: impl Fn(crate::SourceSpan) -> bool,
-) -> Result<String, FieldError> {
-    source
-        .node_ids()
-        .filter(|id| word(source, *id, name))
-        .filter(|id| source.node(*id).is_some_and(|node| within(node.span())))
-        .try_fold(String::new(), |mut text, id| {
-            text.push_str(&crate::semantic::text_value(source, id).map_err(FieldError::Semantic)?);
-            Ok(text)
-        })
+
+impl Field<'_> {
+    pub(crate) fn bounded_text(
+        &self,
+        instruction: bool,
+        limit: usize,
+    ) -> Result<(Option<String>, bool), FieldError> {
+        let span = self.source.node(self.source_id).unwrap().span();
+        if self.kind == FieldKind::Simple {
+            if instruction {
+                return Ok(
+                    match self.source.node(self.source_id).unwrap().attribute("instr") {
+                        Some(value) => (
+                            Some(value.chars().take(limit).collect()),
+                            value.chars().count() > limit,
+                        ),
+                        None => (None, false),
+                    },
+                );
+            }
+            return read_range(
+                self.source,
+                &self.text_nodes,
+                span.start + 1,
+                span.end,
+                limit,
+            )
+            .map(|(s, t)| (Some(s), t));
+        }
+        let range = if instruction {
+            self.separate_id
+                .or(self.end_id)
+                .or(self.instruction_end_id)
+                .map(|end| (span.end, self.source.node(end).unwrap().span().end))
+        } else {
+            self.separate_id.zip(self.end_id).map(|(start, end)| {
+                (
+                    self.source.node(start).unwrap().span().end,
+                    self.source.node(end).unwrap().span().start,
+                )
+            })
+        };
+        match range {
+            Some((start, end)) => read_range(
+                self.source,
+                if instruction {
+                    &self.instruction_nodes
+                } else {
+                    &self.text_nodes
+                },
+                start,
+                end,
+                limit,
+            )
+            .map(|(s, t)| (Some(s), t)),
+            None => Ok((None, false)),
+        }
+    }
+    pub(crate) fn span(&self) -> crate::SourceSpan {
+        let mut span = self.source.node(self.source_id).unwrap().span();
+        if let Some(end) = self.end_id {
+            span.end = self.source.node(end).unwrap().span().end;
+        } else if self.kind == FieldKind::Complex {
+            span.end = self.source.original_bytes().len();
+        }
+        span
+    }
 }
+
 fn word(source: &SourceDocument, id: NodeId, name: &str) -> bool {
     matches!(source.node(id).map(|node| node.kind()), Some(SourceNodeKind::Element { name: xml_name, .. }) if xml_name.local_name() == name && xml_name.namespace_uri().is_some_and(|uri| NS.contains(&uri)))
 }
@@ -224,14 +259,25 @@ pub enum FieldError {
     Semantic(SemanticError),
     MalformedField,
     UnexpectedSeparate(NodeId),
+    InvalidMarker(NodeId),
     UnmatchedEnd(NodeId),
     UnterminatedBegin(NodeId),
 }
 impl FieldError {
+    pub(crate) fn source_id(&self) -> Option<NodeId> {
+        match self {
+            Self::InvalidMarker(id)
+            | Self::UnexpectedSeparate(id)
+            | Self::UnmatchedEnd(id)
+            | Self::UnterminatedBegin(id) => Some(*id),
+            _ => None,
+        }
+    }
     pub fn code(&self) -> &'static str {
         match self {
             Self::Semantic(error) => error.code(),
             Self::MalformedField => "MALFORMED_FIELD",
+            Self::InvalidMarker(_) => "INVALID_FIELD_MARKER",
             Self::UnexpectedSeparate(_) => "UNEXPECTED_FIELD_SEPARATOR",
             Self::UnmatchedEnd(_) => "UNMATCHED_FIELD_END",
             Self::UnterminatedBegin(_) => "UNTERMINATED_FIELD_BEGIN",

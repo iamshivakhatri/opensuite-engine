@@ -1149,3 +1149,17 @@ mod tests {
         );
     }
 }
+
+use crate::{insert_fields_to_vec, insert_toc_to_vec};
+execute_paragraph_mutation!(
+    execute_docx_insert_fields,
+    opensuite_protocol::InsertFields,
+    insert_fields_to_vec,
+    "insert_fields"
+);
+execute_paragraph_mutation!(
+    execute_docx_insert_toc,
+    opensuite_protocol::InsertToc,
+    insert_toc_to_vec,
+    "insert_toc"
+);

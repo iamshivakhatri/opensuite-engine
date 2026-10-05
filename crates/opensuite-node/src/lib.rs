@@ -1,3 +1,5 @@
+mod fields;
+pub use fields::{insert_fields, insert_toc, inspect_fields};
 mod revisions;
 pub use revisions::{
     accept_revision, delete_tracked_text, insert_tracked_text, inspect_tracked_changes,
@@ -563,6 +565,9 @@ fn node_docx_capability(capability: &str) -> bool {
         "inspect"
             | "style_snapshot"
             | "inspect_comments"
+            | "inspect_fields"
+            | "insert_fields"
+            | "insert_toc"
             | "inspect_tracked_changes"
             | "accept_revision"
             | "reject_revision"

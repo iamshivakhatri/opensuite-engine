@@ -48,6 +48,47 @@ does not aim to reproduce every Microsoft Word feature.
 DOCX mutations, including section editing, are exposed through Node/N-API.
 Capability details are kept in [status.md](status.md).
 
+
+## Word fields and table of contents
+
+`inspect_docx_fields` / Node `inspectDocxFields` uses the existing source-backed
+simple/complex field parser. It recognizes PAGE, NUMPAGES, TOC, DATE, and unknown
+codes without evaluating them. Instruction and cached result are separate;
+normal document text retains its existing cached-text semantics. Locations are
+package part names and zero-based paragraph indices within each part. The main
+part is followed by all header/footer package parts (including unused parts) in
+name order; totals count XML fields, including duplicated footer variants.
+Default 20 records, maximum 100, offset paging, 2,000-character instruction/result
+bounds, at most 100 part diagnostics and 20 reason codes per record. Indexed text
+ranges avoid scanning the whole XML again for every field. Nested fields are
+reported as unsupported with unavailable result text; missing instructions,
+invalid flags/markers, and unterminated structures have diagnostics. A complete
+complex field without a separator has no cached result. Dirty/locked flags are
+nullable: absence does not prove that a cached result is current.
+
+Typed `insert_fields` / Node `executeDocxInsertFields` creates a new paragraph
+with 1–20 plain-text/PAGE/NUMPAGES items. Body placement reuses existing body-block
+handles; footer placement appends to an unshared single-section default footer,
+reusing the existing header/footer relationship and package writer. PAGE writing
+is shared with the earlier page-number feature; its existing output stays the
+same. New fields contain `?` and are marked dirty. `insert_toc` / Node
+`executeDocxInsertToc` inserts a real complex TOC field and optional plain title
+paragraph. Heading levels 1–3 by default in Node, configurable through 1–9, with
+common `\o`, `\h`, `\z`, and `\u` switches. Its dirty field contains an explicit
+refresh placeholder. Word-compatible software calculates TOC entries, page
+numbers, and total pages; Rust never does. Reopen checks verify authored
+instructions/results/dirty flags and unchanged source bytes around the patch.
+Insertion refuses malformed markers or an existing field crossing the insertion
+point; text replacement refuses field content and field-crossing selections.
+Unknown imported instructions/results are preserved without normalization.
+
+OpenSuite exposes these APIs lazily under `document.fields`. No arbitrary field
+code writer, DATE authoring, existing-field update/removal, TOC removal, custom
+style mapping, or field evaluator. LibreOffice smoke open/save recognized the
+TOC and refreshed PAGE/NUMPAGES, but retained the TOC placeholder; an explicit
+TOC update in Word/LibreOffice remains required. Manual Word/Google Docs review
+is pending. No engine version or package pin changes.
+
 ## Tracked-change inspection
 
 Read-only `inspect_docx_tracked_changes` / Node `inspectDocxTrackedChanges` returns
@@ -88,7 +129,7 @@ Decisions require ordinary runs directly inside a paragraph, including simple ta
 
 ## Add Only When Benchmarks Need It
 
-- Long-document structure: table of contents, bookmarks, and cross-references.
+- Long-document structure beyond the common TOC: bookmarks and cross-references.
 - Review workflow: richer revision decisions beyond ordinary run insertions/deletions.
 - Footnotes/endnotes.
 - Other page, header/footer, section, field, or layout features demonstrated as

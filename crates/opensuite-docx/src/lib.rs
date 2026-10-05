@@ -4,6 +4,8 @@ mod comment;
 mod content_control;
 mod execution;
 mod field;
+mod field_inspection;
+pub use field_inspection::{FieldInspection, FieldSnapshot, inspect_docx_fields};
 mod header_footer;
 mod image_dimensions;
 mod inspection;
@@ -136,3 +138,6 @@ pub use content_control::{
     DataBinding, DateMetadata,
 };
 mod blank;
+
+pub use execution::{execute_docx_insert_fields, execute_docx_insert_toc};
+pub use mutation::{insert_fields_to_vec, insert_toc_to_vec};

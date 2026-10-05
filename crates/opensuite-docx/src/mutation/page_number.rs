@@ -181,10 +181,10 @@ pub(super) fn page_number_xml(
     let p = qualify(&prefix, "p");
     let ppr = qualify(&prefix, "pPr");
     let jc = qualify(&prefix, "jc");
-    let field = qualify(&prefix, "fldSimple");
     let attr = attr_prefix(&prefix);
+    let field = super::fields::simple_field_xml(&prefix, " PAGE ", "", false);
     Ok(format!(
-        "<{p}><{ppr}><{jc} {attr}val=\"{}\"/></{ppr}><{field} {attr}instr=\" PAGE \"></{field}></{p}>",
+        "<{p}><{ppr}><{jc} {attr}val=\"{}\"/></{ppr}>{field}</{p}>",
         page_number_alignment_name(alignment)
     ))
 }
@@ -203,8 +203,9 @@ pub(super) fn canonical_page_number_header_footer_xml(
 ) -> String {
     let root = header_footer_root_name(kind);
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:jc w:val="{}"/></w:pPr><w:fldSimple w:instr=" PAGE "></w:fldSimple></w:p></w:{root}>"#,
-        page_number_alignment_name(alignment)
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:jc w:val="{}"/></w:pPr>{}</w:p></w:{root}>"#,
+        page_number_alignment_name(alignment),
+        super::fields::simple_field_xml("w", " PAGE ", "", false)
     )
 }
 

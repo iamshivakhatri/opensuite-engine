@@ -755,3 +755,6 @@ module.exports.executeDocxDeleteTrackedText = nativeBinding.executeDocxDeleteTra
 module.exports.executeDocxReplaceTextWithTrackedChange = nativeBinding.executeDocxReplaceTextWithTrackedChange
 module.exports.executeDocxAcceptRevision = nativeBinding.executeDocxAcceptRevision
 module.exports.executeDocxRejectRevision = nativeBinding.executeDocxRejectRevision
+module.exports.inspectDocxFields = nativeBinding.inspectDocxFields
+module.exports.executeDocxInsertFields = nativeBinding.executeDocxInsertFields
+module.exports.executeDocxInsertToc = nativeBinding.executeDocxInsertToc
