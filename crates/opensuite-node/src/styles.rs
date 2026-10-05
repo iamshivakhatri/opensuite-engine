@@ -3,8 +3,8 @@ use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi_derive::napi;
 use opensuite_docx::{execute_docx_create_style, execute_docx_update_style};
 use opensuite_protocol::{
-    CreateStyle, ParagraphAlignment, ParagraphFormattingPatch, PropertyPatch, TextFormattingPatch,
-    UpdateStyle, WordStylePatch, WordStyleType,
+    CreateStyle, LineSpacing, LineSpacingRule, ParagraphAlignment, ParagraphFormattingPatch,
+    PropertyPatch, TextFormattingPatch, UpdateStyle, WordStylePatch, WordStyleType,
 };
 
 /// Omitted fields are unchanged; clear names remove declarations and restore inheritance.
@@ -23,7 +23,11 @@ pub struct StyleInput {
     pub font_family: Option<String>,
     pub color: Option<String>,
     pub underline: Option<bool>,
+    pub highlight: Option<String>,
+    pub strikethrough: Option<bool>,
+    pub vertical_alignment: Option<String>,
     pub alignment: Option<String>,
+    pub line_spacing: Option<LineSpacingInput>,
     pub spacing_before_twips: Option<i32>,
     pub spacing_after_twips: Option<i32>,
     pub left_indent_twips: Option<i32>,
@@ -34,12 +38,79 @@ pub struct StyleInput {
     pub keep_lines: Option<bool>,
 }
 
-fn property<T>(value: Option<T>, clear: &[String], name: &str) -> Option<PropertyPatch<T>> {
+pub(crate) fn property<T>(
+    value: Option<T>,
+    clear: &[String],
+    name: &str,
+) -> Option<PropertyPatch<T>> {
     if clear.iter().any(|key| key == name) {
         Some(PropertyPatch::Clear)
     } else {
         value.map(PropertyPatch::Set)
     }
+}
+
+#[napi(object)]
+pub struct LineSpacingInput {
+    /// Auto uses 240 units per line; exact/atLeast use twips (20 per point).
+    pub value: u32,
+    pub rule: Option<String>,
+}
+
+pub(crate) const PARAGRAPH_PROPERTIES: &[&str] = &[
+    "alignment",
+    "spacingBeforeTwips",
+    "spacingAfterTwips",
+    "lineSpacing",
+    "leftIndentTwips",
+    "rightIndentTwips",
+    "firstLineIndentTwips",
+    "hangingIndentTwips",
+    "keepWithNext",
+    "keepLines",
+];
+
+pub(crate) fn validate_paragraph_clear(clear: &[String]) -> napi::Result<()> {
+    for key in clear {
+        if !PARAGRAPH_PROPERTIES.contains(&key.as_str()) {
+            return Err(napi::Error::from_reason(format!(
+                "unsupported paragraph property to clear: {key}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn alignment(value: Option<String>) -> napi::Result<Option<ParagraphAlignment>> {
+    value
+        .map(|value| match value.as_str() {
+            "left" => Ok(ParagraphAlignment::Left),
+            "center" => Ok(ParagraphAlignment::Center),
+            "right" => Ok(ParagraphAlignment::Right),
+            "both" => Ok(ParagraphAlignment::Both),
+            "distribute" => Ok(ParagraphAlignment::Distribute),
+            _ => Err(napi::Error::from_reason("invalid paragraph alignment")),
+        })
+        .transpose()
+}
+
+pub(crate) fn line_spacing(value: Option<LineSpacingInput>) -> napi::Result<Option<LineSpacing>> {
+    value
+        .map(|value| {
+            Ok(LineSpacing {
+                value: value.value,
+                rule: value
+                    .rule
+                    .map(|rule| match rule.as_str() {
+                        "auto" => Ok(LineSpacingRule::Auto),
+                        "exact" => Ok(LineSpacingRule::Exact),
+                        "atLeast" => Ok(LineSpacingRule::AtLeast),
+                        _ => Err(napi::Error::from_reason("invalid line spacing rule")),
+                    })
+                    .transpose()?,
+            })
+        })
+        .transpose()
 }
 
 fn properties(
@@ -55,27 +126,11 @@ fn properties(
         }
     };
     let clear = input.clear.unwrap_or_default();
-    let supported = [
-        "basedOn",
-        "next",
-        "bold",
-        "italic",
-        "fontSizeHalfPoints",
-        "fontFamily",
-        "color",
-        "underline",
-        "alignment",
-        "spacingBeforeTwips",
-        "spacingAfterTwips",
-        "leftIndentTwips",
-        "rightIndentTwips",
-        "firstLineIndentTwips",
-        "hangingIndentTwips",
-        "keepWithNext",
-        "keepLines",
-    ];
     for key in &clear {
-        if !supported.contains(&key.as_str()) {
+        if !["basedOn", "next"].contains(&key.as_str())
+            && !crate::text_formatting::TEXT_PROPERTIES.contains(&key.as_str())
+            && !PARAGRAPH_PROPERTIES.contains(&key.as_str())
+        {
             return Err(napi::Error::from_reason(format!(
                 "unsupported style property to clear: {key}"
             )));
@@ -86,17 +141,9 @@ fn properties(
         .map(u16::try_from)
         .transpose()
         .map_err(|_| napi::Error::from_reason("fontSizeHalfPoints exceeds 65535"))?;
-    let alignment = input
-        .alignment
-        .map(|value| match value.as_str() {
-            "left" => Ok(ParagraphAlignment::Left),
-            "center" => Ok(ParagraphAlignment::Center),
-            "right" => Ok(ParagraphAlignment::Right),
-            "both" => Ok(ParagraphAlignment::Both),
-            "distribute" => Ok(ParagraphAlignment::Distribute),
-            _ => Err(napi::Error::from_reason("invalid style alignment")),
-        })
-        .transpose()?;
+    let alignment = alignment(input.alignment)?;
+    let line_spacing = line_spacing(input.line_spacing)?;
+    let vertical = crate::text_formatting::vertical_alignment(input.vertical_alignment)?;
     let patch = WordStylePatch {
         name: input.name,
         based_on: property(input.based_on, &clear, "basedOn"),
@@ -108,10 +155,13 @@ fn properties(
             color: property(input.color, &clear, "color"),
             underline: property(input.underline, &clear, "underline"),
             font_size_half_points: property(size, &clear, "fontSizeHalfPoints"),
-            ..Default::default()
+            highlight: property(input.highlight, &clear, "highlight"),
+            strikethrough: property(input.strikethrough, &clear, "strikethrough"),
+            vertical_alignment: property(vertical, &clear, "verticalAlignment"),
         },
         paragraph: ParagraphFormattingPatch {
             alignment: property(alignment, &clear, "alignment"),
+            line_spacing: property(line_spacing, &clear, "lineSpacing"),
             spacing_before_twips: property(
                 input.spacing_before_twips,
                 &clear,
@@ -132,7 +182,6 @@ fn properties(
             ),
             keep_with_next: property(input.keep_with_next, &clear, "keepWithNext"),
             keep_lines: property(input.keep_lines, &clear, "keepLines"),
-            ..Default::default()
         },
     };
     Ok((input.style_id, kind, patch, input.base_revision))

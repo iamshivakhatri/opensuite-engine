@@ -51,12 +51,22 @@ export interface ReplaceTextInput { target: TextTarget; expectedCurrentText: str
 export interface InsertParagraphInput { text: string; placement: ParagraphPlacement; baseRevision?: string }
 export interface InsertParagraphsInput { texts: string[]; placement: ParagraphPlacement; baseRevision?: string }
 export interface SetParagraphStyleInput { target: TextTarget; /** Omit to clear the direct style. */ style?: string; baseRevision?: string }
-export interface SetParagraphFormattingInput {
-  target: TextTarget; alignment?: 'left' | 'center' | 'right' | 'clear'; spacingBeforeTwips?: number; spacingAfterTwips?: number
-  leftIndentTwips?: number; clearLeftIndent?: boolean; baseRevision?: string
+/** Auto uses 240 units per line (276 = 1.15); exact/atLeast use twips (20 = 1 pt). */
+export interface LineSpacingInput { value: number; rule?: 'auto' | 'exact' | 'atLeast' }
+export interface ParagraphFormattingInput {
+  alignment?: 'left' | 'center' | 'right' | 'both' | 'distribute' | 'clear';
+  spacingBeforeTwips?: number; spacingAfterTwips?: number; lineSpacing?: LineSpacingInput;
+  leftIndentTwips?: number; rightIndentTwips?: number; firstLineIndentTwips?: number; hangingIndentTwips?: number;
+  keepWithNext?: boolean; keepLines?: boolean;
+  /** Remove direct properties and restore inheritance. Omitted fields stay unchanged. */
+  clear?: Array<'alignment' | 'spacingBeforeTwips' | 'spacingAfterTwips' | 'lineSpacing' | 'leftIndentTwips' | 'rightIndentTwips' | 'firstLineIndentTwips' | 'hangingIndentTwips' | 'keepWithNext' | 'keepLines'>;
+}
+export interface SetParagraphFormattingInput extends ParagraphFormattingInput {
+  target: TextTarget; clearLeftIndent?: boolean; baseRevision?: string
 }
 export type VerticalAlignment = 'baseline' | 'superscript' | 'subscript'
-export interface SetTextFormattingInput { target: TextTarget; bold?: boolean; italic?: boolean; fontSizeHalfPoints?: number; fontFamily?: string; clearBold?: boolean; color?: string; clearColor?: boolean; underline?: boolean; clearUnderline?: boolean; highlight?: string; clearHighlight?: boolean; strikethrough?: boolean; clearStrikethrough?: boolean; verticalAlignment?: VerticalAlignment; clearVerticalAlignment?: boolean; baseRevision?: string }
+export type TextFormattingProperty = 'bold' | 'italic' | 'fontSizeHalfPoints' | 'fontFamily' | 'color' | 'underline' | 'highlight' | 'strikethrough' | 'verticalAlignment'
+export interface SetTextFormattingInput { clear?: TextFormattingProperty[]; target: TextTarget; bold?: boolean; italic?: boolean; fontSizeHalfPoints?: number; fontFamily?: string; clearBold?: boolean; color?: string; clearColor?: boolean; underline?: boolean; clearUnderline?: boolean; highlight?: string; clearHighlight?: boolean; strikethrough?: boolean; clearStrikethrough?: boolean; verticalAlignment?: VerticalAlignment; clearVerticalAlignment?: boolean; baseRevision?: string }
 
 export interface CreateTableInput { rows: string[][]; placement: ParagraphPlacement; baseRevision?: string }
 export interface InsertTableRowInput { table: TableTarget; after: TableRowTarget; cells: string[]; baseRevision?: string }
@@ -193,6 +203,8 @@ export interface StyleInput {
   fontFamily?: string;
   color?: string;
   underline?: boolean;
+  highlight?: string; strikethrough?: boolean; verticalAlignment?: VerticalAlignment;
+  lineSpacing?: LineSpacingInput;
   alignment?: 'left' | 'center' | 'right' | 'both' | 'distribute';
   spacingBeforeTwips?: number;
   spacingAfterTwips?: number;
@@ -202,7 +214,7 @@ export interface StyleInput {
   hangingIndentTwips?: number;
   keepWithNext?: boolean;
   keepLines?: boolean;
-  clear?: Array<'basedOn' | 'next' | 'bold' | 'italic' | 'fontSizeHalfPoints' | 'fontFamily' | 'color' | 'underline' | 'alignment' | 'spacingBeforeTwips' | 'spacingAfterTwips' | 'leftIndentTwips' | 'rightIndentTwips' | 'firstLineIndentTwips' | 'hangingIndentTwips' | 'keepWithNext' | 'keepLines'>;
+  clear?: Array<'basedOn' | 'next' | TextFormattingProperty | 'alignment' | 'spacingBeforeTwips' | 'spacingAfterTwips' | 'lineSpacing' | 'leftIndentTwips' | 'rightIndentTwips' | 'firstLineIndentTwips' | 'hangingIndentTwips' | 'keepWithNext' | 'keepLines'>;
   baseRevision?: string;
 }
 export function executeDocxCreateStyle(input: Buffer, operation: StyleInput & { name: string }): Promise<ExecuteDocxResult>

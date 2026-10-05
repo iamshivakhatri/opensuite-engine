@@ -392,7 +392,10 @@ mod tests {
         );
         let (_, source) = crate::open_main_source(&Package::from_bytes(bytes).unwrap()).unwrap();
         let xml = String::from_utf8_lossy(source.original_bytes());
-        assert!(xml.contains("w:fldChar"), "TOC must use standard w: field markup");
+        assert!(
+            xml.contains("w:fldChar"),
+            "TOC must use standard w: field markup"
+        );
         assert!(
             !xml.contains("opensuiteField"),
             "custom field prefixes break Casual editor round-trip"

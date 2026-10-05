@@ -164,6 +164,18 @@ Typed `accept_revision` / `reject_revision` decide one insertion/deletion throug
 
 Decisions require ordinary runs directly inside a paragraph, including simple table-cell paragraphs. Nested/move/property/structural revisions, malformed wrappers/IDs, richer containers, incompatible text tags, and retained content depending on wrapper XML context fail safely. Replacement uses two decisions, with fresh inspection between them. No accept-all or batch operation.
 
+## Complete formatting contracts
+
+The Node bridge now exposes all existing paragraph patch fields: five alignment
+values, before/after spacing, line spacing, all four indents, and keep-with-next /
+keep-lines. `clear` removes declarations to restore inheritance; legacy clear
+flags remain compatible. Auto line spacing uses 240 units per line, while exact
+and at-least spacing use twips. Word-style updates share the same value parsers
+and now expose line spacing plus existing highlight, strike, and vertical text
+alignment. Direct text patches can clear every supported property; oversized
+font sizes and invalid alignment values fail rather than wrap or disappear.
+Rust mutation semantics, engine version, and npm packages are unchanged.
+
 ## Node/N-API
 
 The adapter exposes capability discovery, blank-document creation, inspection,

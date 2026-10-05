@@ -42,12 +42,11 @@ use opensuite_protocol::{
     DocxPicture, DocxTable, DocxTableRow, DocxTableRowWindow, FindText, FindTextResult,
     InsertParagraph, InsertParagraphs, InsertTableColumnAfter, InspectDocx, InspectDocxContent,
     InspectDocxFocus, InspectDocxResult, InspectTextContext, InspectTextContextResult,
-    InspectionPage, OperationResult, ParagraphAlignment, ParagraphFormattingPatch,
-    ParagraphPlacement, PropertyPatch, ReplaceText, RuntimeCapabilities, SetParagraphFormatting,
-    SetParagraphStyle, SetTableCellShading, SetTableColumnWidths, SetTableFormatting,
-    TableAlignment, TableBorders, TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget,
-    TableCellTextUpdate, TableFormattingPatch, TableRowTarget, TableTarget, TextContainer,
-    TextTarget,
+    InspectionPage, OperationResult, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch,
+    ReplaceText, RuntimeCapabilities, SetParagraphFormatting, SetParagraphStyle,
+    SetTableCellShading, SetTableColumnWidths, SetTableFormatting, TableAlignment, TableBorders,
+    TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget, TableCellTextUpdate,
+    TableFormattingPatch, TableRowTarget, TableTarget, TextContainer, TextTarget,
 };
 pub use page_composition::{
     execute_docx_delete_page_break_node, execute_docx_insert_page_break_node,
@@ -117,6 +116,13 @@ pub struct SetParagraphFormattingInput {
     pub spacing_after_twips: Option<i32>,
     pub left_indent_twips: Option<i32>,
     pub clear_left_indent: Option<bool>,
+    pub line_spacing: Option<styles::LineSpacingInput>,
+    pub right_indent_twips: Option<i32>,
+    pub first_line_indent_twips: Option<i32>,
+    pub hanging_indent_twips: Option<i32>,
+    pub keep_with_next: Option<bool>,
+    pub keep_lines: Option<bool>,
+    pub clear: Option<Vec<String>>,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
@@ -832,33 +838,61 @@ pub fn execute_docx_set_paragraph_style_node(
 pub fn execute_docx_set_paragraph_formatting_node(
     input: Buffer,
     operation: SetParagraphFormattingInput,
-) -> AsyncTask<SimpleTask<SetParagraphFormatting>> {
-    let alignment = operation.alignment.and_then(|value| match value.as_str() {
-        "left" => Some(PropertyPatch::Set(ParagraphAlignment::Left)),
-        "center" => Some(PropertyPatch::Set(ParagraphAlignment::Center)),
-        "right" => Some(PropertyPatch::Set(ParagraphAlignment::Right)),
-        "clear" => Some(PropertyPatch::Clear),
-        _ => None,
-    });
-    AsyncTask::new(SimpleTask {
+) -> napi::Result<AsyncTask<SimpleTask<SetParagraphFormatting>>> {
+    let mut clear = operation.clear.unwrap_or_default();
+    styles::validate_paragraph_clear(&clear)?;
+    if operation.clear_left_indent == Some(true) {
+        clear.push("leftIndentTwips".into());
+    }
+    if operation.alignment.as_deref() == Some("clear") {
+        clear.push("alignment".into());
+    }
+    let alignment = styles::alignment(operation.alignment.filter(|value| value != "clear"))?;
+    let line_spacing = styles::line_spacing(operation.line_spacing)?;
+    Ok(AsyncTask::new(SimpleTask {
         input: input.to_vec(),
         operation: SetParagraphFormatting {
             target: text_target(operation.target),
             formatting: ParagraphFormattingPatch {
-                alignment,
-                spacing_before_twips: operation.spacing_before_twips.map(PropertyPatch::Set),
-                spacing_after_twips: operation.spacing_after_twips.map(PropertyPatch::Set),
-                left_indent_twips: operation
-                    .clear_left_indent
-                    .filter(|clear| *clear)
-                    .map(|_| PropertyPatch::Clear)
-                    .or_else(|| operation.left_indent_twips.map(PropertyPatch::Set)),
-                ..Default::default()
+                alignment: styles::property(alignment, &clear, "alignment"),
+                spacing_before_twips: styles::property(
+                    operation.spacing_before_twips,
+                    &clear,
+                    "spacingBeforeTwips",
+                ),
+                spacing_after_twips: styles::property(
+                    operation.spacing_after_twips,
+                    &clear,
+                    "spacingAfterTwips",
+                ),
+                line_spacing: styles::property(line_spacing, &clear, "lineSpacing"),
+                left_indent_twips: styles::property(
+                    operation.left_indent_twips,
+                    &clear,
+                    "leftIndentTwips",
+                ),
+                right_indent_twips: styles::property(
+                    operation.right_indent_twips,
+                    &clear,
+                    "rightIndentTwips",
+                ),
+                first_line_indent_twips: styles::property(
+                    operation.first_line_indent_twips,
+                    &clear,
+                    "firstLineIndentTwips",
+                ),
+                hanging_indent_twips: styles::property(
+                    operation.hanging_indent_twips,
+                    &clear,
+                    "hangingIndentTwips",
+                ),
+                keep_with_next: styles::property(operation.keep_with_next, &clear, "keepWithNext"),
+                keep_lines: styles::property(operation.keep_lines, &clear, "keepLines"),
             },
             base_revision: operation.base_revision,
         },
         run: execute_docx_set_paragraph_formatting,
-    })
+    }))
 }
 /// Runs DOCX table-row insertion away from Node's event loop and returns a Promise.
 #[napi(js_name = "executeDocxInsertTableRow")]

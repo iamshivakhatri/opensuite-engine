@@ -18,6 +18,9 @@ does not aim to reproduce every Microsoft Word feature.
   pagination controls, and table/image width diagnostics. Optional LibreOffice PDF
   rendering lives outside Rust; exact block-to-page mapping remains deferred.
   See [E1 layout inspection](e1-layout-inspection.md).
+- Complete Node paragraph patches reuse Rust alignment, spacing/line spacing, all
+  indents, keep rules, and clear-to-inherit semantics; text patches also clear all
+  supported properties. No new formatting semantics or version change.
 - Paragraph creation and deletion, text replacement, existing paragraph styles,
   direct paragraph formatting, and direct text formatting including color,
   underline, highlight, strikethrough, and superscript/subscript.

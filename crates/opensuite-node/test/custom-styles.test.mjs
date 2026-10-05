@@ -21,7 +21,7 @@ test('custom Word styles dogfood persists, applies, updates and resolves inherit
   for (const text of ['Overview', 'Results']) bytes = await apply(bytes, 'executeDocxSetParagraphStyle', { target: { text }, style: 'OpenSuiteReportHeading' })
   bytes = await apply(bytes, 'executeDocxCreateStyle', { styleId: 'OpenSuiteCallout', styleType: 'paragraph', name: 'OpenSuite Callout', basedOn: 'Normal', italic: true, leftIndentTwips: 240 })
   bytes = await apply(bytes, 'executeDocxSetParagraphStyle', { target: { text: 'Reusable callout text.' }, style: 'OpenSuite Callout' })
-  bytes = await apply(bytes, 'executeDocxUpdateStyle', { styleId: 'OpenSuiteReportHeading', styleType: 'paragraph', color: '235744', spacingAfterTwips: 160, clear: ['bold'] })
+  bytes = await apply(bytes, 'executeDocxUpdateStyle', { styleId: 'OpenSuiteReportHeading', styleType: 'paragraph', color: '235744', spacingAfterTwips: 160, lineSpacing: { value: 276, rule: 'auto' }, clear: ['bold'] })
   bytes = await apply(bytes, 'executeDocxCreateStyle', { styleId: 'OpenSuiteAccent', styleType: 'character', name: 'OpenSuite Accent', color: '124733' })
   bytes = await apply(bytes, 'executeDocxUpdateStyle', { styleId: 'OpenSuiteAccent', styleType: 'character', italic: true })
   const artifact = '/private/tmp/opensuite-e1-custom-styles.docx'
@@ -36,6 +36,7 @@ test('custom Word styles dogfood persists, applies, updates and resolves inherit
   assert.equal(heading.effectiveRunFormatting.fontFamily, 'Arial')
   assert.equal(heading.effectiveRunFormatting.color, '235744')
   assert.equal(heading.effectiveParagraphFormatting.spacingAfterTwips, 160)
+  assert.deepEqual(heading.effectiveParagraphFormatting.lineSpacing, { value: 276, rule: 'auto' })
   writeFileSync('/private/tmp/opensuite-e1-custom-styles.json', JSON.stringify(snapshot, null, 2))
   const duplicate = await binding.executeDocxCreateStyle(bytes, { styleId: heading.styleId, styleType: 'paragraph', name: 'Different' })
   assert.equal(duplicate.result.ok, false)
