@@ -52,6 +52,8 @@ details. Do not infer architecture from one incomplete file.
 
 ## Publishing / version tags
 
+Full procedure: `docs/releasing.md` (`scripts/release-engine.sh`).
+
 Tag pushes matching `v*.*.*` publish `@opensuitehq/engine` to npm. After a new
 version is published, bump the **opensuite** consumer in the same release
 window — do not leave deploy docs or the lockfile on the previous pin.

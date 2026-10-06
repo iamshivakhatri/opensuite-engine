@@ -237,7 +237,8 @@ standard comment inspection/add/update/delete and simple content-control text up
 
 ## Immediate Direction
 
-1. Publish `@opensuitehq/engine@0.1.2` (table-cell `set_text_formatting`) and bump app pins off local binaries.
+1. Prepare/publish the next hardened engine release via [releasing.md](releasing.md)
+   (`scripts/release-engine.sh`); bump opensuite app pins off local binaries.
 2. Validate complete application and agent workflows.
 3. Compare benchmark documents with current capabilities and identify real gaps.
 4. Add remaining DOCX P0 capabilities only when those workflows require them.

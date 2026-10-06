@@ -1,5 +1,7 @@
 # Engineering Workflow
 
+For engine versioning and npm publishing, see [releasing.md](releasing.md).
+
 ## Development Standard
 
 Every change should be:

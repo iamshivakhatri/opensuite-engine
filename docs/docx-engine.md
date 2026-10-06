@@ -1,5 +1,7 @@
 # OpenSuite DOCX Engine
 
+For engine versioning and publishing, see [releasing.md](releasing.md).
+
 ## Product Goal
 
 Provide the DOCX operations needed to create and edit ordinary business,
