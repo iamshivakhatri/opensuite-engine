@@ -631,6 +631,8 @@ fn node_docx_capability(capability: &str) -> bool {
             | "set_table_column_widths"
             | "set_table_cell_shading"
             | "set_table_cells_formatting"
+            | "semantic_table_cell_targets"
+            | "semantic_table_row_deletion"
             | "find_text"
             | "inspect_context"
     )
@@ -1916,6 +1918,20 @@ mod tests {
                 .iter()
                 .any(|value| value == "style_snapshot")
         );
+    }
+
+    #[test]
+    fn advertises_semantic_table_selectors() {
+        let capabilities = get_docx_capabilities();
+        let docx = capabilities
+            .formats
+            .iter()
+            .find(|format| format.format == "docx")
+            .unwrap();
+
+        for id in ["semantic_table_cell_targets", "semantic_table_row_deletion"] {
+            assert!(docx.capabilities.iter().any(|value| value == id), "{id}");
+        }
     }
 
     #[test]
