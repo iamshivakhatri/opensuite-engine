@@ -19,8 +19,8 @@ N-API compiler type records generate TypeScript declarations and JSON schemas;
 Rust field comments supply descriptions and extra restrictions. Native metadata
 returns these embedded schemas and a JSON/binary input flag. The product uses
 these definitions for mutation tools and automatic dynamic discovery. Read tools also consume generated inputs; native metadata explicitly marks
-JSON-encoded read output. These local changes need a new
-engine release; the published version remains 0.1.5.
+JSON-encoded read output. These contracts are published in engine 0.1.7. All five platform builds and the
+clean npm consumer check pass.
 
 ## Current Capability Groups
 

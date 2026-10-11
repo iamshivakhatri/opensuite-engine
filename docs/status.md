@@ -9,7 +9,7 @@ paragraph text search, safe direct text and picture replacement, top-level
 picture insertion, direct shape geometry, and direct run formatting; XLSX has
 not started.
 
-## Capability inventory (local, awaiting next release)
+## Capability inventory (published in 0.1.7)
 
 `opensuite-protocol::DOCX_CAPABILITIES` is the single Rust/Node inventory of
 IDs, operation kinds, Node export names, and transport availability. N-API reads
@@ -25,10 +25,14 @@ and decoded read output types live in `compatibility-types.d.ts`.
 Native tests compare inventory, compiled exports, declarations, and generated
 inputs; release builds check generated SDK types and matching-host metadata.
 Local native build and 35 tests pass; SDK declarations typecheck. Changed
-Node/protocol crates lint cleanly and their 7 tests pass. No operation semantics
-or published version change. Product mutation tools consume these definitions;
-product read tools also consume generated inputs. Packaged/platform release
-verification remains.
+Node/protocol crates lint cleanly and their 7 tests pass. Operation semantics are unchanged. Published native/package version is 0.1.7. All five platform builds and six npm
+packages are verified; a clean npm consumer loads native input definitions. Product mutation tools consume these definitions;
+product read tools also consume generated inputs. The 0.1.6 publishing workflow
+stopped before any package publication on a Windows test path error. The repaired
+0.1.7 publishing workflow passed on all five platforms; the local canonical release checks passed, including
+203 Rust tests, 35 native tests, SDK typecheck, and native/package version equality
+in the packaged-consumer check. Old/unmarked cross-platform artifact folders are
+now skipped instead of overwriting the checked host binary.
 
 ## Current DOCX Engine
 
