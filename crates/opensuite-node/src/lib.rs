@@ -69,7 +69,9 @@ pub use text_formatting::execute_docx_set_text_formatting_node;
 
 #[napi(object)]
 pub struct TextTargetInput {
+    /// @schema {"description":"Exact text to match"}
     pub text: String,
+    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
 }
 
@@ -84,6 +86,7 @@ pub struct ReplaceTextInput {
 #[napi(object)]
 pub struct InsertParagraphInput {
     pub text: String,
+    /// @schema {"description":"Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits."}
     pub placement: ParagraphPlacementInput,
     pub base_revision: Option<String>,
 }
@@ -91,13 +94,16 @@ pub struct InsertParagraphInput {
 #[napi(object)]
 pub struct InsertParagraphsInput {
     pub texts: Vec<String>,
+    /// @schema {"description":"Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits."}
     pub placement: ParagraphPlacementInput,
     pub base_revision: Option<String>,
 }
 
 #[napi(object)]
 pub struct ParagraphPlacementInput {
+    /// @schema {"enum":["start","end","before","after"],"description":"start/end need no handle; before/after need an inspected body_blocks handle."}
     pub kind: String,
+    /// @schema {"description":"Omit for start/end. Required for before/after; copy from the latest relevant document.inspect."}
     pub handle: Option<String>,
 }
 #[napi(object)]
@@ -108,12 +114,14 @@ pub struct DeleteParagraphInput {
 #[napi(object)]
 pub struct SetParagraphStyleInput {
     pub target: TextTargetInput,
+    /// @schema {"description":"Style display name such as 'Heading 1'. Omit to clear."}
     pub style: Option<String>,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
 pub struct SetParagraphFormattingInput {
     pub target: TextTargetInput,
+    /// @schema {"enum":["left","center","right","both","distribute","clear"]}
     pub alignment: Option<String>,
     pub spacing_before_twips: Option<i32>,
     pub spacing_after_twips: Option<i32>,
@@ -123,8 +131,11 @@ pub struct SetParagraphFormattingInput {
     pub right_indent_twips: Option<i32>,
     pub first_line_indent_twips: Option<i32>,
     pub hanging_indent_twips: Option<i32>,
+    /// @schema {"description":"Keep this paragraph with the following paragraph."}
     pub keep_with_next: Option<bool>,
+    /// @schema {"description":"Keep all lines of this paragraph on one page."}
     pub keep_lines: Option<bool>,
+    /// @schema {"description":"Remove direct properties and restore inheritance. Omitted fields stay unchanged."}
     pub clear: Option<Vec<String>>,
     pub base_revision: Option<String>,
 }
@@ -170,6 +181,7 @@ pub struct ExecuteDocxReplaceTextOutput {
 #[napi(object)]
 pub struct TableTargetInput {
     pub header_cells: Option<Vec<String>>,
+    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
     pub handle: Option<String>,
 }
@@ -177,24 +189,32 @@ pub struct TableTargetInput {
 #[napi(object)]
 pub struct TableRowTargetInput {
     pub first_cell_text: Option<String>,
+    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
     pub handle: Option<String>,
 }
 
 #[napi(object)]
 pub struct DeleteTableRowTargetInput {
+    /// @schema {"enum":["header","label","index"]}
     pub kind: Option<String>,
+    /// @schema {"description":"First-cell row label for kind=label."}
     pub text: Option<String>,
+    /// @schema {"description":"Zero-based row position for kind=index."}
     pub index: Option<u32>,
+    /// @schema {"description":"Required for kind=index; prevents a shifted row from being edited."}
     pub expected_first_cell_text: Option<String>,
     pub first_cell_text: Option<String>,
+    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
     pub handle: Option<String>,
 }
 
 #[napi(object)]
 pub struct InsertTableRowInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
+    /// @schema {"description":"Row selector. Use firstCellText/occurrence when unambiguous; inspect only when a current row handle is needed."}
     pub after: TableRowTargetInput,
     pub cells: Vec<String>,
     pub base_revision: Option<String>,
@@ -202,7 +222,9 @@ pub struct InsertTableRowInput {
 
 #[napi(object)]
 pub struct InsertTableRowsInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
+    /// @schema {"description":"Row selector. Use firstCellText/occurrence when unambiguous; inspect only when a current row handle is needed."}
     pub after: TableRowTargetInput,
     pub rows: Vec<Vec<String>>,
     pub base_revision: Option<String>,
@@ -210,6 +232,7 @@ pub struct InsertTableRowsInput {
 
 #[napi(object)]
 pub struct InsertTableColumnInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
     pub after_column_header: Option<String>,
     pub after_column_handle: Option<String>,
@@ -228,19 +251,29 @@ pub struct TableCellTargetInput {
 
 #[napi(object)]
 pub struct TableCellRowInput {
+    /// @schema {"enum":["header","label","index"]}
     pub kind: String,
+    /// @schema {"description":"First-cell row label for kind=label."}
     pub text: Option<String>,
+    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
+    /// @schema {"description":"Zero-based row position for kind=index."}
     pub index: Option<u32>,
+    /// @schema {"description":"Required for kind=index; prevents a shifted row from being edited."}
     pub expected_first_cell_text: Option<String>,
 }
 
 #[napi(object)]
 pub struct TableCellColumnInput {
+    /// @schema {"enum":["first","header","index"]}
     pub kind: String,
+    /// @schema {"description":"First-row column header for kind=header."}
     pub text: Option<String>,
+    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
+    /// @schema {"description":"Zero-based column position for kind=index."}
     pub index: Option<u32>,
+    /// @schema {"description":"Required for kind=index; prevents a shifted column from being edited."}
     pub expected_header_text: Option<String>,
 }
 
@@ -250,12 +283,14 @@ pub struct SemanticTableCellTargetInput {
     pub column: Option<TableCellColumnInput>,
     pub row_label: Option<String>,
     pub column_header: Option<String>,
+    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
     pub handle: Option<String>,
 }
 
 #[napi(object)]
 pub struct TableCellTextUpdateInput {
+    /// @schema {"description":"Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells."}
     pub target: SemanticTableCellTargetInput,
     pub expected_current_text: String,
     pub replacement: String,
@@ -263,6 +298,7 @@ pub struct TableCellTextUpdateInput {
 
 #[napi(object)]
 pub struct SetTableCellsTextInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
     pub updates: Vec<TableCellTextUpdateInput>,
     pub base_revision: Option<String>,
@@ -271,22 +307,27 @@ pub struct SetTableCellsTextInput {
 #[napi(object)]
 pub struct CreateTableInput {
     pub rows: Vec<Vec<String>>,
+    /// @schema {"description":"Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits."}
     pub placement: ParagraphPlacementInput,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
 pub struct DeleteTableInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
 pub struct DeleteTableRowInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
+    /// @schema {"description":"Prefer kind=label with text and occurrence when needed, or kind=index with expectedFirstCellText. Use a handle only when these cannot express the row. Older firstCellText + occurrence remains supported."}
     pub row: DeleteTableRowTargetInput,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
 pub struct DeleteTableColumnInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
     pub column_header: Option<String>,
     pub column_handle: Option<String>,
@@ -294,28 +335,34 @@ pub struct DeleteTableColumnInput {
 }
 #[napi(object)]
 pub struct SetTableFormattingInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
+    /// @schema {"enum":["left","center","right","clear"]}
     pub alignment: Option<String>,
     pub cell_margin_top_twips: Option<u32>,
     pub cell_margin_right_twips: Option<u32>,
     pub cell_margin_bottom_twips: Option<u32>,
     pub cell_margin_left_twips: Option<u32>,
+    /// @schema {"enum":["grid","none","clear"]}
     pub borders: Option<String>,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
 pub struct SetTableColumnWidthsInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
     pub widths_twips: Vec<u32>,
     pub base_revision: Option<String>,
 }
 #[napi(object)]
 pub struct TableCellShadingUpdateInput {
+    /// @schema {"description":"Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells."}
     pub target: SemanticTableCellTargetInput,
     pub fill: Option<String>,
 }
 #[napi(object)]
 pub struct SetTableCellShadingInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
     pub updates: Vec<TableCellShadingUpdateInput>,
     pub base_revision: Option<String>,
@@ -326,6 +373,9 @@ pub struct DocxOperationOutput {
     pub id: String,
     pub kind: String,
     pub node_export: String,
+    pub description: String,
+    pub input_schema: Option<String>,
+    pub json_input: bool,
 }
 
 #[napi(object)]
@@ -555,6 +605,11 @@ pub struct InspectContextOutput {
 /// Returns the static DOCX runtime manifest without requiring artifact bytes.
 #[napi(js_name = "getDocxCapabilities")]
 pub fn get_docx_capabilities() -> RuntimeCapabilitiesOutput {
+    static INPUTS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    let inputs = INPUTS.get_or_init(|| {
+        serde_json::from_str(include_str!("../operation-inputs.json"))
+            .expect("generated operation inputs must be valid JSON")
+    });
     let capabilities = RuntimeCapabilities::docx(env!("CARGO_PKG_VERSION"));
     RuntimeCapabilitiesOutput {
         ok: true,
@@ -580,6 +635,16 @@ pub fn get_docx_capabilities() -> RuntimeCapabilitiesOutput {
                                 id: capability.id.to_owned(),
                                 kind: capability.kind.as_str().to_owned(),
                                 node_export: node_export.to_owned(),
+                                description: inputs[node_export]["description"]
+                                    .as_str()
+                                    .unwrap_or(capability.id)
+                                    .to_owned(),
+                                input_schema: inputs[node_export]
+                                    .get("inputSchema")
+                                    .map(|schema| schema.to_string()),
+                                json_input: inputs[node_export]["jsonInput"]
+                                    .as_bool()
+                                    .unwrap_or(false),
                             })
                     })
                     .collect(),
@@ -595,7 +660,7 @@ pub fn create_blank_docx_node() -> Buffer {
 }
 
 /// Finds DOCX text away from Node's event loop and returns semantic results.
-#[napi(js_name = "findDocxText")]
+#[napi(js_name = "findDocxText", ts_return_type = "Promise<FindTextOutput>")]
 pub fn find_docx_text_node(input: Buffer, request: FindTextInput) -> AsyncTask<FindTextTask> {
     AsyncTask::new(FindTextTask {
         input: input.to_vec(),
@@ -625,7 +690,7 @@ impl Task for FindTextTask {
 }
 
 /// Inspects bounded DOCX text context away from Node's event loop.
-#[napi(js_name = "inspectDocx")]
+#[napi(js_name = "inspectDocx", ts_return_type = "Promise<InspectDocxOutput>")]
 pub fn inspect_docx_node(input: Buffer, request: InspectDocxInput) -> AsyncTask<InspectDocxTask> {
     let (focus, request) = inspect_request(request);
     AsyncTask::new(InspectDocxTask {
@@ -636,7 +701,10 @@ pub fn inspect_docx_node(input: Buffer, request: InspectDocxInput) -> AsyncTask<
 }
 
 /// Inspects the bounded DOCX formatting system away from Node's event loop.
-#[napi(js_name = "inspectDocxStyleSnapshot")]
+#[napi(
+    js_name = "inspectDocxStyleSnapshot",
+    ts_return_type = "Promise<string>"
+)]
 pub fn inspect_docx_style_snapshot_node(input: Buffer) -> AsyncTask<InspectDocxStyleSnapshotTask> {
     AsyncTask::new(InspectDocxStyleSnapshotTask {
         input: input.to_vec(),
@@ -683,7 +751,11 @@ impl Task for InspectDocxTask {
 }
 
 /// Runs DOCX replacement away from Node's event loop and returns a Promise.
-#[napi(js_name = "executeDocxReplaceText")]
+/// Replace one exact text span. Requires target text, zero-based occurrence when ambiguous, expectedCurrentText (must match current content), and replacement.
+#[napi(
+    js_name = "executeDocxReplaceText",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_replace_text_node(
     input: Buffer,
     operation: ReplaceTextInput,
@@ -700,7 +772,11 @@ pub fn execute_docx_replace_text_node(
 }
 
 /// Runs DOCX paragraph insertion away from Node's event loop and returns a Promise.
-#[napi(js_name = "executeDocxInsertParagraph")]
+/// Insert one paragraph. For a blank document, use placement {kind: "end"} or {kind: "start"} without a handle.
+#[napi(
+    js_name = "executeDocxInsertParagraph",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_insert_paragraph_node(
     input: Buffer,
     operation: InsertParagraphInput,
@@ -730,7 +806,11 @@ pub fn execute_docx_insert_paragraph_node(
     })
 }
 
-#[napi(js_name = "executeDocxInsertParagraphs")]
+/// Insert multiple paragraphs. For a blank document, use placement {kind: "end"} or {kind: "start"} without a handle.
+#[napi(
+    js_name = "executeDocxInsertParagraphs",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_insert_paragraphs_node(
     input: Buffer,
     operation: InsertParagraphsInput,
@@ -760,7 +840,11 @@ pub fn execute_docx_insert_paragraphs_node(
     })
 }
 
-#[napi(js_name = "executeDocxDeleteParagraph")]
+/// Delete a paragraph identified by exact text target (occurrence zero-based when ambiguous).
+#[napi(
+    js_name = "executeDocxDeleteParagraph",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_delete_paragraph_node(
     input: Buffer,
     operation: DeleteParagraphInput,
@@ -774,7 +858,11 @@ pub fn execute_docx_delete_paragraph_node(
         run: execute_docx_delete_paragraph,
     })
 }
-#[napi(js_name = "executeDocxSetParagraphStyle")]
+/// Set or clear a direct body paragraph style by display name (e.g. 'Heading 1'), not styleId. Does not format table cells. Target via exact text + zero-based occurrence. Omit style to clear.
+#[napi(
+    js_name = "executeDocxSetParagraphStyle",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_paragraph_style_node(
     input: Buffer,
     operation: SetParagraphStyleInput,
@@ -792,7 +880,11 @@ pub fn execute_docx_set_paragraph_style_node(
         run: execute_docx_set_paragraph_style,
     })
 }
-#[napi(js_name = "executeDocxSetParagraphFormatting")]
+/// Set alignment, spacing, indentation, or keep rules on a direct body paragraph (occurrence zero-based). Twips: 20 = 1 pt. both = justified.
+#[napi(
+    js_name = "executeDocxSetParagraphFormatting",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_paragraph_formatting_node(
     input: Buffer,
     operation: SetParagraphFormattingInput,
@@ -853,7 +945,11 @@ pub fn execute_docx_set_paragraph_formatting_node(
     }))
 }
 /// Runs DOCX table-row insertion away from Node's event loop and returns a Promise.
-#[napi(js_name = "executeDocxInsertTableRow")]
+/// Insert one table row after an anchor; use insert_table_rows when several contiguous rows are known.
+#[napi(
+    js_name = "executeDocxInsertTableRow",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_insert_table_row_node(
     input: Buffer,
     operation: InsertTableRowInput,
@@ -878,7 +974,11 @@ pub fn execute_docx_insert_table_row_node(
 }
 
 /// Runs DOCX multi-row insertion away from Node's event loop and returns a Promise.
-#[napi(js_name = "executeDocxInsertTableRows")]
+/// Insert several contiguous, known rows in one call after a row anchor; prefer this over repeated insert_table_row calls.
+#[napi(
+    js_name = "executeDocxInsertTableRows",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_insert_table_rows_node(
     input: Buffer,
     operation: InsertTableRowsInput,
@@ -894,7 +994,11 @@ pub fn execute_docx_insert_table_rows_node(
     })
 }
 
-#[napi(js_name = "executeDocxInsertTableColumn")]
+/// Insert a table column (header + one cell per existing row).
+#[napi(
+    js_name = "executeDocxInsertTableColumn",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_insert_table_column_node(
     input: Buffer,
     operation: InsertTableColumnInput,
@@ -913,7 +1017,11 @@ pub fn execute_docx_insert_table_column_node(
 }
 
 /// Runs DOCX multi-cell text replacement away from Node's event loop and returns a Promise.
-#[napi(js_name = "executeDocxSetTableCellsText")]
+/// Update known cells in one table. Select each by row (header, label, or checked index) and column (first, header, or checked index); use occurrence for duplicate labels. All selectors use the original table state, so headers and row labels can change in this call. Each update needs expectedCurrentText and replacement.
+#[napi(
+    js_name = "executeDocxSetTableCellsText",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_table_cells_text_node(
     input: Buffer,
     operation: SetTableCellsTextInput,
@@ -939,7 +1047,11 @@ pub fn execute_docx_set_table_cells_text_node(
     }))
 }
 
-#[napi(js_name = "executeDocxSetTableFormatting")]
+/// Set table alignment/margins/borders.
+#[napi(
+    js_name = "executeDocxSetTableFormatting",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_table_formatting_node(
     input: Buffer,
     operation: SetTableFormattingInput,
@@ -982,7 +1094,11 @@ pub fn execute_docx_set_table_formatting_node(
     })
 }
 
-#[napi(js_name = "executeDocxSetTableColumnWidths")]
+/// Set table column widths in twips.
+#[napi(
+    js_name = "executeDocxSetTableColumnWidths",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_table_column_widths_node(
     input: Buffer,
     operation: SetTableColumnWidthsInput,
@@ -1000,7 +1116,11 @@ pub fn execute_docx_set_table_column_widths_node(
         },
     })
 }
-#[napi(js_name = "executeDocxSetTableCellShading")]
+/// Shade known table cells in one call using table + row + column, including header and first-column cells. Fill is 6-digit RGB without #; omit fill to clear. Use set_table_cells_formatting for fill and text together.
+#[napi(
+    js_name = "executeDocxSetTableCellShading",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_table_cell_shading_node(
     input: Buffer,
     operation: SetTableCellShadingInput,
@@ -1025,7 +1145,11 @@ pub fn execute_docx_set_table_cell_shading_node(
     }))
 }
 
-#[napi(js_name = "executeDocxCreateTable")]
+/// Create a table at a paragraph placement.
+#[napi(
+    js_name = "executeDocxCreateTable",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_create_table_node(
     input: Buffer,
     operation: CreateTableInput,
@@ -1053,7 +1177,11 @@ pub fn execute_docx_create_table_node(
         },
     })
 }
-#[napi(js_name = "executeDocxDeleteTable")]
+/// Delete a table.
+#[napi(
+    js_name = "executeDocxDeleteTable",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_delete_table_node(
     input: Buffer,
     operation: DeleteTableInput,
@@ -1066,7 +1194,11 @@ pub fn execute_docx_delete_table_node(
         },
     })
 }
-#[napi(js_name = "executeDocxDeleteTableRow")]
+/// Delete a known table row using table + row. Prefer row {kind: 'label', text, occurrence?} or a checked index; a handle is only needed when these cannot express the row.
+#[napi(
+    js_name = "executeDocxDeleteTableRow",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_delete_table_row_node(
     input: Buffer,
     operation: DeleteTableRowInput,
@@ -1081,7 +1213,11 @@ pub fn execute_docx_delete_table_row_node(
         },
     }))
 }
-#[napi(js_name = "executeDocxDeleteTableColumn")]
+/// Delete a table column by header or column handle.
+#[napi(
+    js_name = "executeDocxDeleteTableColumn",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_delete_table_column_node(
     input: Buffer,
     operation: DeleteTableColumnInput,

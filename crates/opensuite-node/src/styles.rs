@@ -10,22 +10,32 @@ use opensuite_protocol::{
 /// Omitted fields are unchanged; clear names remove declarations and restore inheritance.
 #[napi(object)]
 pub struct StyleInput {
+    /// @schema {"description":"Stable Word style ID, for example OpenSuiteReportHeading"}
     pub style_id: String,
+    /// @schema {"enum":["paragraph","character"]}
     pub style_type: String,
+    /// @schema {"description":"Unique display name; apply paragraph styles using this name"}
     pub name: Option<String>,
+    /// @schema {"description":"Existing parent style ID, for example Heading1"}
     pub based_on: Option<String>,
+    /// @schema {"description":"Existing paragraph style ID"}
     pub next: Option<String>,
+    /// @schema {"description":"Remove declarations and restore inheritance. Omitted fields stay unchanged. Twips: 20 = 1 pt."}
     pub clear: Option<Vec<String>>,
     pub base_revision: Option<String>,
     pub bold: Option<bool>,
     pub italic: Option<bool>,
+    /// @schema {"minimum":1,"maximum":65535,"description":"32 = 16 pt"}
     pub font_size_half_points: Option<u32>,
     pub font_family: Option<String>,
+    /// @schema {"pattern":"^([0-9a-fA-F]{6}|auto)$","description":"RGB without #, for example 124733"}
     pub color: Option<String>,
     pub underline: Option<bool>,
     pub highlight: Option<String>,
     pub strikethrough: Option<bool>,
+    /// @schema {"enum":["baseline","superscript","subscript"]}
     pub vertical_alignment: Option<String>,
+    /// @schema {"enum":["left","center","right","both","distribute"]}
     pub alignment: Option<String>,
     pub line_spacing: Option<LineSpacingInput>,
     pub spacing_before_twips: Option<i32>,
@@ -34,7 +44,9 @@ pub struct StyleInput {
     pub right_indent_twips: Option<i32>,
     pub first_line_indent_twips: Option<i32>,
     pub hanging_indent_twips: Option<i32>,
+    /// @schema {"description":"Keep this paragraph with the following paragraph."}
     pub keep_with_next: Option<bool>,
+    /// @schema {"description":"Keep all lines of this paragraph on one page."}
     pub keep_lines: Option<bool>,
 }
 
@@ -53,7 +65,9 @@ pub(crate) fn property<T>(
 #[napi(object)]
 pub struct LineSpacingInput {
     /// Auto uses 240 units per line; exact/atLeast use twips (20 per point).
+    /// @schema {"minimum":1,"description":"Auto: 240 per line, so 276 = 1.15. Exact/atLeast: twips, 20 = 1 pt."}
     pub value: u32,
+    /// @schema {"enum":["auto","exact","atLeast"]}
     pub rule: Option<String>,
 }
 
@@ -187,7 +201,12 @@ fn properties(
     Ok((input.style_id, kind, patch, input.base_revision))
 }
 
-#[napi(js_name = "executeDocxCreateStyle")]
+/// Create a reusable real Word paragraph or character style. No default-style authoring. basedOn and next use IDs; apply paragraph styles with set_paragraph_style using the display name.
+/// @schema {"required":["styleId","styleType","name"]}
+#[napi(
+    js_name = "executeDocxCreateStyle",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn create_style(
     input: Buffer,
     operation: StyleInput,
@@ -205,7 +224,11 @@ pub fn create_style(
     }))
 }
 
-#[napi(js_name = "executeDocxUpdateStyle")]
+/// Patch supported properties of one Word style globally. Unspecified properties stay unchanged; clear removes a declaration and restores inheritance. Style type and default flag cannot change.
+#[napi(
+    js_name = "executeDocxUpdateStyle",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn update_style(
     input: Buffer,
     operation: StyleInput,

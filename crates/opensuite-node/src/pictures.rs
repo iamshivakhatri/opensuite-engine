@@ -36,7 +36,9 @@ pub struct DeletePictureInput {
 #[napi(object)]
 pub struct SetPictureSizeInput {
     pub handle: String,
+    /// @schema {"minimum":1,"maximum":4294967295}
     pub width_emu: Option<i64>,
+    /// @schema {"minimum":1,"maximum":4294967295}
     pub height_emu: Option<i64>,
     pub base_revision: Option<String>,
 }
@@ -49,7 +51,11 @@ pub struct ReplacePictureInput {
     pub base_revision: Option<String>,
 }
 
-#[napi(js_name = "executeDocxInsertPicture")]
+/// Insert a PNG or JPEG from supplied image bytes.
+#[napi(
+    js_name = "executeDocxInsertPicture",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_insert_picture_node(
     input: Buffer,
     operation: InsertPictureInput,
@@ -70,7 +76,11 @@ pub fn execute_docx_insert_picture_node(
     )
 }
 
-#[napi(js_name = "executeDocxDeletePicture")]
+/// Delete a picture identified by an opaque body_blocks handle.
+#[napi(
+    js_name = "executeDocxDeletePicture",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_delete_picture_node(
     input: Buffer,
     operation: DeletePictureInput,
@@ -85,7 +95,11 @@ pub fn execute_docx_delete_picture_node(
     })
 }
 
-#[napi(js_name = "executeDocxSetPictureSize")]
+/// Resize an image using a fresh inspect_layout handle. One dimension preserves aspect ratio; both set exact size. EMU: 914,400 per inch.
+#[napi(
+    js_name = "executeDocxSetPictureSize",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_picture_size_node(
     input: Buffer,
     operation: SetPictureSizeInput,
@@ -101,7 +115,11 @@ pub fn execute_docx_set_picture_size_node(
     )
 }
 
-#[napi(js_name = "executeDocxReplacePicture")]
+/// Replace a picture with supplied image bytes, preserving its layout.
+#[napi(
+    js_name = "executeDocxReplacePicture",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_replace_picture_node(
     input: Buffer,
     operation: ReplacePictureInput,
@@ -212,29 +230,44 @@ fn optional_picture_size(
     }
 }
 #[napi(object)]
+/// @schema {"oneOf":[{"required":["alignment"]},{"required":["offsetEmu"]}]}
 pub struct ImagePositionInput {
+    /// @schema {"enum":["page","margin","column","paragraph"]}
     pub reference: String,
     /// start/end mean left/right horizontally, top/bottom vertically.
+    /// @schema {"enum":["start","center","end"]}
     pub alignment: Option<String>,
+    /// @schema {"minimum":-2147483648,"maximum":2147483647}
     pub offset_emu: Option<i64>,
 }
 #[napi(object)]
+/// @schema {"minProperties":1}
 pub struct ImageDistanceInput {
+    /// @schema {"minimum":0,"maximum":4294967295}
     pub top_emu: Option<i64>,
+    /// @schema {"minimum":0,"maximum":4294967295}
     pub bottom_emu: Option<i64>,
+    /// @schema {"minimum":0,"maximum":4294967295}
     pub left_emu: Option<i64>,
+    /// @schema {"minimum":0,"maximum":4294967295}
     pub right_emu: Option<i64>,
 }
 #[napi(object)]
+/// @schema {"minProperties":1}
 pub struct PictureLayoutInput {
+    /// @schema {"oneOf":[{"required":["alignment"]},{"required":["offsetEmu"]}]}
     pub horizontal: Option<ImagePositionInput>,
+    /// @schema {"oneOf":[{"required":["alignment"]},{"required":["offsetEmu"]}]}
     pub vertical: Option<ImagePositionInput>,
+    /// @schema {"enum":["square","topAndBottom","behindText","inFrontOfText"]}
     pub wrap: Option<String>,
+    /// @schema {"minProperties":1}
     pub distance: Option<ImageDistanceInput>,
 }
 #[napi(object)]
 pub struct SetPictureLayoutInput {
     pub handle: String,
+    /// @schema {"minProperties":1}
     pub layout: PictureLayoutInput,
     pub base_revision: Option<String>,
 }
@@ -288,7 +321,11 @@ fn layout_patch(
             .unwrap_or_default(),
     })
 }
-#[napi(js_name = "executeDocxSetPictureLayout")]
+/// Patch a supported floating image using a fresh inspect_layout image handle. Omitted properties stay unchanged. Inline/floating conversion and tight/through wrapping are unsupported. EMU: 914,400 per inch. Re-inspect after editing.
+#[napi(
+    js_name = "executeDocxSetPictureLayout",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn set_picture_layout(
     input: Buffer,
     operation: SetPictureLayoutInput,

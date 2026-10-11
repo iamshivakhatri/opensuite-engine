@@ -8,7 +8,10 @@ pub struct RevisionInspectionInput {
     pub limit: Option<u32>,
 }
 
-#[napi(js_name = "inspectDocxTrackedChanges")]
+#[napi(
+    js_name = "inspectDocxTrackedChanges",
+    ts_return_type = "Promise<string>"
+)]
 pub fn inspect_tracked_changes(
     input: Buffer,
     options: Option<RevisionInspectionInput>,
@@ -53,26 +56,39 @@ use opensuite_protocol::{
 #[napi(object)]
 pub struct InsertTrackedTextInput {
     pub target: TextTargetInput,
+    /// @schema {"minLength":1,"maxLength":32000}
     pub text: String,
+    /// @schema {"enum":["before","after"]}
     pub position: Option<String>,
+    /// @schema {"minLength":1}
     pub author: String,
+    /// @schema {"description":"UTC ISO timestamp","x-client-default":"currentUtc"}
     pub date: String,
 }
 #[napi(object)]
 pub struct DeleteTrackedTextInput {
     pub target: TextTargetInput,
+    /// @schema {"minLength":1}
     pub author: String,
+    /// @schema {"description":"UTC ISO timestamp","x-client-default":"currentUtc"}
     pub date: String,
 }
 #[napi(object)]
 pub struct ReplaceTextWithTrackedChangeInput {
     pub target: TextTargetInput,
+    /// @schema {"minLength":1,"maxLength":32000}
     pub replacement: String,
+    /// @schema {"minLength":1}
     pub author: String,
+    /// @schema {"description":"UTC ISO timestamp","x-client-default":"currentUtc"}
     pub date: String,
 }
 
-#[napi(js_name = "executeDocxInsertTrackedText")]
+/// Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.
+#[napi(
+    js_name = "executeDocxInsertTrackedText",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn insert_tracked_text(
     input: Buffer,
     op: InsertTrackedTextInput,
@@ -94,7 +110,11 @@ pub fn insert_tracked_text(
         run: opensuite_docx::execute_docx_insert_tracked_text,
     }))
 }
-#[napi(js_name = "executeDocxDeleteTrackedText")]
+/// Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.
+#[napi(
+    js_name = "executeDocxDeleteTrackedText",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn delete_tracked_text(
     input: Buffer,
     op: DeleteTrackedTextInput,
@@ -109,7 +129,11 @@ pub fn delete_tracked_text(
         run: opensuite_docx::execute_docx_delete_tracked_text,
     })
 }
-#[napi(js_name = "executeDocxReplaceTextWithTrackedChange")]
+/// Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.
+#[napi(
+    js_name = "executeDocxReplaceTextWithTrackedChange",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn replace_text_with_tracked_change(
     input: Buffer,
     op: ReplaceTextWithTrackedChangeInput,
@@ -128,10 +152,15 @@ pub fn replace_text_with_tracked_change(
 
 #[napi(object)]
 pub struct RevisionDecisionInput {
+    /// @schema {"minLength":1}
     pub handle: String,
 }
 
-#[napi(js_name = "executeDocxAcceptRevision")]
+/// Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.
+#[napi(
+    js_name = "executeDocxAcceptRevision",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn accept_revision(
     input: Buffer,
     op: RevisionDecisionInput,
@@ -142,7 +171,11 @@ pub fn accept_revision(
         run: opensuite_docx::execute_docx_accept_revision,
     })
 }
-#[napi(js_name = "executeDocxRejectRevision")]
+/// Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.
+#[napi(
+    js_name = "executeDocxRejectRevision",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn reject_revision(
     input: Buffer,
     op: RevisionDecisionInput,

@@ -10,6 +10,7 @@ pub struct SetTextFormattingInput {
     pub target: TextTargetInput,
     pub bold: Option<bool>,
     pub italic: Option<bool>,
+    /// @schema {"minimum":1,"maximum":65535}
     pub font_size_half_points: Option<u32>,
     pub font_family: Option<String>,
     pub clear_bold: Option<bool>,
@@ -21,13 +22,19 @@ pub struct SetTextFormattingInput {
     pub clear_highlight: Option<bool>,
     pub strikethrough: Option<bool>,
     pub clear_strikethrough: Option<bool>,
+    /// @schema {"enum":["baseline","superscript","subscript"]}
     pub vertical_alignment: Option<String>,
     pub clear_vertical_alignment: Option<bool>,
+    /// @schema {"description":"Remove direct properties and restore inheritance. Omitted fields stay unchanged."}
     pub clear: Option<Vec<String>>,
     pub base_revision: Option<String>,
 }
 
-#[napi(js_name = "executeDocxSetTextFormatting")]
+/// Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous.
+#[napi(
+    js_name = "executeDocxSetTextFormatting",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_text_formatting_node(
     input: Buffer,
     operation: SetTextFormattingInput,

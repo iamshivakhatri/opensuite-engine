@@ -20,7 +20,9 @@ use opensuite_protocol::{
 
 #[napi(object)]
 pub struct InsertSectionBreakInput {
+    /// @schema {"description":"Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits."}
     pub placement: ParagraphPlacementInput,
+    /// @schema {"enum":["nextPage","continuous","oddPage","evenPage"]}
     pub break_type: String,
 }
 #[napi(object)]
@@ -28,17 +30,23 @@ pub struct SetSectionPropertiesInput {
     pub handle: String,
     pub page_setup: Option<SetPageSetupInput>,
     pub different_first_page: Option<bool>,
+    /// @schema {"enum":["nextPage","continuous","oddPage","evenPage"]}
     pub break_type: Option<String>,
+    /// @schema {"minimum":0}
     pub page_number_start: Option<u32>,
     pub continue_page_numbering: Option<bool>,
 }
 #[napi(object)]
 pub struct SetSectionHeaderFooterInput {
     pub handle: String,
+    /// @schema {"enum":["header","footer"]}
     pub kind: String,
+    /// @schema {"enum":["default","first","even"]}
     pub variant: String,
+    /// @schema {"enum":["text","pageNumber","inherit","unlink"]}
     pub action: String,
     pub text: Option<String>,
+    /// @schema {"enum":["left","center","right"]}
     pub alignment: Option<String>,
 }
 #[napi(object)]
@@ -46,7 +54,11 @@ pub struct SetOddEvenHeadersInput {
     pub enabled: bool,
 }
 
-#[napi(js_name = "executeDocxInsertSectionBreak")]
+/// Insert a real Word section boundary at a body placement. Re-inspect sections and body_blocks after edits.
+#[napi(
+    js_name = "executeDocxInsertSectionBreak",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn insert_section_break(
     input: Buffer,
     operation: InsertSectionBreakInput,
@@ -62,7 +74,11 @@ pub fn insert_section_break(
         execute_docx_insert_section_break,
     )
 }
-#[napi(js_name = "executeDocxSetSectionProperties")]
+/// Edit one section using its latest inspected handle. Margins use twips (1440 = one inch). Restart numbering with pageNumberStart or continuePageNumbering=true.
+#[napi(
+    js_name = "executeDocxSetSectionProperties",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn set_section_properties(
     input: Buffer,
     operation: SetSectionPropertiesInput,
@@ -94,7 +110,11 @@ pub fn set_section_properties(
     })();
     PageCompositionTask::new(input, parsed, execute_docx_set_section_properties)
 }
-#[napi(js_name = "executeDocxSetSectionHeaderFooter")]
+/// Edit one simple section header/footer variant. text creates independent content; empty text clears it. inherit links to previous; unlink preserves visible content in an independent part. PAGE fields use pageNumber. Other sections retain their content. Enable odd/even explicitly before editing even variants; use differentFirstPage to activate first variants.
+#[napi(
+    js_name = "executeDocxSetSectionHeaderFooter",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn set_section_header_footer(
     input: Buffer,
     operation: SetSectionHeaderFooterInput,
@@ -139,7 +159,11 @@ pub fn set_section_header_footer(
     })();
     PageCompositionTask::new(input, parsed, execute_docx_set_section_header_footer)
 }
-#[napi(js_name = "executeDocxSetOddEvenHeaders")]
+/// Explicitly enable or disable different odd/even headers and footers for the ENTIRE document. This affects every section; it preserves all variant parts.
+#[napi(
+    js_name = "executeDocxSetOddEvenHeaders",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn set_odd_even_headers(
     input: Buffer,
     operation: SetOddEvenHeadersInput,
@@ -163,7 +187,7 @@ fn break_type(value: &str) -> std::result::Result<SectionBreakType, &'static str
     }
 }
 
-#[napi(js_name = "inspectDocxSections")]
+#[napi(js_name = "inspectDocxSections", ts_return_type = "Promise<string>")]
 pub fn inspect_docx_sections(input: Buffer) -> AsyncTask<InspectSectionsTask> {
     AsyncTask::new(InspectSectionsTask {
         input: input.to_vec(),

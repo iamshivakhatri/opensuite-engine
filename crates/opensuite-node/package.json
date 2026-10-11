@@ -11,7 +11,8 @@
   "license": "MIT OR Apache-2.0",
   "files": [
     "index.js",
-    "index.d.ts"
+    "index.d.ts",
+    "compatibility-types.d.ts"
   ],
   "napi": {
     "binaryName": "opensuite_node",
@@ -44,6 +45,8 @@
     "version": "napi version"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.9.0"
+    "@napi-rs/cli": "^3.9.0",
+    "@types/node": "22.20.0",
+    "typescript": "5.7.2"
   }
 }

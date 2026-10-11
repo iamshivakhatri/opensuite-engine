@@ -14,14 +14,20 @@ not started.
 `opensuite-protocol::DOCX_CAPABILITIES` is the single Rust/Node inventory of
 IDs, operation kinds, Node export names, and transport availability. N-API reads
 it directly and adds `formats[].operations`; its duplicate allowlist is removed.
-Rust-only aliases remain excluded from Node. Loader generation reads Rust export
-annotations and refuses mismatched TypeScript function declarations. Node tests
-compare the manifest with the actual compiled exports; release builds run this
-check on matching hosts. Input field schemas are not generated yet; product
-agent schemas and safe argument adapters remain separate until that next step.
-No operation semantics or published version change. Local checks: workspace
-compile/tests pass; Node tests pass; changed crates lint cleanly. Workspace lint
-has existing PPTX warnings outside this change.
+Rust-only aliases remain excluded from Node. N-API compiler type records now
+generate SDK declarations and operation input schemas. Descriptions and extra
+restrictions live beside Rust input fields; integer bounds follow Rust field
+types. A second compile embeds `operation-inputs.json` in the native binary.
+Capability metadata includes descriptions, input schemas, and whether inputs can
+be represented in JSON. Buffer inputs remain binary-only. Compatibility aliases
+and decoded read output types live in `compatibility-types.d.ts`.
+
+Native tests compare inventory, compiled exports, declarations, and generated
+inputs; release builds check generated SDK types and matching-host metadata.
+Local native build and 35 tests pass; SDK declarations typecheck. Changed
+Node/protocol crates lint cleanly and their 7 tests pass. No operation semantics
+or published version change. Product mutation tools consume these definitions;
+product read-tool generation and packaged/platform release verification remain.
 
 ## Current DOCX Engine
 

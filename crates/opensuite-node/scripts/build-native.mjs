@@ -1,45 +1,30 @@
-/**
- * Native build wrapper for @opensuitehq/engine.
- *
- * `napi build` (CLI 3.x + napi-derive 2.16) currently emits an empty index.d.ts
- * because type-def env vars disagree (NAPI_TYPE_DEF_TMP_FOLDER vs TYPE_DEF_TMP_PATH).
- * Preserve the hand-maintained declarations, then emit the standard napi-rs loader.
- */
-import { readFileSync, writeFileSync } from 'node:fs'
+/** Compile Rust inputs, generate schemas/declarations, then embed those schemas. */
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { generateInputs } from './generate-inputs.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const dtsPath = join(root, 'index.d.ts')
-const dtsBackup = readFileSync(dtsPath)
-
+const folder = mkdtempSync(join(tmpdir(), 'opensuite-types-'))
 const args = process.argv.slice(2)
-const debug = args.includes('--debug')
-const passthrough = args.filter((arg) => arg !== '--debug')
-
-const napiArgs = [
-  'napi',
-  'build',
-  '--platform',
-  ...(debug ? [] : ['--release']),
-  '--no-js',
-  ...passthrough,
-]
-
-const build = spawnSync('npx', napiArgs, {
-  cwd: root,
-  stdio: 'inherit',
-  shell: process.platform === 'win32',
-})
-if (build.status !== 0) {
-  process.exit(build.status ?? 1)
+const napiArgs = ['napi', 'build', '--platform', ...(args.includes('--debug') ? [] : ['--release']), '--no-js', '--dts', '.native-cli.d.ts', ...args.filter((arg) => arg !== '--debug')]
+function run(command, args, env = process.env) {
+  const result = spawnSync(command, args, { cwd: root, env, stdio: 'inherit', shell: process.platform === 'win32' })
+  if (result.status !== 0) throw new Error(`${command} failed: ${result.error?.message ?? result.status}`)
 }
-
-writeFileSync(dtsPath, dtsBackup)
-
-const generate = spawnSync(process.execPath, [join(root, 'scripts/generate-loader.mjs')], {
-  cwd: root,
-  stdio: 'inherit',
-})
-process.exit(generate.status ?? 1)
+try {
+  // A cached crate does not re-emit type records; only clear this adapter's outputs.
+  run('cargo', ['clean', '-p', 'opensuite-node'])
+  run('npx', napiArgs, { ...process.env, TYPE_DEF_TMP_PATH: join(folder, 'opensuite-node') })
+  await generateInputs(root, folder)
+  const contracts = readFileSync(join(root, 'operation-inputs.json'), 'utf8')
+  // include_str! makes Cargo rebuild when generated contracts change.
+  run('npx', napiArgs)
+  run(process.execPath, [join(root, 'scripts/generate-loader.mjs')])
+  if (readFileSync(join(root, 'operation-inputs.json'), 'utf8') !== contracts) throw new Error('Input contracts changed during the second build')
+} finally {
+  rmSync(folder, { recursive: true, force: true })
+  rmSync(join(root, ".native-cli.d.ts"), { force: true })
+}

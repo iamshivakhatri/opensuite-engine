@@ -17,7 +17,7 @@ test('the engine inventory covers every native export and declaration', () => {
   const actual = Object.keys(engine).filter((key) => typeof engine[key] === 'function' && key !== 'getDocxCapabilities')
   assert.deepEqual([...names].sort(), actual.sort(), 'native exports must be recorded in the engine inventory')
   const types = readFileSync(new URL('../index.d.ts', import.meta.url), 'utf8')
-  const declared = [...types.matchAll(/^export function (\w+)/gm)].map((match) => match[1])
+  const declared = [...types.matchAll(/^export (?:declare )?function (\w+)/gm)].map((match) => match[1])
   assert.deepEqual(declared.sort(), [...actual, 'getDocxCapabilities'].sort(), 'declarations must match the compiled engine')
   assert.ok(docx.capabilities.includes('semantic_table_cell_targets'))
   assert.ok(docx.capabilities.includes('semantic_table_row_deletion'))

@@ -9,17 +9,22 @@ use opensuite_docx::{
 use opensuite_protocol::{DeleteNote, InsertNote, NoteKind, TextTarget, UpdateNote};
 #[napi(object)]
 pub struct InsertNoteInput {
+    /// @schema {"enum":["footnote","endnote"]}
     pub kind: String,
     pub target: TextTargetInput,
+    /// @schema {"minLength":1,"maxLength":32000}
     pub text: String,
 }
 #[napi(object)]
 pub struct UpdateNoteInput {
+    /// @schema {"minLength":1}
     pub handle: String,
+    /// @schema {"minLength":1,"maxLength":32000}
     pub text: String,
 }
 #[napi(object)]
 pub struct DeleteNoteInput {
+    /// @schema {"minLength":1}
     pub handle: String,
 }
 #[napi(object)]
@@ -27,7 +32,11 @@ pub struct NoteInspectionInput {
     pub offset: Option<u32>,
     pub limit: Option<u32>,
 }
-#[napi(js_name = "executeDocxInsertNote")]
+/// Insert a real footnote or endnote immediately after exact ordinary text in one body paragraph. Plain one-paragraph note text. Independent comments/revisions are preserved; targets inside or crossing protected ranges, fields, wrappers, and tables refuse. Word controls visible numbering; IDs are not displayed note numbers.
+#[napi(
+    js_name = "executeDocxInsertNote",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn insert_note(
     input: Buffer,
     op: InsertNoteInput,
@@ -50,7 +59,11 @@ pub fn insert_note(
         run: execute_docx_insert_note,
     }))
 }
-#[napi(js_name = "executeDocxUpdateNote")]
+/// Update a simple one-paragraph note using a fresh inspect_notes handle. Keeps its ID, reference, formatting, and other notes. Complex note bodies are preserved and cannot be edited. Re-inspect after every mutation.
+#[napi(
+    js_name = "executeDocxUpdateNote",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn update_note(input: Buffer, op: UpdateNoteInput) -> AsyncTask<SimpleTask<UpdateNote>> {
     AsyncTask::new(SimpleTask {
         input: input.to_vec(),
@@ -61,7 +74,11 @@ pub fn update_note(input: Buffer, op: UpdateNoteInput) -> AsyncTask<SimpleTask<U
         run: execute_docx_update_note,
     })
 }
-#[napi(js_name = "executeDocxDeleteNote")]
+/// Delete an ordinary simple footnote/endnote and its body reference using a fresh inspect_notes handle. Remaining IDs are preserved. Protected references and complex/malformed notes refuse. Re-inspect after every mutation.
+#[napi(
+    js_name = "executeDocxDeleteNote",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn delete_note(input: Buffer, op: DeleteNoteInput) -> AsyncTask<SimpleTask<DeleteNote>> {
     AsyncTask::new(SimpleTask {
         input: input.to_vec(),
@@ -69,7 +86,7 @@ pub fn delete_note(input: Buffer, op: DeleteNoteInput) -> AsyncTask<SimpleTask<D
         run: execute_docx_delete_note,
     })
 }
-#[napi(js_name = "inspectDocxNotes")]
+#[napi(js_name = "inspectDocxNotes", ts_return_type = "Promise<string>")]
 pub fn inspect_notes(
     input: Buffer,
     options: Option<NoteInspectionInput>,

@@ -14,8 +14,13 @@ The protocol's `DOCX_CAPABILITIES` declares each capability once, including its
 operation kind and Node export when available. N-API capability discovery derives
 from this inventory and includes callable operation metadata. Feature flags are
 not standalone operations; Rust-only aliases remain absent from Node. Release
-checks compare the inventory, compiled exports, and TypeScript function names.
-Input schemas and complete field-level declaration generation remain future work.
+checks compare the inventory, compiled exports, and generated input definitions.
+N-API compiler type records generate TypeScript declarations and JSON schemas;
+Rust field comments supply descriptions and extra restrictions. Native metadata
+returns these embedded schemas and a JSON/binary input flag. The product uses
+these definitions for mutation tools and automatic dynamic discovery. Existing
+product read tools still use product schemas. These local changes need a new
+engine release; the published version remains 0.1.5.
 
 ## Current Capability Groups
 

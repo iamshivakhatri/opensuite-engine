@@ -15,6 +15,7 @@ use crate::{ExecuteDocxReplaceTextOutput, ParagraphPlacementInput, operation_res
 
 #[napi(object)]
 pub struct InsertPageBreakInput {
+    /// @schema {"description":"Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits."}
     pub placement: ParagraphPlacementInput,
     pub base_revision: Option<String>,
 }
@@ -31,26 +32,36 @@ pub struct SetPageSetupInput {
     pub right_margin_twips: Option<i32>,
     pub bottom_margin_twips: Option<i32>,
     pub left_margin_twips: Option<i32>,
+    /// @schema {"enum":["letter","a4"]}
     pub paper_size: Option<String>,
+    /// @schema {"enum":["portrait","landscape"]}
     pub orientation: Option<String>,
     pub base_revision: Option<String>,
 }
 
 #[napi(object)]
 pub struct SetHeaderFooterTextInput {
+    /// @schema {"enum":["header","footer"]}
     pub kind: String,
+    /// @schema {"description":"Omit to clear the text."}
     pub text: Option<String>,
     pub base_revision: Option<String>,
 }
 
 #[napi(object)]
 pub struct SetPageNumberInput {
+    /// @schema {"enum":["header","footer"]}
     pub kind: String,
+    /// @schema {"enum":["left","center","right"],"description":"Omit to remove the page number."}
     pub alignment: Option<String>,
     pub base_revision: Option<String>,
 }
 
-#[napi(js_name = "executeDocxInsertPageBreak")]
+/// Insert a page break at a paragraph placement (start/end/before/after).
+#[napi(
+    js_name = "executeDocxInsertPageBreak",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_insert_page_break_node(
     input: Buffer,
     operation: InsertPageBreakInput,
@@ -65,7 +76,11 @@ pub fn execute_docx_insert_page_break_node(
     )
 }
 
-#[napi(js_name = "executeDocxDeletePageBreak")]
+/// Delete a page break identified by an opaque body_blocks handle.
+#[napi(
+    js_name = "executeDocxDeletePageBreak",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_delete_page_break_node(
     input: Buffer,
     operation: DeletePageBreakInput,
@@ -82,7 +97,11 @@ pub fn execute_docx_delete_page_break_node(
     )
 }
 
-#[napi(js_name = "executeDocxSetPageSetup")]
+/// Update section page margins, paper size (letter/a4), or orientation when section properties exist.
+#[napi(
+    js_name = "executeDocxSetPageSetup",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_page_setup_node(
     input: Buffer,
     operation: SetPageSetupInput,
@@ -90,7 +109,11 @@ pub fn execute_docx_set_page_setup_node(
     PageCompositionTask::new(input, page_setup(operation), execute_docx_set_page_setup)
 }
 
-#[napi(js_name = "executeDocxSetHeaderFooterText")]
+/// Set or clear header/footer text.
+#[napi(
+    js_name = "executeDocxSetHeaderFooterText",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_header_footer_text_node(
     input: Buffer,
     operation: SetHeaderFooterTextInput,
@@ -106,7 +129,11 @@ pub fn execute_docx_set_header_footer_text_node(
     )
 }
 
-#[napi(js_name = "executeDocxSetPageNumber")]
+/// Set or remove page-number fields in header/footer.
+#[napi(
+    js_name = "executeDocxSetPageNumber",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_page_number_node(
     input: Buffer,
     operation: SetPageNumberInput,

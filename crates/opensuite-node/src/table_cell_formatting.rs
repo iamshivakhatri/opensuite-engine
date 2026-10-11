@@ -20,6 +20,7 @@ pub struct TableCellTextFormattingInput {
 
 #[napi(object)]
 pub struct TableCellFormattingUpdateInput {
+    /// @schema {"description":"Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells."}
     pub target: SemanticTableCellTargetInput,
     pub fill: Option<String>,
     pub text_formatting: Option<TableCellTextFormattingInput>,
@@ -27,12 +28,18 @@ pub struct TableCellFormattingUpdateInput {
 
 #[napi(object)]
 pub struct SetTableCellsFormattingInput {
+    /// @schema {"description":"Use exact current headerCells and occurrence when known. Inspect for a missing selector or needed handle. Handles survive read-only turns; content/structure edits clear them immediately, while formatting edits may preserve them only within the edited turn. Occurrence is zero-based."}
     pub table: TableTargetInput,
+    /// @schema {"minItems":1,"maxItems":100}
     pub updates: Vec<TableCellFormattingUpdateInput>,
     pub base_revision: Option<String>,
 }
 
-#[napi(js_name = "executeDocxSetTableCellsFormatting")]
+/// Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them.
+#[napi(
+    js_name = "executeDocxSetTableCellsFormatting",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_table_cells_formatting_node(
     input: Buffer,
     operation: SetTableCellsFormattingInput,

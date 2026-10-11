@@ -8,13 +8,19 @@ use crate::{SimpleTask, TextTargetInput, text_target};
 #[napi(object)]
 pub struct SetParagraphsListInput {
     pub targets: Vec<TextTargetInput>,
+    /// @schema {"enum":["bullet","decimal","none"]}
     pub kind: String,
+    /// @schema {"enum":[0,1,2]}
     pub level: Option<u32>,
     pub continue_from_previous: Option<bool>,
     pub base_revision: Option<String>,
 }
 
-#[napi(js_name = "executeDocxSetParagraphsList")]
+/// Apply list formatting to one or more paragraph text targets.
+#[napi(
+    js_name = "executeDocxSetParagraphsList",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_paragraphs_list_node(
     input: Buffer,
     operation: SetParagraphsListInput,

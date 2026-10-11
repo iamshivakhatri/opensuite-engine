@@ -9,7 +9,7 @@ pub struct FieldInspectionInput {
     pub offset: Option<u32>,
     pub limit: Option<u32>,
 }
-#[napi(js_name = "inspectDocxFields")]
+#[napi(js_name = "inspectDocxFields", ts_return_type = "Promise<string>")]
 pub fn inspect_fields(
     input: Buffer,
     options: Option<FieldInspectionInput>,
@@ -45,21 +45,28 @@ impl Task for FieldInspectionTask {
     }
 }
 #[napi(object)]
+/// @schema {"oneOf":[{"type":"object","properties":{"kind":{"const":"text"},"text":{"type":"string","maxLength":32000}},"required":["kind","text"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","enum":["page","numPages"]}},"required":["kind"],"additionalProperties":false}]}
 pub struct FieldContentInput {
     pub kind: String,
     pub text: Option<String>,
 }
 #[napi(object)]
 pub struct InsertFieldsInput {
+    /// @schema {"minItems":1,"maxItems":20,"items":{"oneOf":[{"type":"object","properties":{"kind":{"const":"text"},"text":{"type":"string","maxLength":32000}},"required":["kind","text"],"additionalProperties":false},{"type":"object","properties":{"kind":{"type":"string","enum":["page","numPages"]}},"required":["kind"],"additionalProperties":false}]}}
     pub content: Vec<FieldContentInput>,
     /// Body (default) requires placement. Footer appends to a single-section default footer.
+    /// @schema {"enum":["body","footer"]}
     pub location: Option<String>,
+    /// @schema {"description":"Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits."}
     pub placement: Option<ParagraphPlacementInput>,
 }
 #[napi(object)]
 pub struct InsertTocInput {
+    /// @schema {"description":"Use start/end without a handle at document boundaries, including initial content in a blank document (which has no handles). For before/after, use only a handle from the latest relevant document.inspect; never invent one. Formatting preserves handles within one model turn; handles expire before the next model turn or after other edits."}
     pub placement: ParagraphPlacementInput,
+    /// @schema {"minimum":1,"maximum":9}
     pub max_heading_level: Option<u32>,
+    /// @schema {"maxLength":32000}
     pub title: Option<String>,
 }
 fn placement(input: ParagraphPlacementInput) -> Result<ParagraphPlacement> {
@@ -73,7 +80,11 @@ fn placement(input: ParagraphPlacementInput) -> Result<ParagraphPlacement> {
         )),
     }
 }
-#[napi(js_name = "executeDocxInsertFields")]
+/// Insert a new paragraph of plain text and real PAGE/NUMPAGES fields. content items use kind text with text, or page/numPages without text. Example: text Page , page, text of , numPages. Body requires placement; footer appends to the single-section default footer and omits placement. Cached values are ? and marked dirty; Word calculates them. Imported fields remain unchanged.
+#[napi(
+    js_name = "executeDocxInsertFields",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn insert_fields(
     input: Buffer,
     op: InsertFieldsInput,
@@ -108,7 +119,11 @@ pub fn insert_fields(
         run: opensuite_docx::execute_docx_insert_fields,
     }))
 }
-#[napi(js_name = "executeDocxInsertToc")]
+/// Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. Inspect fields first to avoid an unintended duplicate TOC. No in-engine field evaluation.
+#[napi(
+    js_name = "executeDocxInsertToc",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn insert_toc(input: Buffer, op: InsertTocInput) -> Result<AsyncTask<SimpleTask<InsertToc>>> {
     let level = op.max_heading_level.unwrap_or(3);
     if !(1..=9).contains(&level) {

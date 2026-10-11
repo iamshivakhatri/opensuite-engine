@@ -9,6 +9,7 @@ use crate::SimpleTask;
 pub struct ContentControlTargetInput {
     pub tag: Option<String>,
     pub alias: Option<String>,
+    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
 }
 
@@ -20,7 +21,11 @@ pub struct SetContentControlTextInput {
     pub base_revision: Option<String>,
 }
 
-#[napi(js_name = "executeDocxSetContentControlText")]
+/// Set content-control text by tag and/or alias.
+#[napi(
+    js_name = "executeDocxSetContentControlText",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn execute_docx_set_content_control_text_node(
     input: Buffer,
     operation: SetContentControlTextInput,

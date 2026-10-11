@@ -9,7 +9,7 @@ pub struct LayoutInput {
     pub block_limit: Option<u32>,
     pub section_index: Option<u32>,
 }
-#[napi(js_name = "inspectDocxLayout")]
+#[napi(js_name = "inspectDocxLayout", ts_return_type = "Promise<string>")]
 pub fn inspect_layout(input: Buffer, options: Option<LayoutInput>) -> AsyncTask<LayoutTask> {
     let options = options
         .map(|v| LayoutOptions {

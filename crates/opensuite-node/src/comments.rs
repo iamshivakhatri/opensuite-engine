@@ -11,15 +11,19 @@ use opensuite_protocol::{AddComment, DeleteComment, TextTarget, UpdateComment};
 #[napi(object)]
 pub struct AddCommentInput {
     pub target: TextTargetInput,
+    /// @schema {"minLength":1,"maxLength":32000}
     pub text: String,
+    /// @schema {"minLength":1}
     pub author: String,
     pub initials: Option<String>,
     /// Explicit ISO timestamp. The engine-client supplies the current time when omitted.
+    /// @schema {"description":"ISO timestamp, e.g. 2026-10-04T12:00:00Z","x-client-default":"currentUtc"}
     pub date: String,
 }
 #[napi(object)]
 pub struct UpdateCommentInput {
     pub handle: String,
+    /// @schema {"minLength":1,"maxLength":32000}
     pub text: String,
 }
 #[napi(object)]
@@ -32,7 +36,11 @@ pub struct CommentInspectionInput {
     pub limit: Option<u32>,
 }
 
-#[napi(js_name = "executeDocxAddComment")]
+/// Attach a standard Word comment to exact text in one ordinary body paragraph, including simple formatted runs. Author is explicit; the client supplies current UTC when date is omitted. Wrappers, fields, revisions, cross-paragraph ranges, and threaded comments are unsupported.
+#[napi(
+    js_name = "executeDocxAddComment",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn add_comment(input: Buffer, operation: AddCommentInput) -> AsyncTask<SimpleTask<AddComment>> {
     AsyncTask::new(SimpleTask {
         input: input.to_vec(),
@@ -49,7 +57,11 @@ pub fn add_comment(input: Buffer, operation: AddCommentInput) -> AsyncTask<Simpl
         run: execute_docx_add_comment,
     })
 }
-#[napi(js_name = "executeDocxUpdateComment")]
+/// Replace plain comment text using a fresh inspect_comments handle. Anchor, author, initials, and date stay unchanged. Inspect again after every edit.
+#[napi(
+    js_name = "executeDocxUpdateComment",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn update_comment(
     input: Buffer,
     operation: UpdateCommentInput,
@@ -63,7 +75,11 @@ pub fn update_comment(
         run: execute_docx_update_comment,
     })
 }
-#[napi(js_name = "executeDocxDeleteComment")]
+/// Delete a standard comment and its markers using a fresh inspect_comments handle, preserving the selected document text. Inspect again after every edit.
+#[napi(
+    js_name = "executeDocxDeleteComment",
+    ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
+)]
 pub fn delete_comment(
     input: Buffer,
     operation: DeleteCommentInput,
@@ -76,7 +92,7 @@ pub fn delete_comment(
         run: execute_docx_delete_comment,
     })
 }
-#[napi(js_name = "inspectDocxComments")]
+#[napi(js_name = "inspectDocxComments", ts_return_type = "Promise<string>")]
 pub fn inspect_comments(
     input: Buffer,
     options: Option<CommentInspectionInput>,
