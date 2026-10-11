@@ -8,6 +8,15 @@ Provide the DOCX operations needed to create and edit ordinary business,
 academic, and operational documents while preserving unfamiliar OOXML. DOCX V1
 does not aim to reproduce every Microsoft Word feature.
 
+## Runtime inventory
+
+The protocol's `DOCX_CAPABILITIES` declares each capability once, including its
+operation kind and Node export when available. N-API capability discovery derives
+from this inventory and includes callable operation metadata. Feature flags are
+not standalone operations; Rust-only aliases remain absent from Node. Release
+checks compare the inventory, compiled exports, and TypeScript function names.
+Input schemas and complete field-level declaration generation remain future work.
+
 ## Current Capability Groups
 
 - Package opening, source-aware semantic inspection, exact text search, bounded

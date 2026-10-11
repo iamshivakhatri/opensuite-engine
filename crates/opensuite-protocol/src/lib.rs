@@ -22,7 +22,7 @@ impl RuntimeCapabilities {
                 format: DocumentFormat::Docx,
                 capabilities: DOCX_CAPABILITIES
                     .iter()
-                    .map(|id| CapabilityId::new(*id))
+                    .map(|capability| CapabilityId::new(capability.id))
                     .collect(),
             }],
         }
@@ -84,88 +84,379 @@ impl CapabilityId {
     }
 }
 
-const DOCX_CAPABILITIES: &[&str] = &[
-    "inspect",
-    "text",
-    "tables",
-    "styles",
-    "style_snapshot",
-    "paragraph_formatting",
-    "numbering",
-    "sections",
-    "headers_footers",
-    "references",
-    "pictures",
-    "fields",
-    "content_controls",
-    "tracked_changes",
-    "comments",
-    "inspect_notes",
-    "insert_note",
-    "update_note",
-    "delete_note",
-    "inspect_comments",
-    "inspect_fields",
-    "insert_fields",
-    "insert_toc",
-    "inspect_tracked_changes",
-    "accept_revision",
-    "reject_revision",
-    "insert_tracked_text",
-    "delete_tracked_text",
-    "replace_text_with_tracked_change",
-    "add_comment",
-    "update_comment",
-    "delete_comment",
-    "revision_views",
-    "replace_text",
-    "create_blank_docx",
-    "body_blocks",
-    "insert_page_break",
-    "delete_page_break",
-    "set_page_setup",
-    "set_header_footer_text",
-    "set_page_number",
-    "inspect_sections",
-    "layout_snapshot",
-    "insert_section_break",
-    "set_section_properties",
-    "set_section_header_footer",
-    "set_odd_even_headers",
-    "insert_paragraph",
-    "insert_paragraphs",
-    "insert_paragraph_after",
-    "delete_paragraph",
-    "set_table_cell_text",
-    "set_content_control_text",
-    "set_paragraph_formatting",
-    "set_text_formatting",
-    "set_hyperlink",
-    "set_paragraph_style",
-    "create_style",
-    "update_style",
-    "set_paragraphs_list",
-    "replace_picture",
-    "delete_picture",
-    "set_picture_size",
-    "set_picture_layout",
-    "insert_picture",
-    "insert_table_row",
-    "insert_table_rows",
-    "set_table_cells_text",
-    "semantic_table_cell_targets",
-    "insert_table_column",
-    "create_table",
-    "delete_table",
-    "delete_table_row",
-    "semantic_table_row_deletion",
-    "delete_table_column",
-    "set_table_formatting",
-    "set_table_column_widths",
-    "set_table_cell_shading",
-    "set_table_cells_formatting",
-    "find_text",
-    "inspect_context",
+/// One inventory for Rust and Node. Node exports are checked against the compiled binding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DocxCapability {
+    pub id: &'static str,
+    pub node_export: Option<&'static str>,
+    pub kind: DocxCapabilityKind,
+    pub node_available: bool,
+}
+
+impl DocxCapability {
+    const fn node(id: &'static str, kind: DocxCapabilityKind, node_export: &'static str) -> Self {
+        Self {
+            id,
+            kind,
+            node_export: Some(node_export),
+            node_available: true,
+        }
+    }
+    const fn rust(id: &'static str, kind: DocxCapabilityKind) -> Self {
+        Self {
+            id,
+            kind,
+            node_export: None,
+            node_available: false,
+        }
+    }
+    const fn node_feature(id: &'static str) -> Self {
+        Self {
+            id,
+            kind: DocxCapabilityKind::Feature,
+            node_export: None,
+            node_available: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocxCapabilityKind {
+    Read,
+    Mutation,
+    Create,
+    Feature,
+}
+
+impl DocxCapabilityKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Mutation => "mutate",
+            Self::Create => "create",
+            Self::Feature => "feature",
+        }
+    }
+}
+
+pub const DOCX_CAPABILITIES: &[DocxCapability] = &[
+    DocxCapability::node("inspect", DocxCapabilityKind::Read, "inspectDocx"),
+    DocxCapability::rust("text", DocxCapabilityKind::Feature),
+    DocxCapability::rust("tables", DocxCapabilityKind::Feature),
+    DocxCapability::rust("styles", DocxCapabilityKind::Feature),
+    DocxCapability::node(
+        "style_snapshot",
+        DocxCapabilityKind::Read,
+        "inspectDocxStyleSnapshot",
+    ),
+    DocxCapability::rust("paragraph_formatting", DocxCapabilityKind::Feature),
+    DocxCapability::rust("numbering", DocxCapabilityKind::Feature),
+    DocxCapability::rust("sections", DocxCapabilityKind::Feature),
+    DocxCapability::rust("headers_footers", DocxCapabilityKind::Feature),
+    DocxCapability::rust("references", DocxCapabilityKind::Feature),
+    DocxCapability::rust("pictures", DocxCapabilityKind::Feature),
+    DocxCapability::rust("fields", DocxCapabilityKind::Feature),
+    DocxCapability::rust("content_controls", DocxCapabilityKind::Feature),
+    DocxCapability::rust("tracked_changes", DocxCapabilityKind::Feature),
+    DocxCapability::rust("comments", DocxCapabilityKind::Feature),
+    DocxCapability::node(
+        "inspect_notes",
+        DocxCapabilityKind::Read,
+        "inspectDocxNotes",
+    ),
+    DocxCapability::node(
+        "insert_note",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertNote",
+    ),
+    DocxCapability::node(
+        "update_note",
+        DocxCapabilityKind::Mutation,
+        "executeDocxUpdateNote",
+    ),
+    DocxCapability::node(
+        "delete_note",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeleteNote",
+    ),
+    DocxCapability::node(
+        "inspect_comments",
+        DocxCapabilityKind::Read,
+        "inspectDocxComments",
+    ),
+    DocxCapability::node(
+        "inspect_fields",
+        DocxCapabilityKind::Read,
+        "inspectDocxFields",
+    ),
+    DocxCapability::node(
+        "insert_fields",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertFields",
+    ),
+    DocxCapability::node(
+        "insert_toc",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertToc",
+    ),
+    DocxCapability::node(
+        "inspect_tracked_changes",
+        DocxCapabilityKind::Read,
+        "inspectDocxTrackedChanges",
+    ),
+    DocxCapability::node(
+        "accept_revision",
+        DocxCapabilityKind::Mutation,
+        "executeDocxAcceptRevision",
+    ),
+    DocxCapability::node(
+        "reject_revision",
+        DocxCapabilityKind::Mutation,
+        "executeDocxRejectRevision",
+    ),
+    DocxCapability::node(
+        "insert_tracked_text",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertTrackedText",
+    ),
+    DocxCapability::node(
+        "delete_tracked_text",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeleteTrackedText",
+    ),
+    DocxCapability::node(
+        "replace_text_with_tracked_change",
+        DocxCapabilityKind::Mutation,
+        "executeDocxReplaceTextWithTrackedChange",
+    ),
+    DocxCapability::node(
+        "add_comment",
+        DocxCapabilityKind::Mutation,
+        "executeDocxAddComment",
+    ),
+    DocxCapability::node(
+        "update_comment",
+        DocxCapabilityKind::Mutation,
+        "executeDocxUpdateComment",
+    ),
+    DocxCapability::node(
+        "delete_comment",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeleteComment",
+    ),
+    DocxCapability::rust("revision_views", DocxCapabilityKind::Feature),
+    DocxCapability::node(
+        "replace_text",
+        DocxCapabilityKind::Mutation,
+        "executeDocxReplaceText",
+    ),
+    DocxCapability::node(
+        "create_blank_docx",
+        DocxCapabilityKind::Create,
+        "createBlankDocx",
+    ),
+    DocxCapability::node("body_blocks", DocxCapabilityKind::Read, "inspectDocx"),
+    DocxCapability::node(
+        "insert_page_break",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertPageBreak",
+    ),
+    DocxCapability::node(
+        "delete_page_break",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeletePageBreak",
+    ),
+    DocxCapability::node(
+        "set_page_setup",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetPageSetup",
+    ),
+    DocxCapability::node(
+        "set_header_footer_text",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetHeaderFooterText",
+    ),
+    DocxCapability::node(
+        "set_page_number",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetPageNumber",
+    ),
+    DocxCapability::node(
+        "inspect_sections",
+        DocxCapabilityKind::Read,
+        "inspectDocxSections",
+    ),
+    DocxCapability::node(
+        "layout_snapshot",
+        DocxCapabilityKind::Read,
+        "inspectDocxLayout",
+    ),
+    DocxCapability::node(
+        "insert_section_break",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertSectionBreak",
+    ),
+    DocxCapability::node(
+        "set_section_properties",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetSectionProperties",
+    ),
+    DocxCapability::node(
+        "set_section_header_footer",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetSectionHeaderFooter",
+    ),
+    DocxCapability::node(
+        "set_odd_even_headers",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetOddEvenHeaders",
+    ),
+    DocxCapability::node(
+        "insert_paragraph",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertParagraph",
+    ),
+    DocxCapability::node(
+        "insert_paragraphs",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertParagraphs",
+    ),
+    DocxCapability::rust("insert_paragraph_after", DocxCapabilityKind::Mutation),
+    DocxCapability::node(
+        "delete_paragraph",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeleteParagraph",
+    ),
+    DocxCapability::rust("set_table_cell_text", DocxCapabilityKind::Mutation),
+    DocxCapability::node(
+        "set_content_control_text",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetContentControlText",
+    ),
+    DocxCapability::node(
+        "set_paragraph_formatting",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetParagraphFormatting",
+    ),
+    DocxCapability::node(
+        "set_text_formatting",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetTextFormatting",
+    ),
+    DocxCapability::node(
+        "set_hyperlink",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetHyperlink",
+    ),
+    DocxCapability::node(
+        "set_paragraph_style",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetParagraphStyle",
+    ),
+    DocxCapability::node(
+        "create_style",
+        DocxCapabilityKind::Mutation,
+        "executeDocxCreateStyle",
+    ),
+    DocxCapability::node(
+        "update_style",
+        DocxCapabilityKind::Mutation,
+        "executeDocxUpdateStyle",
+    ),
+    DocxCapability::node(
+        "set_paragraphs_list",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetParagraphsList",
+    ),
+    DocxCapability::node(
+        "replace_picture",
+        DocxCapabilityKind::Mutation,
+        "executeDocxReplacePicture",
+    ),
+    DocxCapability::node(
+        "delete_picture",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeletePicture",
+    ),
+    DocxCapability::node(
+        "set_picture_size",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetPictureSize",
+    ),
+    DocxCapability::node(
+        "set_picture_layout",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetPictureLayout",
+    ),
+    DocxCapability::node(
+        "insert_picture",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertPicture",
+    ),
+    DocxCapability::node(
+        "insert_table_row",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertTableRow",
+    ),
+    DocxCapability::node(
+        "insert_table_rows",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertTableRows",
+    ),
+    DocxCapability::node(
+        "set_table_cells_text",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetTableCellsText",
+    ),
+    DocxCapability::node_feature("semantic_table_cell_targets"),
+    DocxCapability::node(
+        "insert_table_column",
+        DocxCapabilityKind::Mutation,
+        "executeDocxInsertTableColumn",
+    ),
+    DocxCapability::node(
+        "create_table",
+        DocxCapabilityKind::Mutation,
+        "executeDocxCreateTable",
+    ),
+    DocxCapability::node(
+        "delete_table",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeleteTable",
+    ),
+    DocxCapability::node(
+        "delete_table_row",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeleteTableRow",
+    ),
+    DocxCapability::node_feature("semantic_table_row_deletion"),
+    DocxCapability::node(
+        "delete_table_column",
+        DocxCapabilityKind::Mutation,
+        "executeDocxDeleteTableColumn",
+    ),
+    DocxCapability::node(
+        "set_table_formatting",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetTableFormatting",
+    ),
+    DocxCapability::node(
+        "set_table_column_widths",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetTableColumnWidths",
+    ),
+    DocxCapability::node(
+        "set_table_cell_shading",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetTableCellShading",
+    ),
+    DocxCapability::node(
+        "set_table_cells_formatting",
+        DocxCapabilityKind::Mutation,
+        "executeDocxSetTableCellsFormatting",
+    ),
+    DocxCapability::node("find_text", DocxCapabilityKind::Read, "findDocxText"),
+    DocxCapability::node("inspect_context", DocxCapabilityKind::Read, "inspectDocx"),
 ];
 
 /// A DOCX text target. `occurrence` is zero-based when repeated exact text needs disambiguation.
@@ -1897,6 +2188,7 @@ mod tests {
     fn docx_capability_ids_are_unique() {
         let unique = DOCX_CAPABILITIES
             .iter()
+            .map(|capability| capability.id)
             .collect::<std::collections::HashSet<_>>();
 
         assert_eq!(unique.len(), DOCX_CAPABILITIES.len());

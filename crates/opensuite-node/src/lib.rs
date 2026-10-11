@@ -39,16 +39,17 @@ use opensuite_docx::{
     inspect_docx, inspect_docx_style_snapshot,
 };
 use opensuite_protocol::{
-    Affordance, CreateTable, DeleteTable, DeleteTableColumn, DeleteTableRow, DeleteTableRowTarget,
-    Diagnostic, DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph, DocxParagraphList,
-    DocxPicture, DocxTable, DocxTableRow, DocxTableRowWindow, FindText, FindTextResult,
-    InsertParagraph, InsertParagraphs, InsertTableColumnAfter, InspectDocx, InspectDocxContent,
-    InspectDocxFocus, InspectDocxResult, InspectTextContext, InspectTextContextResult,
-    InspectionPage, OperationResult, ParagraphFormattingPatch, ParagraphPlacement, PropertyPatch,
-    ReplaceText, RuntimeCapabilities, SetParagraphFormatting, SetParagraphStyle,
-    SetTableCellShading, SetTableColumnWidths, SetTableFormatting, TableAlignment, TableBorders,
-    TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget, TableCellTextUpdate,
-    TableFormattingPatch, TableRowTarget, TableTarget, TextContainer, TextTarget,
+    Affordance, CreateTable, DOCX_CAPABILITIES, DeleteTable, DeleteTableColumn, DeleteTableRow,
+    DeleteTableRowTarget, Diagnostic, DocxBodyBlock, DocxHeading, DocxOverview, DocxParagraph,
+    DocxParagraphList, DocxPicture, DocxTable, DocxTableRow, DocxTableRowWindow, FindText,
+    FindTextResult, InsertParagraph, InsertParagraphs, InsertTableColumnAfter, InspectDocx,
+    InspectDocxContent, InspectDocxFocus, InspectDocxResult, InspectTextContext,
+    InspectTextContextResult, InspectionPage, OperationResult, ParagraphFormattingPatch,
+    ParagraphPlacement, PropertyPatch, ReplaceText, RuntimeCapabilities, SetParagraphFormatting,
+    SetParagraphStyle, SetTableCellShading, SetTableColumnWidths, SetTableFormatting,
+    TableAlignment, TableBorders, TableCellColumn, TableCellMargins, TableCellRow, TableCellTarget,
+    TableCellTextUpdate, TableFormattingPatch, TableRowTarget, TableTarget, TextContainer,
+    TextTarget,
 };
 pub use page_composition::{
     execute_docx_delete_page_break_node, execute_docx_insert_page_break_node,
@@ -321,9 +322,17 @@ pub struct SetTableCellShadingInput {
 }
 
 #[napi(object)]
+pub struct DocxOperationOutput {
+    pub id: String,
+    pub kind: String,
+    pub node_export: String,
+}
+
+#[napi(object)]
 pub struct FormatCapabilitiesOutput {
     pub format: String,
     pub capabilities: Vec<String>,
+    pub operations: Vec<DocxOperationOutput>,
 }
 
 #[napi(object)]
@@ -556,86 +565,27 @@ pub fn get_docx_capabilities() -> RuntimeCapabilitiesOutput {
             .into_iter()
             .map(|format| FormatCapabilitiesOutput {
                 format: format.format.as_str().to_owned(),
-                capabilities: format
-                    .capabilities
-                    .into_iter()
-                    .filter(|capability| node_docx_capability(capability.as_str()))
-                    .map(|capability| capability.as_str().to_owned())
+                capabilities: DOCX_CAPABILITIES
+                    .iter()
+                    .filter(|capability| capability.node_available)
+                    .map(|capability| capability.id.to_owned())
+                    .collect(),
+                operations: DOCX_CAPABILITIES
+                    .iter()
+                    .filter(|capability| capability.node_available)
+                    .filter_map(|capability| {
+                        capability
+                            .node_export
+                            .map(|node_export| DocxOperationOutput {
+                                id: capability.id.to_owned(),
+                                kind: capability.kind.as_str().to_owned(),
+                                node_export: node_export.to_owned(),
+                            })
+                    })
                     .collect(),
             })
             .collect(),
     }
-}
-
-fn node_docx_capability(capability: &str) -> bool {
-    matches!(
-        capability,
-        "inspect"
-            | "style_snapshot"
-            | "inspect_notes"
-            | "insert_note"
-            | "update_note"
-            | "delete_note"
-            | "inspect_comments"
-            | "inspect_fields"
-            | "insert_fields"
-            | "insert_toc"
-            | "inspect_tracked_changes"
-            | "accept_revision"
-            | "reject_revision"
-            | "insert_tracked_text"
-            | "delete_tracked_text"
-            | "replace_text_with_tracked_change"
-            | "add_comment"
-            | "update_comment"
-            | "delete_comment"
-            | "replace_text"
-            | "create_blank_docx"
-            | "body_blocks"
-            | "insert_page_break"
-            | "delete_page_break"
-            | "set_page_setup"
-            | "set_header_footer_text"
-            | "set_page_number"
-            | "inspect_sections"
-            | "layout_snapshot"
-            | "insert_section_break"
-            | "set_section_properties"
-            | "set_section_header_footer"
-            | "set_odd_even_headers"
-            | "insert_paragraph"
-            | "insert_paragraphs"
-            | "delete_paragraph"
-            | "set_content_control_text"
-            | "set_paragraph_formatting"
-            | "set_text_formatting"
-            | "set_hyperlink"
-            | "set_paragraph_style"
-            | "create_style"
-            | "update_style"
-            | "set_paragraphs_list"
-            | "replace_picture"
-            | "delete_picture"
-            | "set_picture_size"
-            | "set_picture_layout"
-            | "insert_picture"
-            | "insert_table_row"
-            | "insert_table_rows"
-            | "set_table_cells_text"
-            | "insert_table_column"
-            | "create_table"
-            | "delete_table"
-            | "delete_table_row"
-            | "delete_table_column"
-            | "set_table_formatting"
-            | "set_table_column_widths"
-            | "set_table_cell_shading"
-            | "set_table_cells_formatting"
-            | "semantic_table_cell_targets"
-            | "semantic_table_row_deletion"
-            | "find_text"
-            | "inspect_context"
-    )
 }
 
 /// Creates a valid empty DOCX without touching the filesystem.

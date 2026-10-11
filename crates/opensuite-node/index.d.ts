@@ -7,7 +7,8 @@ export interface ExecuteDocxResult { result: OperationResult; output?: Buffer }
 export interface TextTarget { text: string; occurrence?: number }
 export interface ParagraphPlacement { kind: 'start' | 'end' | 'before' | 'after'; handle?: string }
 
-export interface RuntimeFormatCapabilities { format: string; capabilities: string[] }
+export interface DocxOperation { id: string; kind: "read" | "mutate" | "create"; nodeExport: string }
+export interface RuntimeFormatCapabilities { format: string; capabilities: string[]; operations: DocxOperation[] }
 export interface RuntimeCapabilities { ok: boolean; protocolVersion: number; engineVersion: string; formats: RuntimeFormatCapabilities[] }
 export interface FindTextMatch { occurrence: number; text: string; before: string; after: string; container: string }
 export interface FindTextResult { ok: boolean; query: string; matchCount: number; matches: FindTextMatch[]; diagnostics: Diagnostic[] }

@@ -9,6 +9,20 @@ paragraph text search, safe direct text and picture replacement, top-level
 picture insertion, direct shape geometry, and direct run formatting; XLSX has
 not started.
 
+## Capability inventory (local, awaiting next release)
+
+`opensuite-protocol::DOCX_CAPABILITIES` is the single Rust/Node inventory of
+IDs, operation kinds, Node export names, and transport availability. N-API reads
+it directly and adds `formats[].operations`; its duplicate allowlist is removed.
+Rust-only aliases remain excluded from Node. Loader generation reads Rust export
+annotations and refuses mismatched TypeScript function declarations. Node tests
+compare the manifest with the actual compiled exports; release builds run this
+check on matching hosts. Input field schemas are not generated yet; product
+agent schemas and safe argument adapters remain separate until that next step.
+No operation semantics or published version change. Local checks: workspace
+compile/tests pass; Node tests pass; changed crates lint cleanly. Workspace lint
+has existing PPTX warnings outside this change.
+
 ## Current DOCX Engine
 
 - Opens DOCX packages from files or owned bytes, discovers the main document,
