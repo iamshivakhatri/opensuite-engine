@@ -106,7 +106,8 @@ Help:
 6. Run `npm ci`, native build, and Node tests in `crates/opensuite-node`.
 7. Run a **local packaged-consumer smoke test** (pack root JS, install in `/tmp`,
    copy host `.node`, create/inspect/mutate a blank DOCX).
-8. If all five CI binding artifacts are already under `artifacts/`, run full
+8. If all five CI binding artifacts are already under `artifacts/` and its
+   `engine-version` marker matches this release, run full
    six-package `pack:dry-run`; otherwise skip and rely on CI.
 9. Print the release plan.
 10. With `--publish` only: commit allowed paths, tag `vX.Y.Z`, push commit + tag.
@@ -123,6 +124,11 @@ Configured in `crates/opensuite-node/package.json` → `napi.targets` and built 
 | `x86_64-unknown-linux-gnu` | `@opensuitehq/engine-linux-x64-gnu` | `opensuite_node.linux-x64-gnu.node` |
 | `aarch64-unknown-linux-gnu` | `@opensuitehq/engine-linux-arm64-gnu` | `opensuite_node.linux-arm64-gnu.node` |
 | `x86_64-pc-windows-msvc` | `@opensuitehq/engine-win32-x64-msvc` | `opensuite_node.win32-x64-msvc.node` |
+
+The `artifacts/engine-version` marker comes from the current CI artifact download.
+Old or unmarked artifact folders are skipped locally; they must not overwrite
+the freshly checked host binary. The packaged-consumer check also requires the
+native-reported version to equal its package version.
 
 Local Mac/Linux/Windows development builds only the host binding. Cross-platform
 release binaries are produced in CI, not by a single local machine.

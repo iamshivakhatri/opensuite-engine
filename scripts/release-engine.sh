@@ -368,6 +368,9 @@ verify_versions() {
 
 have_all_platform_artifacts() {
   local rel
+  # Cached downloads can belong to an older release, even when every file exists.
+  [[ -f "${NODE_DIR}/artifacts/engine-version" ]] || return 1
+  [[ "$(cat "${NODE_DIR}/artifacts/engine-version")" == "$VERSION" ]] || return 1
   for rel in "${PLATFORM_BINDING_ARTIFACTS[@]}"; do
     if [[ ! -f "${NODE_DIR}/${rel}" ]]; then
       return 1
@@ -446,6 +449,8 @@ local_consumer_smoke() {
     node --input-type=commonjs <<'EOF'
 const assert = require('node:assert/strict')
 const engine = require('@opensuitehq/engine')
+const packageVersion = require('@opensuitehq/engine/package.json').version
+assert.equal(engine.getDocxCapabilities().engineVersion, packageVersion, 'packaged native version must match its package')
 assert.equal(typeof engine.createBlankDocx, 'function')
 assert.equal(typeof engine.inspectDocx, 'function')
 assert.equal(typeof engine.executeDocxInsertParagraph, 'function')
@@ -521,6 +526,7 @@ run_checks() {
     npm ci
     npm run build
     npm test
+    npx tsc --noEmit --types node --target es2022 --moduleResolution node index.d.ts
   )
 
   assert_no_optional_deps

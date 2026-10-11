@@ -149,7 +149,9 @@ jobs:
           path: ${{ env.WORKING_DIRECTORY }}/artifacts
 
       - name: Move artifacts into packages
-        run: npm run artifacts -- --output-dir artifacts --npm-dir npm
+        run: |
+          node -p "require('./package.json').version" > artifacts/engine-version
+          npm run artifacts -- --output-dir artifacts --npm-dir npm
 
       - name: List packages
         run: ls -R ./npm
