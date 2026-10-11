@@ -187,6 +187,8 @@ fn break_type(value: &str) -> std::result::Result<SectionBreakType, &'static str
     }
 }
 
+/// Inspect ordered Word sections with fresh handles, page setup, numbering, and owned/inherited header/footer variants. Re-inspect after every section edit.
+/// @jsonOutput
 #[napi(js_name = "inspectDocxSections", ts_return_type = "Promise<string>")]
 pub fn inspect_docx_sections(input: Buffer) -> AsyncTask<InspectSectionsTask> {
     AsyncTask::new(InspectSectionsTask {

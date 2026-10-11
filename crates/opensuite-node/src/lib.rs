@@ -376,6 +376,7 @@ pub struct DocxOperationOutput {
     pub description: String,
     pub input_schema: Option<String>,
     pub json_input: bool,
+    pub json_output: bool,
 }
 
 #[napi(object)]
@@ -395,6 +396,7 @@ pub struct RuntimeCapabilitiesOutput {
 
 #[napi(object)]
 pub struct FindTextInput {
+    /// @schema {"description":"Exact text to find"}
     pub text: String,
 }
 
@@ -418,8 +420,10 @@ pub struct FindTextOutput {
 
 #[napi(object)]
 pub struct InspectDocxFocusInput {
+    /// @schema {"enum":["overview","headings","paragraphs","tables","body_blocks","table_rows","context"]}
     pub kind: String,
     pub offset: Option<u32>,
+    /// @schema {"minimum":1,"maximum":100}
     pub limit: Option<u32>,
     pub table_handle: Option<String>,
     pub text: Option<String>,
@@ -642,6 +646,9 @@ pub fn get_docx_capabilities() -> RuntimeCapabilitiesOutput {
                                 input_schema: inputs[node_export]
                                     .get("inputSchema")
                                     .map(|schema| schema.to_string()),
+                                json_output: inputs[node_export]["jsonOutput"]
+                                    .as_bool()
+                                    .unwrap_or(false),
                                 json_input: inputs[node_export]["jsonInput"]
                                     .as_bool()
                                     .unwrap_or(false),
@@ -701,6 +708,7 @@ pub fn inspect_docx_node(input: Buffer, request: InspectDocxInput) -> AsyncTask<
 }
 
 /// Inspects the bounded DOCX formatting system away from Node's event loop.
+/// @jsonOutput
 #[napi(
     js_name = "inspectDocxStyleSnapshot",
     ts_return_type = "Promise<string>"

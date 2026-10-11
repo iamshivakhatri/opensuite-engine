@@ -14,6 +14,7 @@ test('compiled engine inputs match generated Rust declarations and restrictions'
     assert.equal(operation.description, definition.description)
     assert.deepEqual(JSON.parse(operation.inputSchema), definition.inputSchema)
     assert.equal(operation.jsonInput, definition.jsonInput)
+    assert.equal(operation.jsonOutput, definition.jsonOutput)
   }
   const replace = generated.executeDocxReplaceText.inputSchema
   assert.deepEqual(replace.required, ['target', 'expectedCurrentText', 'replacement'])
@@ -22,6 +23,8 @@ test('compiled engine inputs match generated Rust declarations and restrictions'
   assert.equal(generated.executeDocxInsertPicture.jsonInput, false)
   assert.equal(generated.executeDocxReplacePicture.jsonInput, false)
   assert.equal(generated.executeDocxAddComment.inputSchema.properties.date['x-client-default'], 'currentUtc')
+  assert.equal(generated.inspectDocxNotes.jsonOutput, true)
+  assert.equal(generated.inspectDocx.inputSchema.properties.focus.properties.kind.enum.includes('table_rows'), true)
 })
 
 test('a new Rust input automatically gains a JSON schema; unsupported inputs stop generation', () => {

@@ -41,6 +41,7 @@ export interface BodyBlockPageOutput {
 
 export interface CommentInspectionInput {
   offset?: number
+  /** @schema {"minimum":1,"maximum":100} */
   limit?: number
 }
 
@@ -154,6 +155,7 @@ export interface DocxOperationOutput {
   description: string
   inputSchema?: string
   jsonInput: boolean
+  jsonOutput: boolean
 }
 
 /** Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported. */
@@ -340,6 +342,7 @@ export interface FieldContentInput {
 
 export interface FieldInspectionInput {
   offset?: number
+  /** @schema {"minimum":1,"maximum":100} */
   limit?: number
 }
 
@@ -347,6 +350,7 @@ export interface FieldInspectionInput {
 export declare function findDocxText(input: Buffer, request: FindTextInput): Promise<FindTextOutput>
 
 export interface FindTextInput {
+  /** @schema {"description":"Exact text to find"} */
   text: string
 }
 
@@ -527,13 +531,23 @@ export interface InspectContextOutput {
 /** Inspects bounded DOCX text context away from Node's event loop. */
 export declare function inspectDocx(input: Buffer, request: InspectDocxInput): Promise<InspectDocxOutput>
 
+/**
+ * Inspect standard comments, author/date, bounded text, attached text, source-order paragraph locations, fresh handles, and malformed/orphan diagnostics. Default 20; maximum 100 per page. Re-inspect after editing. Resolved state and replies are unavailable.
+ * @jsonOutput
+ */
 export declare function inspectDocxComments(input: Buffer, options?: CommentInspectionInput | undefined | null): Promise<string>
 
+/**
+ * Inspect Word fields including TOC, PAGE, NUMPAGES, DATE, and unknown instructions. Returns bounded instruction and cached text separately, representation, part/paragraph location, dirty/locked flags when present, common TOC heading levels, and structural diagnostics. Main document and header/footer parts. Default 20, maximum 100 records; text capped at 2000 characters. Dirty means refresh requested; absent flags do not prove results are current. Does not calculate or edit fields.
+ * @jsonOutput
+ */
 export declare function inspectDocxFields(input: Buffer, options?: FieldInspectionInput | undefined | null): Promise<string>
 
 export interface InspectDocxFocusInput {
+  /** @schema {"enum":["overview","headings","paragraphs","tables","body_blocks","table_rows","context"]} */
   kind: string
   offset?: number
+  /** @schema {"minimum":1,"maximum":100} */
   limit?: number
   tableHandle?: string
   text?: string
@@ -550,8 +564,16 @@ export interface InspectDocxInput {
   after?: number
 }
 
+/**
+ * Inspect structural section geometry, explicit pagination controls, table/image dimensions, floating-image positions/wrap, fresh image handles, and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.
+ * @jsonOutput
+ */
 export declare function inspectDocxLayout(input: Buffer, options?: LayoutInput | undefined | null): Promise<string>
 
+/**
+ * Inspect ordinary footnotes and endnotes, fresh handles, note IDs, text, zero-based body paragraph and source reference indexes, reference counts, structural status, and imported numbering settings. Separators are excluded and protected. IDs differ from visible note numbers. Default 20, maximum 100 records per page; note text capped at 2000 characters. Read-only.
+ * @jsonOutput
+ */
 export declare function inspectDocxNotes(input: Buffer, options?: NoteInspectionInput | undefined | null): Promise<string>
 
 export interface InspectDocxOutput {
@@ -567,11 +589,22 @@ export interface InspectDocxOutput {
   diagnostics: Array<DiagnosticOutput>
 }
 
+/**
+ * Inspect ordered Word sections with fresh handles, page setup, numbering, and owned/inherited header/footer variants. Re-inspect after every section edit.
+ * @jsonOutput
+ */
 export declare function inspectDocxSections(input: Buffer): Promise<string>
 
-/** Inspects the bounded DOCX formatting system away from Node's event loop. */
+/**
+ * Inspects the bounded DOCX formatting system away from Node's event loop.
+ * @jsonOutput
+ */
 export declare function inspectDocxStyleSnapshot(input: Buffer): Promise<string>
 
+/**
+ * Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.
+ * @jsonOutput
+ */
 export declare function inspectDocxTrackedChanges(input: Buffer, options?: RevisionInspectionInput | undefined | null): Promise<string>
 
 export interface InspectionPageOutput {
@@ -583,6 +616,7 @@ export interface InspectionPageOutput {
 
 export interface LayoutInput {
   blockOffset?: number
+  /** @schema {"maximum":100} */
   blockLimit?: number
   sectionIndex?: number
 }
@@ -599,6 +633,7 @@ export interface LineSpacingInput {
 
 export interface NoteInspectionInput {
   offset?: number
+  /** @schema {"minimum":1,"maximum":100} */
   limit?: number
 }
 
@@ -701,6 +736,7 @@ export interface RevisionDecisionInput {
 
 export interface RevisionInspectionInput {
   offset?: number
+  /** @schema {"minimum":1,"maximum":100} */
   limit?: number
 }
 

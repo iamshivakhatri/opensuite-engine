@@ -7,8 +7,11 @@ use opensuite_protocol::{FieldContent, InsertFields, InsertToc, ParagraphPlaceme
 #[napi(object)]
 pub struct FieldInspectionInput {
     pub offset: Option<u32>,
+    /// @schema {"minimum":1,"maximum":100}
     pub limit: Option<u32>,
 }
+/// Inspect Word fields including TOC, PAGE, NUMPAGES, DATE, and unknown instructions. Returns bounded instruction and cached text separately, representation, part/paragraph location, dirty/locked flags when present, common TOC heading levels, and structural diagnostics. Main document and header/footer parts. Default 20, maximum 100 records; text capped at 2000 characters. Dirty means refresh requested; absent flags do not prove results are current. Does not calculate or edit fields.
+/// @jsonOutput
 #[napi(js_name = "inspectDocxFields", ts_return_type = "Promise<string>")]
 pub fn inspect_fields(
     input: Buffer,

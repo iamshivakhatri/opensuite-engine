@@ -18,8 +18,8 @@ Rust-only aliases remain excluded from Node. N-API compiler type records now
 generate SDK declarations and operation input schemas. Descriptions and extra
 restrictions live beside Rust input fields; integer bounds follow Rust field
 types. A second compile embeds `operation-inputs.json` in the native binary.
-Capability metadata includes descriptions, input schemas, and whether inputs can
-be represented in JSON. Buffer inputs remain binary-only. Compatibility aliases
+Capability metadata includes descriptions, input schemas, whether inputs can
+be represented in JSON, and whether read output needs JSON decoding. Buffer inputs remain binary-only. Compatibility aliases
 and decoded read output types live in `compatibility-types.d.ts`.
 
 Native tests compare inventory, compiled exports, declarations, and generated
@@ -27,7 +27,8 @@ inputs; release builds check generated SDK types and matching-host metadata.
 Local native build and 35 tests pass; SDK declarations typecheck. Changed
 Node/protocol crates lint cleanly and their 7 tests pass. No operation semantics
 or published version change. Product mutation tools consume these definitions;
-product read-tool generation and packaged/platform release verification remain.
+product read tools also consume generated inputs. Packaged/platform release
+verification remains.
 
 ## Current DOCX Engine
 

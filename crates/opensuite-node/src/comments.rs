@@ -33,6 +33,7 @@ pub struct DeleteCommentInput {
 #[napi(object)]
 pub struct CommentInspectionInput {
     pub offset: Option<u32>,
+    /// @schema {"minimum":1,"maximum":100}
     pub limit: Option<u32>,
 }
 
@@ -92,6 +93,8 @@ pub fn delete_comment(
         run: execute_docx_delete_comment,
     })
 }
+/// Inspect standard comments, author/date, bounded text, attached text, source-order paragraph locations, fresh handles, and malformed/orphan diagnostics. Default 20; maximum 100 per page. Re-inspect after editing. Resolved state and replies are unavailable.
+/// @jsonOutput
 #[napi(js_name = "inspectDocxComments", ts_return_type = "Promise<string>")]
 pub fn inspect_comments(
     input: Buffer,

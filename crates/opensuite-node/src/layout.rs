@@ -6,9 +6,12 @@ use opensuite_docx::{LayoutOptions, inspect_docx_layout};
 #[napi(object)]
 pub struct LayoutInput {
     pub block_offset: Option<u32>,
+    /// @schema {"maximum":100}
     pub block_limit: Option<u32>,
     pub section_index: Option<u32>,
 }
+/// Inspect structural section geometry, explicit pagination controls, table/image dimensions, floating-image positions/wrap, fresh image handles, and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.
+/// @jsonOutput
 #[napi(js_name = "inspectDocxLayout", ts_return_type = "Promise<string>")]
 pub fn inspect_layout(input: Buffer, options: Option<LayoutInput>) -> AsyncTask<LayoutTask> {
     let options = options

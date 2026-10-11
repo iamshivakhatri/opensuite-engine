@@ -7,7 +7,8 @@
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxAcceptRevision": {
     "description": "Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
@@ -24,7 +25,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxAddComment": {
     "description": "Attach a standard Word comment to exact text in one ordinary body paragraph, including simple formatted runs. Author is explicit; the client supplies current UTC when date is omitted. Wrappers, fields, revisions, cross-paragraph ranges, and threaded comments are unsupported.",
@@ -76,7 +78,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxCreateStyle": {
     "description": "Create a reusable real Word paragraph or character style. No default-style authoring. basedOn and next use IDs; apply paragraph styles with set_paragraph_style using the display name.",
@@ -232,7 +235,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxCreateTable": {
     "description": "Create a table at a paragraph placement.",
@@ -282,7 +286,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeleteComment": {
     "description": "Delete a standard comment and its markers using a fresh inspect_comments handle, preserving the selected document text. Inspect again after every edit.",
@@ -298,7 +303,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeleteNote": {
     "description": "Delete an ordinary simple footnote/endnote and its body reference using a fresh inspect_notes handle. Remaining IDs are preserved. Protected references and complex/malformed notes refuse. Re-inspect after every mutation.",
@@ -315,7 +321,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeletePageBreak": {
     "description": "Delete a page break identified by an opaque body_blocks handle.",
@@ -334,7 +341,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeleteParagraph": {
     "description": "Delete a paragraph identified by exact text target (occurrence zero-based when ambiguous).",
@@ -369,7 +377,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeletePicture": {
     "description": "Delete a picture identified by an opaque body_blocks handle.",
@@ -388,7 +397,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeleteTable": {
     "description": "Delete a table.",
@@ -427,7 +437,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeleteTableColumn": {
     "description": "Delete a table column by header or column handle.",
@@ -472,7 +483,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeleteTableRow": {
     "description": "Delete a known table row using table + row. Prefer row {kind: 'label', text, occurrence?} or a checked index; a handle is only needed when these cannot express the row.",
@@ -554,7 +566,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxDeleteTrackedText": {
     "description": "Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
@@ -597,7 +610,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertFields": {
     "description": "Insert a new paragraph of plain text and real PAGE/NUMPAGES fields. content items use kind text with text, or page/numPages without text. Example: text Page , page, text of , numPages. Body requires placement; footer appends to the single-section default footer and omits placement. Cached values are ? and marked dirty; Word calculates them. Imported fields remain unchanged.",
@@ -697,7 +711,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertNote": {
     "description": "Insert a real footnote or endnote immediately after exact ordinary text in one body paragraph. Plain one-paragraph note text. Independent comments/revisions are preserved; targets inside or crossing protected ranges, fields, wrappers, and tables refuse. Word controls visible numbering; IDs are not displayed note numbers.",
@@ -743,7 +758,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertPageBreak": {
     "description": "Insert a page break at a paragraph placement (start/end/before/after).",
@@ -783,7 +799,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertParagraph": {
     "description": "Runs DOCX paragraph insertion away from Node's event loop and returns a Promise.\nInsert one paragraph. For a blank document, use placement {kind: \"end\"} or {kind: \"start\"} without a handle.",
@@ -827,7 +844,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertParagraphs": {
     "description": "Insert multiple paragraphs. For a blank document, use placement {kind: \"end\"} or {kind: \"start\"} without a handle.",
@@ -874,7 +892,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertPicture": {
     "description": "Insert a PNG or JPEG from supplied image bytes.",
@@ -1065,7 +1084,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": false
+    "jsonInput": false,
+    "jsonOutput": false
   },
   "executeDocxInsertSectionBreak": {
     "description": "Insert a real Word section boundary at a body placement. Re-inspect sections and body_blocks after edits.",
@@ -1112,7 +1132,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertTableColumn": {
     "description": "Insert a table column (header + one cell per existing row).",
@@ -1168,7 +1189,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertTableRow": {
     "description": "Runs DOCX table-row insertion away from Node's event loop and returns a Promise.\nInsert one table row after an anchor; use insert_table_rows when several contiguous rows are known.",
@@ -1235,7 +1257,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertTableRows": {
     "description": "Runs DOCX multi-row insertion away from Node's event loop and returns a Promise.\nInsert several contiguous, known rows in one call after a row anchor; prefer this over repeated insert_table_row calls.",
@@ -1305,7 +1328,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertToc": {
     "description": "Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. Inspect fields first to avoid an unintended duplicate TOC. No in-engine field evaluation.",
@@ -1351,7 +1375,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxInsertTrackedText": {
     "description": "Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
@@ -1407,7 +1432,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxRejectRevision": {
     "description": "Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
@@ -1424,7 +1450,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxReplacePicture": {
     "description": "Replace a picture with supplied image bytes, preserving its layout.",
@@ -1453,7 +1480,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": false
+    "jsonInput": false,
+    "jsonOutput": false
   },
   "executeDocxReplaceText": {
     "description": "Runs DOCX replacement away from Node's event loop and returns a Promise.\nReplace one exact text span. Requires target text, zero-based occurrence when ambiguous, expectedCurrentText (must match current content), and replacement.",
@@ -1496,7 +1524,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxReplaceTextWithTrackedChange": {
     "description": "Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
@@ -1545,7 +1574,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetContentControlText": {
     "description": "Set content-control text by tag and/or alias.",
@@ -1588,7 +1618,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetHeaderFooterText": {
     "description": "Set or clear header/footer text.",
@@ -1615,7 +1646,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetHyperlink": {
     "description": "Add or clear an external hyperlink on a text target.",
@@ -1654,7 +1686,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetOddEvenHeaders": {
     "description": "Explicitly enable or disable different odd/even headers and footers for the ENTIRE document. This affects every section; it preserves all variant parts.",
@@ -1670,7 +1703,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetPageNumber": {
     "description": "Set or remove page-number fields in header/footer.",
@@ -1702,7 +1736,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetPageSetup": {
     "description": "Update section page margins, paper size (letter/a4), or orientation when section properties exist.",
@@ -1750,7 +1785,8 @@
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetParagraphFormatting": {
     "description": "Set alignment, spacing, indentation, or keep rules on a direct body paragraph (occurrence zero-based). Twips: 20 = 1 pt. both = justified.",
@@ -1867,7 +1903,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetParagraphsList": {
     "description": "Apply list formatting to one or more paragraph text targets.",
@@ -1927,7 +1964,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetParagraphStyle": {
     "description": "Set or clear a direct body paragraph style by display name (e.g. 'Heading 1'), not styleId. Does not format table cells. Target via exact text + zero-based occurrence. Omit style to clear.",
@@ -1966,7 +2004,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetPictureLayout": {
     "description": "Patch a supported floating image using a fresh inspect_layout image handle. Omitted properties stay unchanged. Inline/floating conversion and tight/through wrapping are unsupported. EMU: 914,400 per inch. Re-inspect after editing.",
@@ -2119,7 +2158,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetPictureSize": {
     "description": "Resize an image using a fresh inspect_layout handle. One dimension preserves aspect ratio; both set exact size. EMU: 914,400 per inch.",
@@ -2148,7 +2188,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetSectionHeaderFooter": {
     "description": "Edit one simple section header/footer variant. text creates independent content; empty text clears it. inherit links to previous; unlink preserves visible content in an independent part. PAGE fields use pageNumber. Other sections retain their content. Enable odd/even explicitly before editing even variants; use differentFirstPage to activate first variants.",
@@ -2202,7 +2243,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetSectionProperties": {
     "description": "Edit one section using its latest inspected handle. Margins use twips (1440 = one inch). Restart numbering with pageNumberStart or continuePageNumbering=true.",
@@ -2282,7 +2324,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetTableCellsFormatting": {
     "description": "Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them.",
@@ -2460,7 +2503,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetTableCellShading": {
     "description": "Shade known table cells in one call using table + row + column, including header and first-column cells. Fill is 6-digit RGB without #; omit fill to clear. Use set_table_cells_formatting for fill and text together.",
@@ -2612,7 +2656,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetTableCellsText": {
     "description": "Runs DOCX multi-cell text replacement away from Node's event loop and returns a Promise.\nUpdate known cells in one table. Select each by row (header, label, or checked index) and column (first, header, or checked index); use occurrence for duplicate labels. All selectors use the original table state, so headers and row labels can change in this call. Each update needs expectedCurrentText and replacement.",
@@ -2769,7 +2814,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetTableColumnWidths": {
     "description": "Set table column widths in twips.",
@@ -2817,7 +2863,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetTableFormatting": {
     "description": "Set table alignment/margins/borders.",
@@ -2893,7 +2940,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxSetTextFormatting": {
     "description": "Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous.",
@@ -2987,7 +3035,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxUpdateComment": {
     "description": "Replace plain comment text using a fresh inspect_comments handle. Anchor, author, initials, and date stay unchanged. Inspect again after every edit.",
@@ -3009,7 +3058,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxUpdateNote": {
     "description": "Update a simple one-paragraph note using a fresh inspect_notes handle. Keeps its ID, reference, formatting, and other notes. Complex note bodies are preserved and cannot be edited. Re-inspect after every mutation.",
@@ -3032,7 +3082,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "executeDocxUpdateStyle": {
     "description": "Patch supported properties of one Word style globally. Unspecified properties stay unchanged; clear removes a declaration and restores inheritance. Style type and default flag cannot change.",
@@ -3187,7 +3238,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "findDocxText": {
     "description": "Finds DOCX text away from Node's event loop and returns semantic results.",
@@ -3195,7 +3247,8 @@
       "type": "object",
       "properties": {
         "text": {
-          "type": "string"
+          "type": "string",
+          "description": "Exact text to find"
         }
       },
       "required": [
@@ -3203,7 +3256,8 @@
       ],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "inspectDocx": {
     "description": "Inspects bounded DOCX text context away from Node's event loop.",
@@ -3214,7 +3268,16 @@
           "type": "object",
           "properties": {
             "kind": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "overview",
+                "headings",
+                "paragraphs",
+                "tables",
+                "body_blocks",
+                "table_rows",
+                "context"
+              ]
             },
             "offset": {
               "type": "integer",
@@ -3223,8 +3286,8 @@
             },
             "limit": {
               "type": "integer",
-              "minimum": 0,
-              "maximum": 4294967295
+              "minimum": 1,
+              "maximum": 100
             },
             "tableHandle": {
               "type": "string"
@@ -3287,10 +3350,11 @@
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": false
   },
   "inspectDocxComments": {
-    "description": "inspect Docx Comments",
+    "description": "Inspect standard comments, author/date, bounded text, attached text, source-order paragraph locations, fresh handles, and malformed/orphan diagnostics. Default 20; maximum 100 per page. Re-inspect after editing. Resolved state and replies are unavailable.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3301,17 +3365,18 @@
         },
         "limit": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
+          "minimum": 1,
+          "maximum": 100
         }
       },
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   "inspectDocxFields": {
-    "description": "inspect Docx Fields",
+    "description": "Inspect Word fields including TOC, PAGE, NUMPAGES, DATE, and unknown instructions. Returns bounded instruction and cached text separately, representation, part/paragraph location, dirty/locked flags when present, common TOC heading levels, and structural diagnostics. Main document and header/footer parts. Default 20, maximum 100 records; text capped at 2000 characters. Dirty means refresh requested; absent flags do not prove results are current. Does not calculate or edit fields.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3322,17 +3387,18 @@
         },
         "limit": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
+          "minimum": 1,
+          "maximum": 100
         }
       },
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   "inspectDocxLayout": {
-    "description": "inspect Docx Layout",
+    "description": "Inspect structural section geometry, explicit pagination controls, table/image dimensions, floating-image positions/wrap, fresh image handles, and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3344,7 +3410,7 @@
         "blockLimit": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4294967295
+          "maximum": 100
         },
         "sectionIndex": {
           "type": "integer",
@@ -3355,10 +3421,11 @@
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   "inspectDocxNotes": {
-    "description": "inspect Docx Notes",
+    "description": "Inspect ordinary footnotes and endnotes, fresh handles, note IDs, text, zero-based body paragraph and source reference indexes, reference counts, structural status, and imported numbering settings. Separators are excluded and protected. IDs differ from visible note numbers. Default 20, maximum 100 records per page; note text capped at 2000 characters. Read-only.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3369,24 +3436,26 @@
         },
         "limit": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
+          "minimum": 1,
+          "maximum": 100
         }
       },
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   "inspectDocxSections": {
-    "description": "inspect Docx Sections",
+    "description": "Inspect ordered Word sections with fresh handles, page setup, numbering, and owned/inherited header/footer variants. Re-inspect after every section edit.",
     "inputSchema": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   "inspectDocxStyleSnapshot": {
     "description": "Inspects the bounded DOCX formatting system away from Node's event loop.",
@@ -3396,10 +3465,11 @@
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   },
   "inspectDocxTrackedChanges": {
-    "description": "inspect Docx Tracked Changes",
+    "description": "Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3410,13 +3480,14 @@
         },
         "limit": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
+          "minimum": 1,
+          "maximum": 100
         }
       },
       "required": [],
       "additionalProperties": false
     },
-    "jsonInput": true
+    "jsonInput": true,
+    "jsonOutput": true
   }
 }

@@ -5,9 +5,12 @@ use napi_derive::napi;
 #[napi(object)]
 pub struct RevisionInspectionInput {
     pub offset: Option<u32>,
+    /// @schema {"minimum":1,"maximum":100}
     pub limit: Option<u32>,
 }
 
+/// Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.
+/// @jsonOutput
 #[napi(
     js_name = "inspectDocxTrackedChanges",
     ts_return_type = "Promise<string>"

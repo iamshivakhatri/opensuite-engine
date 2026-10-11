@@ -16,7 +16,12 @@ function run(command, args, env = process.env) {
 }
 try {
   // A cached crate does not re-emit type records; only clear this adapter's outputs.
-  run('cargo', ['clean', '-p', 'opensuite-node'])
+  const targetIndex = args.indexOf('--target')
+  const target = targetIndex >= 0 ? args[targetIndex + 1]
+    : spawnSync('rustc', ['-vV'], { encoding: 'utf8' }).stdout?.match(/^host: (.+)$/m)?.[1]
+  if (!target) throw new Error('Cannot determine the native build target')
+  // napi builds into target/<triple>, even for a host build.
+  run('cargo', ['clean', '-p', 'opensuite-node', '--target', target])
   run('npx', napiArgs, { ...process.env, TYPE_DEF_TMP_PATH: join(folder, 'opensuite-node') })
   await generateInputs(root, folder)
   const contracts = readFileSync(join(root, 'operation-inputs.json'), 'utf8')

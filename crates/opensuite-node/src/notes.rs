@@ -30,6 +30,7 @@ pub struct DeleteNoteInput {
 #[napi(object)]
 pub struct NoteInspectionInput {
     pub offset: Option<u32>,
+    /// @schema {"minimum":1,"maximum":100}
     pub limit: Option<u32>,
 }
 /// Insert a real footnote or endnote immediately after exact ordinary text in one body paragraph. Plain one-paragraph note text. Independent comments/revisions are preserved; targets inside or crossing protected ranges, fields, wrappers, and tables refuse. Word controls visible numbering; IDs are not displayed note numbers.
@@ -86,6 +87,8 @@ pub fn delete_note(input: Buffer, op: DeleteNoteInput) -> AsyncTask<SimpleTask<D
         run: execute_docx_delete_note,
     })
 }
+/// Inspect ordinary footnotes and endnotes, fresh handles, note IDs, text, zero-based body paragraph and source reference indexes, reference counts, structural status, and imported numbering settings. Separators are excluded and protected. IDs differ from visible note numbers. Default 20, maximum 100 records per page; note text capped at 2000 characters. Read-only.
+/// @jsonOutput
 #[napi(js_name = "inspectDocxNotes", ts_return_type = "Promise<string>")]
 pub fn inspect_notes(
     input: Buffer,
