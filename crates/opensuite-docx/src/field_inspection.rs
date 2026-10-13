@@ -106,6 +106,18 @@ fn flag(source: &SourceDocument, id: crate::NodeId, name: &str) -> Option<bool> 
     }
 }
 fn append_source(result: &mut FieldInspection, source: &SourceDocument, part: &str, limit: usize) {
+    if source
+        .node_ids()
+        .any(|id| crate::tracked_change::revision_node(source, id))
+    {
+        diagnostic(
+            result,
+            "FIELD_PART_HAS_REVISIONS".into(),
+            format!(
+                "{part} contains pending revisions; external field refresh requires source preservation"
+            ),
+        );
+    }
     let fields = field::fields(source);
     for error in fields.errors() {
         diagnostic(

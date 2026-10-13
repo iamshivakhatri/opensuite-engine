@@ -346,3 +346,32 @@ fn rejects_invalid_text_property_values() {
         fs::remove_file(input).unwrap();
     }
 }
+
+#[test]
+fn text_formatting_does_not_duplicate_pending_property_revisions() {
+    let input = table_fixture(&format!(
+        r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:r><w:rPr><w:rPrChange w:id="1" w:author="Lee"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>Old wording</w:t></w:r></w:p></w:body></w:document>"#
+    ));
+    for text in ["Old wording", "wording"] {
+        let result = crate::execute_docx_set_text_formatting(
+            fs::read(&input).unwrap(),
+            &SetTextFormatting {
+                target: TextTarget {
+                    text: text.into(),
+                    occurrence: None,
+                },
+                formatting: TextFormattingPatch {
+                    bold: Some(PropertyPatch::Set(true)),
+                    ..Default::default()
+                },
+                base_revision: None,
+            },
+        );
+        assert!(result.output_artifact.is_none());
+        assert_eq!(
+            result.operation.diagnostics[0].code,
+            "UNSUPPORTED_OPERATION"
+        );
+    }
+    fs::remove_file(input).unwrap();
+}

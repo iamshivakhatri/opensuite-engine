@@ -28,7 +28,9 @@ pub(super) fn ensure_safe_source_ranges(
         let SourceNodeKind::Element { name, .. } = node.kind() else {
             continue;
         };
-        if !name.namespace_uri().is_some_and(|uri| NS.contains(&uri)) {
+        if !name.namespace_uri().is_some_and(|uri| NS.contains(&uri))
+            && !crate::tracked_change::revision_node(source, id)
+        {
             continue;
         }
         let local = name.local_name();
@@ -89,6 +91,7 @@ pub(super) fn ensure_safe_source_ranges(
                 "footnoteReference" | "endnoteReference" => "note reference",
                 "drawing" | "pict" | "object" | "altChunk" => "dependent package content",
                 "ins" | "del" | "moveFrom" | "moveTo" => "tracked revision",
+                _ if crate::tracked_change::revision_node(source, id) => "tracked revision",
                 "sectPr" => "section properties",
                 "proofErr" => "unsupported proof/error marker",
                 _ if local.ends_with("Change")

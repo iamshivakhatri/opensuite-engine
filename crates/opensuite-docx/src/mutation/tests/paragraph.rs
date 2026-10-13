@@ -224,3 +224,99 @@ fn deletion_uses_shared_occurrence_and_rejects_unsafe_ranges_or_wrappers() {
         }
     }
 }
+
+#[test]
+fn paragraph_deletion_refuses_enclosing_ranges_fields_and_property_revisions() {
+    for (before, content, after) in [
+        (
+            r#"<w:p><w:bookmarkStart w:id="1" w:name="target"/></w:p>"#,
+            "",
+            r#"<w:p><w:bookmarkEnd w:id="1"/></w:p>"#,
+        ),
+        (
+            r#"<w:p><w:commentRangeStart w:id="2"/></w:p>"#,
+            "",
+            r#"<w:p><w:commentRangeEnd w:id="2"/><w:r><w:commentReference w:id="2"/></w:r></w:p>"#,
+        ),
+        (
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> TOC </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p>"#,
+            "",
+            r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        ),
+        ("", r#"<w:pPr><w:rPr><w:del w:id="7"/></w:rPr></w:pPr>"#, ""),
+        (
+            "",
+            r#"<w:r><w:rPr><w:rPrChange w:id="8"><w:rPr/></w:rPrChange></w:rPr><w:t>format</w:t></w:r>"#,
+            "",
+        ),
+    ] {
+        let input = table_fixture(&format!(
+            r#"<w:document xmlns:w="{WORD}"><w:body>{before}<w:p>{content}<w:r><w:t>Remove this</w:t></w:r></w:p>{after}</w:body></w:document>"#
+        ));
+        let bytes = fs::read(&input).unwrap();
+        let result = crate::execute_docx_delete_paragraph(
+            bytes.clone(),
+            &DeleteParagraph {
+                target: TextTarget {
+                    text: "Remove this".into(),
+                    occurrence: None,
+                },
+                base_revision: None,
+            },
+        );
+        assert_eq!(
+            result.operation.diagnostics[0].code,
+            "UNSUPPORTED_OPERATION"
+        );
+        assert!(result.output_artifact.is_none());
+        let output = path("protected-paragraph");
+        let package = Package::open(&input).unwrap();
+        let (main, source) = crate::open_main_source(&package).unwrap();
+        let result = delete_paragraph(
+            &package,
+            &main,
+            &source,
+            &DeleteParagraph {
+                target: TextTarget {
+                    text: "Remove this".into(),
+                    occurrence: None,
+                },
+                base_revision: None,
+            },
+            &output,
+        );
+        assert_eq!(result.diagnostics[0].code, "UNSUPPORTED_OPERATION");
+        assert!(!output.exists());
+        assert_eq!(fs::read(&input).unwrap(), bytes);
+        fs::remove_file(input).unwrap();
+    }
+}
+
+#[test]
+fn body_insertion_refuses_inside_a_multi_paragraph_field() {
+    let input = table_fixture(&format!(
+        r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> TOC </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r></w:p><w:p><w:r><w:t>Cached entry</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:body></w:document>"#
+    ));
+    let bytes = fs::read(&input).unwrap();
+    let result = crate::execute_docx_insert_paragraph(
+        bytes.clone(),
+        &InsertParagraph {
+            text: "New paragraph".into(),
+            placement: ParagraphPlacement::Before {
+                handle: "b1".into(),
+            },
+            base_revision: None,
+        },
+    );
+    assert!(result.output_artifact.is_none());
+    assert_eq!(
+        result.operation.diagnostics[0].code,
+        "UNSUPPORTED_OPERATION"
+    );
+    assert_eq!(
+        result.operation.diagnostics[0].reason_code.as_deref(),
+        Some("UNSAFE_INSERTION_BOUNDARY")
+    );
+    assert_eq!(fs::read(&input).unwrap(), bytes);
+    fs::remove_file(input).unwrap();
+}

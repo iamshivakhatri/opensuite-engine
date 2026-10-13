@@ -108,6 +108,8 @@ pub(crate) fn fields(source: &SourceDocument) -> FieldSet<'_> {
         if word(source, id, "instrText") {
             if let Some((_, None, instruction_end)) = stack.last_mut() {
                 *instruction_end = Some(id);
+            } else {
+                errors.push(FieldError::UnexpectedInstruction(id));
             }
             continue;
         }
@@ -259,6 +261,7 @@ pub enum FieldError {
     Semantic(SemanticError),
     MalformedField,
     UnexpectedSeparate(NodeId),
+    UnexpectedInstruction(NodeId),
     InvalidMarker(NodeId),
     UnmatchedEnd(NodeId),
     UnterminatedBegin(NodeId),
@@ -267,6 +270,7 @@ impl FieldError {
     pub(crate) fn source_id(&self) -> Option<NodeId> {
         match self {
             Self::InvalidMarker(id)
+            | Self::UnexpectedInstruction(id)
             | Self::UnexpectedSeparate(id)
             | Self::UnmatchedEnd(id)
             | Self::UnterminatedBegin(id) => Some(*id),
@@ -279,6 +283,7 @@ impl FieldError {
             Self::MalformedField => "MALFORMED_FIELD",
             Self::InvalidMarker(_) => "INVALID_FIELD_MARKER",
             Self::UnexpectedSeparate(_) => "UNEXPECTED_FIELD_SEPARATOR",
+            Self::UnexpectedInstruction(_) => "UNEXPECTED_FIELD_INSTRUCTION",
             Self::UnmatchedEnd(_) => "UNMATCHED_FIELD_END",
             Self::UnterminatedBegin(_) => "UNTERMINATED_FIELD_BEGIN",
         }
@@ -370,5 +375,37 @@ mod tests {
         assert!(!field.has_separator());
         assert_eq!(field.instruction().unwrap().as_deref(), Some("DATE"));
         assert_eq!(field.result_text().unwrap(), None);
+    }
+    #[test]
+    fn diagnoses_instructions_outside_field_codes() {
+        let source = SourceDocument::parse(format!(r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:r><w:instrText>REF stray</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:instrText>DATE</w:instrText></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:body></w:document>"#).into_bytes()).unwrap();
+        let fields = fields(&source);
+        assert_eq!(
+            fields.errors().map(FieldError::code).collect::<Vec<_>>(),
+            [
+                "UNEXPECTED_FIELD_INSTRUCTION",
+                "UNEXPECTED_FIELD_INSTRUCTION"
+            ]
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .next()
+                .unwrap()
+                .instruction()
+                .unwrap()
+                .as_deref(),
+            Some("PAGE")
+        );
+        assert_eq!(
+            DocxDocument::new(&source)
+                .unwrap()
+                .paragraphs()
+                .next()
+                .unwrap()
+                .text()
+                .unwrap(),
+            "1"
+        );
     }
 }

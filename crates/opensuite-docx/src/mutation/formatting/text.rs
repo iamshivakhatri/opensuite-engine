@@ -185,6 +185,12 @@ fn resolve_formatting_runs(
             || source
                 .children(run)
                 .any(|child| !word(source, child, "rPr") && !word(source, child, "t"))
+            || source.children(run).any(|id| {
+                word(source, id, "rPr")
+                    && source
+                        .children(id)
+                        .any(|child| crate::tracked_change::revision_node(source, child))
+            })
         {
             return Err(unsupported(
                 "set_text_formatting requires simple direct runs in one paragraph",
@@ -381,6 +387,15 @@ pub(crate) fn run_property_patches(
     rpr: NodeId,
     patch: &TextFormattingPatch,
 ) -> Result<Vec<Patch>, OperationResult> {
+    if source
+        .children(rpr)
+        .any(|id| crate::tracked_change::revision_node(source, id))
+    {
+        return Err(
+            unsupported("text formatting does not rewrite tracked run properties")
+                .with_reason_code("UNSUPPORTED_REVISION_TYPE"),
+        );
+    }
     let prefix = word_prefix_for(source, rpr, "rPr")?;
     let prefix = prefix.as_str();
     let name = |local: &str| qualify(prefix, local);

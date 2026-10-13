@@ -183,6 +183,36 @@ pub(super) fn patches_for_match(
         ));
     }
 
+    // Text search omits deleted text and markers; do not distribute replacement
+    // text across those hidden boundaries. Properties and enclosing anchors stay intact.
+    for id in source.node_ids() {
+        let node = source.node(id).unwrap();
+        if node.span().start < first
+            || node.span().end > last
+            || !matches!(node.kind(), SourceNodeKind::Element { .. })
+            || runs
+                .iter()
+                .any(|(segment, run, _)| segment.id == id || *run == id)
+        {
+            continue;
+        }
+        let mut ancestor = Some(id);
+        let mut property = false;
+        while let Some(parent) = ancestor {
+            if word(source, parent, "rPr") {
+                property = true;
+                break;
+            }
+            ancestor = source.node(parent).and_then(|n| n.parent());
+        }
+        if !property {
+            return Err(unsupported(
+                "replace_text crosses hidden markup or a protected range boundary",
+            )
+            .with_reason_code("UNSAFE_TEXT_BOUNDARY"));
+        }
+    }
+
     let mut remaining = replacement.chars();
     let mut patches = Vec::with_capacity(runs.len() * 2);
     for (index, (segment, _, child)) in runs.into_iter().enumerate() {

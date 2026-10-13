@@ -197,6 +197,7 @@ pub struct RevisionSnapshot {
     pub handle: String,
     pub id: Option<String>,
     pub kind: RevisionKind,
+    pub revision_type: String,
     pub author: Option<String>,
     pub date: Option<String>,
     pub text: Option<String>,
@@ -215,12 +216,18 @@ pub enum RevisionKind {
 }
 
 pub(crate) fn revision_node(source: &SourceDocument, id: NodeId) -> bool {
-    kind(source, id).is_some()
+    matches!(source.node(id).map(|node| node.kind()), Some(SourceNodeKind::Element { name, .. })
+        if name.namespace_uri() == Some("http://schemas.microsoft.com/office/word/2010/wordml")
+            && matches!(name.local_name(), "conflictIns" | "conflictDel"
+                | "customXmlConflictInsRangeStart" | "customXmlConflictInsRangeEnd"
+                | "customXmlConflictDelRangeStart" | "customXmlConflictDelRangeEnd"))
+        || kind(source, id).is_some()
         || [
             "pPrChange",
             "rPrChange",
             "sectPrChange",
             "tblPrChange",
+            "tblPrExChange",
             "tblGridChange",
             "trPrChange",
             "tcPrChange",
@@ -229,11 +236,17 @@ pub(crate) fn revision_node(source: &SourceDocument, id: NodeId) -> bool {
             "cellMerge",
             "numberingChange",
             "moveFromRangeStart",
+            "moveFromRangeEnd",
             "moveToRangeStart",
+            "moveToRangeEnd",
             "customXmlInsRangeStart",
+            "customXmlInsRangeEnd",
             "customXmlDelRangeStart",
+            "customXmlDelRangeEnd",
             "customXmlMoveFromRangeStart",
+            "customXmlMoveFromRangeEnd",
             "customXmlMoveToRangeStart",
+            "customXmlMoveToRangeEnd",
         ]
         .iter()
         .any(|name| word(source, id, name))
@@ -414,6 +427,9 @@ pub(crate) fn inspect_source_revisions(
             diagnostics.push("NESTED_REVISION_UNSUPPORTED");
         }
         let node = source.node(id).unwrap();
+        let SourceNodeKind::Element { name, .. } = node.kind() else {
+            unreachable!()
+        };
         let mut truncated = false;
         let mut metadata = |name| {
             node.attribute(name).map(|value| {
@@ -457,6 +473,7 @@ pub(crate) fn inspect_source_revisions(
             handle: format!("revision:{stamp}:{index}:{}", node.span().start),
             id: revision_id,
             kind,
+            revision_type: name.local_name().to_owned(),
             author,
             date,
             text,
@@ -497,7 +514,7 @@ mod tests {
     #[test]
     fn discovers_content_revisions_and_filters_current_and_original_text() {
         let source = SourceDocument::parse(format!(
-            "<x:document xmlns:x=\"{WORD}\"><x:body><x:p><x:r><x:t>A </x:t></x:r><x:del x:id=\"5\" x:author=\"Bob\" x:date=\"2026-09-04T12:05:00Z\"><x:r><x:delText>old </x:delText></x:r><x:r><x:delText>value</x:delText></x:r></x:del><x:ins x:id=\"4\" x:author=\"Alice\" x:date=\"2026-09-04T12:00:00Z\"><x:r><x:t>new </x:t></x:r><x:r><x:t>value</x:t></x:r></x:ins><x:r><x:t>!</x:t></x:r></x:p><x:tbl><x:tr><x:tc><x:p><x:moveFrom x:id=\"6\"><x:r><x:delText>Before</x:delText></x:r></x:moveFrom><x:moveTo x:id=\"7\"><x:r><x:t>After</x:t></x:r></x:moveTo></x:p></x:tc></x:tr></x:tbl><x:p><x:ins><x:r><x:t>Missing metadata</x:t></x:r></x:ins></x:p></x:body></x:document>"
+            "<x:document xmlns:x=\"{WORD}\"><x:body><x:p><x:r><x:t>A </x:t></x:r><x:del x:id=\"5\" x:author=\"Bob\" x:date=\"2026-09-04T12:05:00Z\"><x:r><x:delText>old </x:delText></x:r><x:r><x:delText>value</x:delText></x:r></x:del><x:ins x:id=\"4\" x:author=\"Alice\" x:date=\"2026-09-04T12:00:00Z\"><x:r><x:t>new </x:t></x:r><x:r><x:t>value</x:t></x:r></x:ins><x:r><x:t>!</x:t></x:r></x:p><x:tbl><x:tr><x:tc><x:p><x:moveFrom x:id=\"6\"><x:r><x:t>Before</x:t></x:r></x:moveFrom><x:moveTo x:id=\"7\"><x:r><x:t>After</x:t></x:r></x:moveTo></x:p></x:tc></x:tr></x:tbl><x:p><x:ins><x:r><x:t>Missing metadata</x:t></x:r></x:ins></x:p></x:body></x:document>"
         ).into_bytes()).unwrap();
         let document = DocxDocument::new(&source).unwrap();
         let changes: Vec<_> = document.tracked_changes().collect();
@@ -558,7 +575,7 @@ mod tests {
     fn revision_snapshot_bounds_text_and_reports_complex_changes() {
         let metadata = r#"w:id="1" w:author="Ada" w:date="2026-10-03T12:00:00Z""#;
         let xml = format!(
-            r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:ins {metadata}><w:r><w:t>{}</w:t></w:r></w:ins><w:ins {metadata}><w:del {metadata}><w:r><w:delText>nested</w:delText></w:r></w:del></w:ins><w:moveFrom {metadata}><w:r><w:delText>moved</w:delText></w:r></w:moveFrom><w:pPr><w:pPrChange {metadata}><w:pPr/></w:pPrChange><w:rPr><w:ins {metadata}/></w:rPr></w:pPr><w:ins><w:r><w:t>missing metadata</w:t></w:r></w:ins></w:p></w:body></w:document>"#,
+            r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:ins {metadata}><w:r><w:t>{}</w:t></w:r></w:ins><w:ins {metadata}><w:del {metadata}><w:r><w:delText>nested</w:delText></w:r></w:del></w:ins><w:moveFrom {metadata}><w:r><w:t>moved</w:t></w:r></w:moveFrom><w:pPr><w:pPrChange {metadata}><w:pPr/></w:pPrChange><w:rPr><w:ins {metadata}/></w:rPr></w:pPr><w:ins><w:r><w:t>missing metadata</w:t></w:r></w:ins></w:p></w:body></w:document>"#,
             "é".repeat(2_010)
         );
         let package = opensuite_opc::Package::from_bytes(crate::create_blank_docx()).unwrap();
@@ -600,5 +617,62 @@ mod tests {
                 .is_empty()
         );
         assert!(!crate::inspect_docx_tracked_changes(vec![0], 0, 20).ok);
+    }
+    #[test]
+    fn inspection_names_unsupported_revisions_and_orphan_range_ends() {
+        let names = [
+            "moveFrom",
+            "moveTo",
+            "moveFromRangeStart",
+            "moveFromRangeEnd",
+            "moveToRangeEnd",
+            "customXmlDelRangeEnd",
+            "tblPrExChange",
+            "rPrChange",
+            "pPrChange",
+            "cellIns",
+            "cellDel",
+            "cellMerge",
+        ];
+        use std::fmt::Write as _;
+        let mut records = names
+            .iter()
+            .enumerate()
+            .fold(String::new(), |mut xml, (i, name)| {
+                write!(xml, r#"<w:{name} w:id="{i}" w:author="Lee"/>"#).unwrap();
+                xml
+            });
+        records.push_str(
+            r#"<w14:conflictIns w:id="40"/><w14:customXmlConflictDelRangeEnd w:id="41"/>"#,
+        );
+        let source = SourceDocument::parse(
+            format!(
+                r#"<w:document xmlns:w="{WORD}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body><w:p>{records}</w:p></w:body></w:document>"#
+            )
+            .into_bytes(),
+        )
+        .unwrap();
+        let inspection = inspect_source_revisions(&source, 0, 100);
+        assert_eq!(inspection.total, names.len() + 2);
+        assert_eq!(inspection.unsupported_count, names.len() + 2);
+        assert_eq!(inspection.insertion_count + inspection.deletion_count, 0);
+        assert_eq!(
+            inspection
+                .revisions
+                .iter()
+                .map(|r| r.revision_type.as_str())
+                .collect::<Vec<_>>(),
+            [
+                names.as_slice(),
+                &["conflictIns", "customXmlConflictDelRangeEnd"]
+            ]
+            .concat()
+        );
+        assert!(
+            inspection
+                .revisions
+                .iter()
+                .all(|r| r.structure == "unsupported")
+        );
     }
 }

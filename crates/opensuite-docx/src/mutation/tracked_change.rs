@@ -473,6 +473,17 @@ fn decide_revision(
         }
     }
     let keep_content = accept != deletion;
+    // A point at the wrapper start detects enclosing fields and Word ranges
+    // without treating the selected revision itself as an unrelated revision.
+    protected_range::ensure_safe_source_ranges(
+        source,
+        &[SourceSpan {
+            start: span.start,
+            end: span.start,
+        }],
+        "UNSUPPORTED_REVISION_TYPE",
+        keep_content,
+    )?;
     if !keep_content {
         let comments = crate::comment::load(package, main, source).map_err(document_invalid)?;
         if comments.errors().next().is_some()
@@ -953,6 +964,42 @@ mod tests {
                 replace_text_with_tracked_change_to_vec(&package, &main, &source, &op).is_err()
             );
             assert_eq!(source.original_bytes(), before);
+        }
+    }
+    #[test]
+    fn revision_decisions_refuse_enclosing_field_and_move_ranges() {
+        for (before, after) in [
+            (
+                r#"<w14:customXmlConflictInsRangeStart xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w:id="8"/>"#,
+                r#"<w14:customXmlConflictInsRangeEnd xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w:id="8"/>"#,
+            ),
+            (
+                r#"<w:moveToRangeStart w:id="8" w:name="move"/>"#,
+                r#"<w:moveToRangeEnd w:id="8"/>"#,
+            ),
+            (
+                r#"<w:bookmarkStart w:id="9" w:name="reference"/>"#,
+                r#"<w:bookmarkEnd w:id="9"/>"#,
+            ),
+            (
+                r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>REF reference</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+            ),
+        ] {
+            let (package, main, source) = document(&format!(
+                r#"<w:p>{before}<w:ins w:id="1"><w:r><w:t>content</w:t></w:r></w:ins>{after}</w:p>"#
+            ));
+            let inspection = crate::tracked_change::inspect_source_revisions(&source, 0, 20);
+            let handle = &inspection
+                .revisions
+                .iter()
+                .find(|r| r.id.as_deref() == Some("1"))
+                .unwrap()
+                .handle;
+            for accept in [true, false] {
+                let error = decide_revision(&package, &main, &source, handle, accept).unwrap_err();
+                assert_eq!(error.diagnostics[0].code, "UNSUPPORTED_OPERATION");
+            }
         }
     }
 }

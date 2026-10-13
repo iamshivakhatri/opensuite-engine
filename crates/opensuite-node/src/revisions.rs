@@ -9,7 +9,7 @@ pub struct RevisionInspectionInput {
     pub limit: Option<u32>,
 }
 
-/// Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.
+/// Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals of XML records/markers, original Word element names (revisionType), and unsupported move/property/range diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.
 /// @jsonOutput
 #[napi(
     js_name = "inspectDocxTrackedChanges",
@@ -87,7 +87,7 @@ pub struct ReplaceTextWithTrackedChangeInput {
     pub date: String,
 }
 
-/// Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.
+/// Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing.
 #[napi(
     js_name = "executeDocxInsertTrackedText",
     ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
@@ -113,7 +113,7 @@ pub fn insert_tracked_text(
         run: opensuite_docx::execute_docx_insert_tracked_text,
     }))
 }
-/// Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.
+/// Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing.
 #[napi(
     js_name = "executeDocxDeleteTrackedText",
     ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
@@ -132,7 +132,7 @@ pub fn delete_tracked_text(
         run: opensuite_docx::execute_docx_delete_tracked_text,
     })
 }
-/// Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.
+/// Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing.
 #[napi(
     js_name = "executeDocxReplaceTextWithTrackedChange",
     ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"

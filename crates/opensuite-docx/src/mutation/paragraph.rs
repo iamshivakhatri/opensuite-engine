@@ -348,6 +348,13 @@ pub(super) fn safe_to_delete(source: &SourceDocument, paragraph: NodeId) -> bool
     source
         .children(paragraph)
         .all(|child| safe_paragraph_child(source, child))
+        && protected_range::ensure_safe_source_ranges(
+            source,
+            &[source.node(paragraph).unwrap().span()],
+            "UNSUPPORTED_PARAGRAPH_DELETE",
+            false,
+        )
+        .is_ok()
 }
 
 pub(super) fn safe_paragraph_child(source: &SourceDocument, id: NodeId) -> bool {
@@ -435,22 +442,7 @@ pub(super) fn insert_paragraph_bytes(
                 OperationResult::failed("TARGET_NOT_FOUND", "body block handle was not found")
             })?,
     };
-    let section = terminal_section_properties(source, body)?;
-    let insertion = if index < blocks.len() {
-        source
-            .node(blocks[index])
-            .expect("body block exists")
-            .span()
-            .start
-    } else if let Some(section) = section {
-        source
-            .node(section)
-            .expect("section properties exist")
-            .span()
-            .start
-    } else {
-        body_closing_start(source, body)?
-    };
+    let insertion = body_insertion(source, body, &blocks, index)?;
     let fragment = texts.iter().try_fold(Vec::new(), |mut fragment, text| {
         fragment.extend(paragraph_fragment_for_body(source, body, text)?);
         Ok::<_, OperationResult>(fragment)

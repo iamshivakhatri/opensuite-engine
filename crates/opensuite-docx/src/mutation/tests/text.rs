@@ -277,3 +277,28 @@ fn revision_snapshot_and_unrelated_edit_preserve_source() {
             .contains(revision)
     );
 }
+
+#[test]
+fn ordinary_replacement_refuses_hidden_markup_between_runs() {
+    for marker in [
+        r#"<w:del w:id="1"><w:r><w:delText>old</w:delText></w:r></w:del>"#,
+        r#"<w:moveFrom w:id="2"><w:r><w:t>moved</w:t></w:r></w:moveFrom>"#,
+        r#"<w:commentRangeStart w:id="3"/>"#,
+        r#"<w:bookmarkStart w:id="4" w:name="reference"/>"#,
+        r#"<w:r><w:tab/></w:r>"#,
+        r#"<w:customXml/>"#,
+    ] {
+        let input = table_fixture(&format!(
+            r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:r><w:t>A</w:t></w:r>{marker}<w:r><w:t>B</w:t></w:r></w:p></w:body></w:document>"#
+        ));
+        let bytes = fs::read(&input).unwrap();
+        let result = crate::execute_docx_replace_text(bytes.clone(), &operation("AB", "AB", "C"));
+        assert_eq!(
+            result.operation.diagnostics[0].code, "UNSUPPORTED_OPERATION",
+            "{marker}"
+        );
+        assert!(result.output_artifact.is_none());
+        assert_eq!(fs::read(&input).unwrap(), bytes);
+        fs::remove_file(input).unwrap();
+    }
+}

@@ -234,6 +234,12 @@ pub(super) fn simple_header_footer_content(
     source: &SourceDocument,
     kind: HeaderFooterKind,
 ) -> Option<SimpleHeaderFooterContent> {
+    if source
+        .node_ids()
+        .any(|id| crate::tracked_change::revision_node(source, id))
+    {
+        return None;
+    }
     let root = source.root();
     if !word(source, root, header_footer_root_name(kind)) {
         return None;

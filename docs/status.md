@@ -1,5 +1,18 @@
 # OpenSuite Engine Status
 
+## Word semantics stabilization (Phase 7)
+
+Local, unpublished safety fixes refuse hidden text boundaries, enclosing
+paragraph/field/range edits, protected revision decisions, and changes that
+remove or duplicate property history. Revision discovery names categories and
+includes range ends, table property exceptions, and Word 2010 conflicts.
+Stray field instructions have diagnostics. Nine new Rust regressions; 187 DOCX,
+19 OPC, 4 protocol, 3 Node-crate Rust and 35 native Node tests pass, with strict
+Clippy, formatting and SDK typecheck. Three edited DOCX files opened in Microsoft
+Word without repair; Word save and Google Docs checks remain unverified.
+See [coverage and boundaries](word-semantics.md). No publish or pin change.
+
+
 ## Reliable targeting (Phase 3)
 
 Local native inspection returns text-search targets for headings/paragraphs and

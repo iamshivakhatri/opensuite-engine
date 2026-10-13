@@ -124,21 +124,29 @@ pub(super) fn body_insertion(
     blocks: &[NodeId],
     index: usize,
 ) -> Result<usize, OperationResult> {
-    if index < blocks.len() {
-        Ok(source
+    let section = terminal_section_properties(source, body)?;
+    let at = if index < blocks.len() {
+        source
             .node(blocks[index])
             .expect("body block exists")
             .span()
-            .start)
-    } else if let Some(section) = terminal_section_properties(source, body)? {
-        Ok(source
+            .start
+    } else if let Some(section) = section {
+        source
             .node(section)
             .expect("section properties exist")
             .span()
-            .start)
+            .start
     } else {
-        body_closing_start(source, body)
-    }
+        body_closing_start(source, body)?
+    };
+    protected_range::ensure_safe_source_ranges(
+        source,
+        &[SourceSpan { start: at, end: at }],
+        "UNSAFE_INSERTION_BOUNDARY",
+        false,
+    )?;
+    Ok(at)
 }
 
 pub(super) fn resolve_body_block_handle(

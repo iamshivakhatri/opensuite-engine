@@ -255,6 +255,17 @@ pub fn update_comment_to_vec(
         return Err(unsupported("comment has no editable content"));
     };
     // Preserve the exact comment tag and metadata. Rich imported content is not silently flattened.
+    if comment_source.node_ids().any(|id| {
+        let span = comment_source.node(id).unwrap().span();
+        span.start >= start_tag.end
+            && span.end <= end_tag.start
+            && crate::tracked_change::revision_node(comment_source, id)
+    }) {
+        return Err(
+            unsupported("comment updates do not remove tracked property changes")
+                .with_reason_code("UNSUPPORTED_REVISION_TYPE"),
+        );
+    }
     if comment_source.children(comment.source_id).any(|id| {
         !word(comment_source, id, "p")
             && !matches!(
@@ -638,5 +649,41 @@ mod tests {
         assert!(!valid_review_date("2026-+1-01T12:00:00Z"));
         assert!(plain_text("invalid \u{fffe}", NS[0]).is_err());
         assert!(valid_review_date("2024-02-29T12:00:00.123Z"));
+    }
+    #[test]
+    fn comment_update_preserves_pending_property_revisions_by_refusing() {
+        let bytes = add(
+            fixture("<w:p><w:r><w:t>Anchor</w:t></w:r></w:p>"),
+            "Anchor",
+            "Review",
+        );
+        let package = Package::from_bytes(bytes.clone()).unwrap();
+        let name = PartName::parse("/word/comments.xml").unwrap();
+        let xml = String::from_utf8(package.read_part_by_name(&name).unwrap()).unwrap()
+            .replace("<w:r>", r#"<w:r><w:rPr><w:rPrChange w:id="3" w:author="Lee"><w:rPr/></w:rPrChange></w:rPr>"#);
+        let bytes = package
+            .write_package_with_named_changes_to_vec(&[(name, xml.as_bytes())], &[])
+            .unwrap();
+        let handle = inspect_docx_comments(bytes.clone(), 0, 20).comments[0]
+            .handle
+            .clone()
+            .unwrap();
+        let result = execute_docx_update_comment(
+            bytes.clone(),
+            &UpdateComment {
+                handle,
+                text: "Updated".into(),
+            },
+        );
+        assert!(result.output_artifact.is_none());
+        assert_eq!(
+            result.operation.diagnostics[0].reason_code.as_deref(),
+            Some("UNSUPPORTED_REVISION_TYPE")
+        );
+        assert!(
+            String::from_utf8(part(&bytes, "/word/comments.xml"))
+                .unwrap()
+                .contains("rPrChange")
+        );
     }
 }

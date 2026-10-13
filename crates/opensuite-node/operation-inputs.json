@@ -570,7 +570,7 @@
     "jsonOutput": false
   },
   "executeDocxDeleteTrackedText": {
-    "description": "Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    "description": "Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1379,7 +1379,7 @@
     "jsonOutput": false
   },
   "executeDocxInsertTrackedText": {
-    "description": "Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    "description": "Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1528,7 +1528,7 @@
     "jsonOutput": false
   },
   "executeDocxReplaceTextWithTrackedChange": {
-    "description": "Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing.",
+    "description": "Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3469,7 +3469,7 @@
     "jsonOutput": true
   },
   "inspectDocxTrackedChanges": {
-    "description": "Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.",
+    "description": "Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals of XML records/markers, original Word element names (revisionType), and unsupported move/property/range diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.",
     "inputSchema": {
       "type": "object",
       "properties": {

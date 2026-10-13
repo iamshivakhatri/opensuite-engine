@@ -131,24 +131,24 @@ OpenSuite exposes these APIs lazily under `document.fields`. No arbitrary field
 code writer, DATE authoring, existing-field update/removal, TOC removal, custom
 style mapping, or field evaluator. LibreOffice smoke open/save recognized the
 TOC and refreshed PAGE/NUMPAGES, but retained the TOC placeholder; an explicit
-TOC update in Word/LibreOffice remains required. Manual Word/Google Docs review
-is pending. No engine version or package pin changes.
+TOC update in Word/LibreOffice remains required. Phase 7 includes a Microsoft Word
+open check of a mixed-field output; Word save and Google Docs review remain pending. No engine version or package pin changes.
 
 ## Tracked-change inspection
 
 Read-only `inspect_docx_tracked_changes` / Node `inspectDocxTrackedChanges` returns
 main-document revisions in source order, including table paragraphs. The snapshot
-contains ID, insertion/deletion kind, author/date, text, paragraph index, structural
+contains ID, insertion/deletion kind, original XML element name (`revisionType`), author/date, text, paragraph index, structural
 status, and reason codes. Default 20 entries, maximum 100, offset paging, and
 2,000-character text/metadata bounds. Totals distinguish supported insertions,
-supported deletions, and unsupported revision structures. Move/range markers,
-property/row/cell changes, and nested revisions are counted with diagnostics;
+supported deletions, and unsupported revision structures. Move/range markers (both starts and ends),
+property/row/cell changes (including table property exceptions), Word 2010 conflicts, and nested revisions are counted with diagnostics;
 their text is not interpreted. Counts describe XML revision records/markers,
 not logical edit groups. Headers/footers and other parts are outside this snapshot.
 
 Existing current-text inspection includes insertions/move-to and excludes
-deletions/move-from; original-text views do the reverse. Those semantics and
-mutation guards remain unchanged. Unrelated safe text edits preserve revision
+deletions/move-from; original-text views do the reverse. Those text semantics remain unchanged. Phase 7 adds conservative mutation guards
+for hidden boundaries and enclosing protected structures. Unrelated safe text edits preserve revision
 XML byte-for-byte.
 
 Typed `insert_tracked_text`, `delete_tracked_text`, and
@@ -261,3 +261,14 @@ unknown content is preserved, representative artifacts interoperate, and the
 Node/application layer can compose the supported operations reliably. Then move
 active format work to PPTX; return to DOCX only when real workflows show a
 meaningful gap.
+
+## Word semantics safety boundaries
+
+Phase 7 reuses source patches and the existing protected-range checks. Text
+replacement refuses hidden markup between runs; paragraph deletion/insertion
+checks enclosing ranges and fields. Revision decisions refuse enclosing
+move/conflict/bookmark/field ranges. Text formatting, comment-body updates, and
+header/footer writers refuse pending property history that could be removed or
+duplicated. Stray field instructions are diagnosed. Supported unrelated edits
+retain comments, fields, bookmarks, revisions, and package payloads.
+See [the coverage map and interoperability evidence](word-semantics.md).

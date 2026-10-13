@@ -197,7 +197,7 @@ export declare function executeDocxDeleteTableColumn(input: Buffer, operation: D
 /** Delete a known table row using table + row. Prefer row {kind: 'label', text, occurrence?} or a checked index; a handle is only needed when these cannot express the row. */
 export declare function executeDocxDeleteTableRow(input: Buffer, operation: DeleteTableRowInput): Promise<ExecuteDocxReplaceTextOutput>
 
-/** Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing. */
+/** Delete exact ordinary text as a real Word tracked deletion, retaining deleted text and run formatting for review. One body paragraph; simple multiple runs supported. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing. */
 export declare function executeDocxDeleteTrackedText(input: Buffer, op: DeleteTrackedTextInput): Promise<ExecuteDocxReplaceTextOutput>
 
 /** Insert a new paragraph of plain text and real PAGE/NUMPAGES fields. content items use kind text with text, or page/numPages without text. Example: text Page , page, text of , numPages. Body requires placement; footer appends to the single-section default footer and omits placement. Cached values are ? and marked dirty; Word calculates them. Imported fields remain unchanged. */
@@ -242,7 +242,7 @@ export declare function executeDocxInsertTableRows(input: Buffer, operation: Ins
 /** Insert a real refreshable Word Table of Contents in a new body paragraph, with an optional title paragraph. Heading levels 1 through maxHeadingLevel (default 3, range 1–9). Marked dirty with a refresh placeholder. Inspect fields first to avoid an unintended duplicate TOC. No in-engine field evaluation. */
 export declare function executeDocxInsertToc(input: Buffer, op: InsertTocInput): Promise<ExecuteDocxReplaceTextOutput>
 
-/** Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing. */
+/** Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing. */
 export declare function executeDocxInsertTrackedText(input: Buffer, op: InsertTrackedTextInput): Promise<ExecuteDocxReplaceTextOutput>
 
 /** Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported. */
@@ -262,7 +262,7 @@ export interface ExecuteDocxReplaceTextOutput {
   output?: Buffer
 }
 
-/** Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and paragraphs containing revisions are unsupported. Re-inspect after editing. */
+/** Replace exact ordinary text with real Word deletion + insertion revisions, preserving source formatting. Simple multiple runs require identical formatting. Author explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing. */
 export declare function executeDocxReplaceTextWithTrackedChange(input: Buffer, op: ReplaceTextWithTrackedChangeInput): Promise<ExecuteDocxReplaceTextOutput>
 
 /** Set content-control text by tag and/or alias. */
@@ -605,7 +605,7 @@ export declare function inspectDocxSections(input: Buffer): Promise<string>
 export declare function inspectDocxStyleSnapshot(input: Buffer): Promise<string>
 
 /**
- * Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals, and complex-revision diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.
+ * Inspect existing Word tracked insertions/deletions: IDs, author/date, bounded text, source-order paragraph locations, totals of XML records/markers, original Word element names (revisionType), and unsupported move/property/range diagnostics. Main document including tables only. Default 20, maximum 100 per page; text/metadata capped at 2000 characters. Current document text includes insertions and excludes deletions. Does not edit or save a version.
  * @jsonOutput
  */
 export declare function inspectDocxTrackedChanges(input: Buffer, options?: RevisionInspectionInput | undefined | null): Promise<string>
