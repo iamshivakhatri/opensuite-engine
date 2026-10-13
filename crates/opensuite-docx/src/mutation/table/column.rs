@@ -123,11 +123,7 @@ pub fn insert_table_column_after_to_vec(
         .write_replaced_part_to_vec(main, &patched)
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
     let mut output_target = operation.table.clone();
-    if output_target.handle.is_none() {
-        output_target
-            .header_cells
-            .insert(column + 1, operation.header.clone());
-    }
+    output_target.header_cells = expected[table_index][0].clone();
     verify_table_column_output_bytes(&output, &output_target, &expected)?;
     Ok(output)
 }

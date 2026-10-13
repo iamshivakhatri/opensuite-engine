@@ -254,11 +254,11 @@ pub(super) fn resolve_paragraph_anchor(
 /// Resolves only the ordinary direct body paragraphs that paragraph formatting
 /// can safely mutate. Text in table cells must not make a body paragraph
 /// selector ambiguous.
-pub(super) fn resolve_formatting_paragraph(
+pub(crate) fn formatting_paragraph_matches(
     source: &SourceDocument,
-    target: &TextTarget,
-) -> Result<(String, NodeId), OperationResult> {
-    let matches = crate::text_search::resolve_text(source, &target.text)
+    text: &str,
+) -> Result<Vec<(String, NodeId)>, OperationResult> {
+    let matches = crate::text_search::resolve_text(source, text)
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
     if matches.is_empty() {
         return Err(OperationResult::failed(
@@ -286,6 +286,14 @@ pub(super) fn resolve_formatting_paragraph(
             "paragraph formatting supports only ordinary direct body paragraphs",
         ));
     }
+    Ok(candidates)
+}
+
+pub(super) fn resolve_formatting_paragraph(
+    source: &SourceDocument,
+    target: &TextTarget,
+) -> Result<(String, NodeId), OperationResult> {
+    let candidates = formatting_paragraph_matches(source, &target.text)?;
     if let Some(occurrence) = target.occurrence {
         return candidates.into_iter().nth(occurrence).ok_or_else(|| {
             OperationResult::failed("TARGET_NOT_FOUND", "text target occurrence was not found")

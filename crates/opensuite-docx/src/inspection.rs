@@ -56,7 +56,7 @@ pub fn inspect_docx_document(
                     );
                 }
             };
-            headings(document, styles.as_ref(), *offset, *limit)
+            headings(source, document, styles.as_ref(), *offset, *limit)
         }
         InspectDocxFocus::Paragraphs { offset, limit } => {
             let styles = match load_styles(package, main) {
@@ -130,6 +130,7 @@ fn overview(document: DocxDocument<'_>) -> InspectDocxResult {
 }
 
 fn headings(
+    source: &SourceDocument,
     document: DocxDocument<'_>,
     styles: Option<&StyleSheet>,
     offset: usize,
@@ -159,6 +160,13 @@ fn headings(
             }
         };
         items.push(DocxHeading {
+            paragraph_target: paragraph_occurrence(source, paragraph.source_id(), &text).map(
+                |occurrence| opensuite_protocol::TextTarget {
+                    text: text.clone(),
+                    occurrence: Some(occurrence),
+                },
+            ),
+            text_target: text_target(source, paragraph.source_id(), &text),
             occurrence,
             text,
             style_name,
@@ -168,6 +176,41 @@ fn headings(
     InspectDocxResult::success(InspectDocxContent::Headings(page_result(
         total, page, items,
     )))
+}
+
+fn paragraph_occurrence(
+    source: &SourceDocument,
+    paragraph: crate::NodeId,
+    text: &str,
+) -> Option<usize> {
+    crate::mutation::formatting_paragraph_matches(source, text)
+        .ok()?
+        .iter()
+        .position(|(_, id)| *id == paragraph)
+}
+
+// Use the same search order as replace_text, including substrings and table cells.
+fn text_target(
+    source: &SourceDocument,
+    paragraph: crate::NodeId,
+    text: &str,
+) -> Option<opensuite_protocol::TextTarget> {
+    let span = source.node(paragraph)?.span();
+    let matches = crate::text_search::resolve_text(source, text).ok()?;
+    let occurrence = matches.iter().position(|matched| {
+        matched.segments.first().is_some_and(|segment| {
+            let start = source
+                .node(segment.id)
+                .expect("search segment exists")
+                .span()
+                .start;
+            span.start <= start && start < span.end
+        })
+    })?;
+    Some(opensuite_protocol::TextTarget {
+        text: text.to_owned(),
+        occurrence: Some(occurrence),
+    })
 }
 
 fn paragraphs(
@@ -181,21 +224,6 @@ fn paragraphs(
     let Some(page) = page(offset, limit) else {
         return invalid_bounds();
     };
-    let mut target_occurrences = HashMap::new();
-    let mut text_counts = HashMap::new();
-    for paragraph in document.paragraphs() {
-        let text = match paragraph.text_for_view(RevisionView::Current) {
-            Ok(text) => text,
-            Err(error) => {
-                return InspectDocxResult::failed(error.code(), "could not inspect DOCX artifact");
-            }
-        };
-        if crate::mutation::safe_body_paragraph(source, paragraph.source_id()) {
-            let occurrence = text_counts.entry(text).or_insert(0);
-            target_occurrences.insert(paragraph.source_id(), *occurrence);
-            *occurrence += 1;
-        }
-    }
     let mut total = 0;
     let mut items = Vec::new();
     for paragraph in document.paragraphs() {
@@ -211,10 +239,11 @@ fn paragraphs(
             }
         };
         items.push(DocxParagraph {
+            text_target: text_target(source, paragraph.source_id(), &text),
             index: occurrence,
             handle: direct_body_block_index(source, document.body_id(), paragraph.source_id())
                 .map(|index| format!("b{index}")),
-            target_occurrence: target_occurrences.get(&paragraph.source_id()).copied(),
+            target_occurrence: paragraph_occurrence(source, paragraph.source_id(), &text),
             text,
             style_name: paragraph_style_name(&paragraph, styles),
             list: match paragraph_list_reference(source, &paragraph, styles) {
@@ -953,7 +982,13 @@ mod tests {
             "<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>First</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val=\"Body\"/></w:pPr><w:del><w:r><w:delText>old </w:delText></w:r></w:del><w:ins><w:r><w:t>new </w:t></w:r></w:ins><w:r><w:t>text</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>",
         );
         let styles = styles();
-        let headings = headings(DocxDocument::new(&source).unwrap(), Some(&styles), 1, 1);
+        let headings = headings(
+            &source,
+            DocxDocument::new(&source).unwrap(),
+            Some(&styles),
+            1,
+            1,
+        );
         let Some(InspectDocxContent::Headings(headings)) = headings.content else {
             panic!("expected headings")
         };
@@ -999,8 +1034,43 @@ mod tests {
         };
         assert_eq!(paragraphs.items[0].index, 0);
         assert_eq!(paragraphs.items[0].target_occurrence, Some(0));
+        assert_eq!(
+            paragraphs.items[0].text_target.as_ref().unwrap().occurrence,
+            Some(1)
+        );
         assert_eq!(paragraphs.items[1].target_occurrence, Some(0));
         assert_eq!(paragraphs.items[2].target_occurrence, Some(1));
+    }
+
+    #[test]
+    fn heading_text_target_counts_contents_substrings_and_table_cells() {
+        let source = source(
+            "<w:p><w:r><w:t>Pricing .... 4</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Pricing</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>Pricing</w:t></w:r></w:p>",
+        );
+        let styles = styles();
+        let result = headings(
+            &source,
+            DocxDocument::new(&source).unwrap(),
+            Some(&styles),
+            0,
+            10,
+        );
+        let Some(InspectDocxContent::Headings(headings)) = result.content else {
+            panic!("expected headings")
+        };
+        assert_eq!(headings.items[0].occurrence, 0);
+        assert_eq!(
+            headings.items[0]
+                .paragraph_target
+                .as_ref()
+                .unwrap()
+                .occurrence,
+            Some(1)
+        );
+        assert_eq!(
+            headings.items[0].text_target.as_ref().unwrap().occurrence,
+            Some(2)
+        );
     }
 
     #[test]

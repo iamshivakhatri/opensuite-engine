@@ -346,7 +346,7 @@ export interface FieldInspectionInput {
   limit?: number
 }
 
-/** Finds DOCX text away from Node's event loop and returns semantic results. */
+/** Find exact current DOCX text. Copy matches[].target into replace_text or text formatting; occurrence is zero-based among text matches. Never guess among duplicates. Refresh after content edits. */
 export declare function findDocxText(input: Buffer, request: FindTextInput): Promise<FindTextOutput>
 
 export interface FindTextInput {
@@ -355,6 +355,7 @@ export interface FindTextInput {
 }
 
 export interface FindTextMatchOutput {
+  target: TextTargetInput
   occurrence: number
   text: string
   before: string
@@ -380,6 +381,8 @@ export interface FormatCapabilitiesOutput {
 export declare function getDocxCapabilities(): RuntimeCapabilitiesOutput
 
 export interface HeadingOutput {
+  paragraphTarget?: TextTargetInput
+  textTarget?: TextTargetInput
   occurrence: number
   text: string
   styleName: string
@@ -528,7 +531,7 @@ export interface InspectContextOutput {
   nearby: Array<TextContextContainerOutput>
 }
 
-/** Inspects bounded DOCX text context away from Node's event loop. */
+/** Inspect current DOCX elements. Headings/paragraphs expose textTarget for replace_text and text formatting; paragraph formatting uses headings.paragraphTarget or paragraphs text + targetOccurrence. Heading occurrence and paragraph index are list positions. Copy table/cell handles or use zero-based row/column indices with expected labels. Refresh selectors after content edits. */
 export declare function inspectDocx(input: Buffer, request: InspectDocxInput): Promise<InspectDocxOutput>
 
 /**
@@ -664,6 +667,7 @@ export interface ParagraphListOutput {
 }
 
 export interface ParagraphOutput {
+  textTarget?: TextTargetInput
   index: number
   handle?: string
   targetOccurrence?: number
@@ -993,7 +997,7 @@ export interface StyleInput {
 export interface TableCellColumnInput {
   /** @schema {"enum":["first","header","index"]} */
   kind: string
-  /** @schema {"description":"First-row column header for kind=header."} */
+  /** @schema {"description":"First-row column header for kind=header, including column zero. Duplicate labels require an occurrence or an index with expectedHeaderText."} */
   text?: string
   /** @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."} */
   occurrence?: number
@@ -1116,7 +1120,7 @@ export interface TextContextContainerOutput {
 export interface TextTargetInput {
   /** @schema {"description":"Exact text to match"} */
   text: string
-  /** @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."} */
+  /** @schema {"description":"Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."} */
   occurrence?: number
 }
 

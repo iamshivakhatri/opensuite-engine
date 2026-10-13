@@ -1,5 +1,19 @@
 # OpenSuite Engine Status
 
+## Reliable targeting (Phase 3)
+
+Local native inspection returns text-search targets for headings/paragraphs and
+paragraph-formatting targets for headings. Paragraph occurrences reuse the actual
+mutation matcher, including substrings and safe-body filtering. Header selectors
+include column zero; duplicate headers still require an explicit occurrence/index.
+Table handles with supplied expected headers refuse identity mismatches, and
+column-insertion verification uses the expected new headers. Existing mutation
+schemas and preservation boundaries remain unchanged. The API scopes its existing
+handle set by run/generation and guards individual/batch writes; no engine handle
+registry or durable target IDs were added. Rust DOCX/protocol tests: 178 + 4 passed;
+Node tests: 35 passed; native build, formatting, and strict Clippy passed.
+These changes await native publication.
+
 ## Current Scope
 
 OpenSuite is a preservation-first DOCX engine. The Rust workspace contains the

@@ -218,7 +218,7 @@ fn resolve_table_cell(
             continue;
         };
         let header_cells = header.cells().collect::<Vec<_>>();
-        for (column, header_cell) in header_cells.iter().enumerate().skip(1) {
+        for (column, header_cell) in header_cells.iter().enumerate() {
             if !label_matches(
                 &header_cell
                     .text_for_view(RevisionView::Current)
@@ -457,7 +457,6 @@ pub(super) fn resolve_table_cell_in_table(
                 headers
                     .iter()
                     .enumerate()
-                    .skip(1)
                     .filter_map(|(index, actual)| label_matches(actual, text).then_some(index))
                     .collect(),
                 *occurrence,
@@ -507,7 +506,6 @@ pub(super) fn resolve_table_cell_in_table(
     let columns = headers
         .iter()
         .enumerate()
-        .skip(1)
         .filter_map(|(index, header)| label_matches(header, &target.column_header).then_some(index))
         .collect::<Vec<_>>();
     if columns.is_empty() {

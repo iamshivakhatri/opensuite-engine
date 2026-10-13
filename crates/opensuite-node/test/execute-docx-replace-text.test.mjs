@@ -229,7 +229,9 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   assert.equal(found.ok, true)
   assert.equal(found.matchCount, 2)
   assert.deepEqual(found.matches.map((match) => match.occurrence), [0, 1])
-  assert.deepEqual(Object.keys(found.matches[0]).sort(), ['after', 'before', 'container', 'occurrence', 'text'])
+  assert.deepEqual(Object.keys(found.matches[0]).sort(), ['after', 'before', 'container', 'occurrence', 'target', 'text'])
+
+  assert.deepEqual(found.matches[1].target, { text: 'Date:', occurrence: 1 })
 
   const overview = await inspectDocx(input, { focus: { kind: 'overview' } })
   assert.equal(overview.ok, true)

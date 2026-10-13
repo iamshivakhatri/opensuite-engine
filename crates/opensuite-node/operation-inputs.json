@@ -44,7 +44,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -360,7 +360,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -585,7 +585,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -737,7 +737,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -1394,7 +1394,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -1499,7 +1499,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -1543,7 +1543,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -1665,7 +1665,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -1804,7 +1804,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -1924,7 +1924,7 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 4294967295,
-                "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+                "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
               }
             },
             "required": [
@@ -1983,7 +1983,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -2413,7 +2413,7 @@
                       },
                       "text": {
                         "type": "string",
-                        "description": "First-row column header for kind=header."
+                        "description": "First-row column header for kind=header, including column zero. Duplicate labels require an occurrence or an index with expectedHeaderText."
                       },
                       "occurrence": {
                         "type": "integer",
@@ -2592,7 +2592,7 @@
                       },
                       "text": {
                         "type": "string",
-                        "description": "First-row column header for kind=header."
+                        "description": "First-row column header for kind=header, including column zero. Duplicate labels require an occurrence or an index with expectedHeaderText."
                       },
                       "occurrence": {
                         "type": "integer",
@@ -2745,7 +2745,7 @@
                       },
                       "text": {
                         "type": "string",
-                        "description": "First-row column header for kind=header."
+                        "description": "First-row column header for kind=header, including column zero. Duplicate labels require an occurrence or an index with expectedHeaderText."
                       },
                       "occurrence": {
                         "type": "integer",
@@ -2959,7 +2959,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [
@@ -3242,7 +3242,7 @@
     "jsonOutput": false
   },
   "findDocxText": {
-    "description": "Finds DOCX text away from Node's event loop and returns semantic results.",
+    "description": "Find exact current DOCX text. Copy matches[].target into replace_text or text formatting; occurrence is zero-based among text matches. Never guess among duplicates. Refresh after content edits.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3260,7 +3260,7 @@
     "jsonOutput": false
   },
   "inspectDocx": {
-    "description": "Inspects bounded DOCX text context away from Node's event loop.",
+    "description": "Inspect current DOCX elements. Headings/paragraphs expose textTarget for replace_text and text formatting; paragraph formatting uses headings.paragraphTarget or paragraphs text + targetOccurrence. Heading occurrence and paragraph index are list positions. Copy table/cell handles or use zero-based row/column indices with expected labels. Refresh selectors after content edits.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3327,7 +3327,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 4294967295,
-              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+              "description": "Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."
             }
           },
           "required": [

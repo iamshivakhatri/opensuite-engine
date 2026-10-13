@@ -71,7 +71,7 @@ pub use text_formatting::execute_docx_set_text_formatting_node;
 pub struct TextTargetInput {
     /// @schema {"description":"Exact text to match"}
     pub text: String,
-    /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
+    /// @schema {"description":"Zero-based occurrence among matching targets. Omit for unique matches. For text edits copy find.matches[].target or inspect textTarget. Paragraph formatting uses inspect paragraphs.targetOccurrence; tables use their own occurrence. These positions are version-local."}
     pub occurrence: Option<u32>,
 }
 
@@ -267,7 +267,7 @@ pub struct TableCellRowInput {
 pub struct TableCellColumnInput {
     /// @schema {"enum":["first","header","index"]}
     pub kind: String,
-    /// @schema {"description":"First-row column header for kind=header."}
+    /// @schema {"description":"First-row column header for kind=header, including column zero. Duplicate labels require an occurrence or an index with expectedHeaderText."}
     pub text: Option<String>,
     /// @schema {"description":"Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."}
     pub occurrence: Option<u32>,
@@ -402,6 +402,7 @@ pub struct FindTextInput {
 
 #[napi(object)]
 pub struct FindTextMatchOutput {
+    pub target: TextTargetInput,
     pub occurrence: u32,
     pub text: String,
     pub before: String,
@@ -451,6 +452,8 @@ pub struct OverviewOutput {
 
 #[napi(object)]
 pub struct HeadingOutput {
+    pub paragraph_target: Option<TextTargetInput>,
+    pub text_target: Option<TextTargetInput>,
     pub occurrence: u32,
     pub text: String,
     pub style_name: String,
@@ -459,6 +462,7 @@ pub struct HeadingOutput {
 
 #[napi(object)]
 pub struct ParagraphOutput {
+    pub text_target: Option<TextTargetInput>,
     pub index: u32,
     pub handle: Option<String>,
     pub target_occurrence: Option<u32>,
@@ -666,7 +670,7 @@ pub fn create_blank_docx_node() -> Buffer {
     Buffer::from(create_blank_docx())
 }
 
-/// Finds DOCX text away from Node's event loop and returns semantic results.
+/// Find exact current DOCX text. Copy matches[].target into replace_text or text formatting; occurrence is zero-based among text matches. Never guess among duplicates. Refresh after content edits.
 #[napi(js_name = "findDocxText", ts_return_type = "Promise<FindTextOutput>")]
 pub fn find_docx_text_node(input: Buffer, request: FindTextInput) -> AsyncTask<FindTextTask> {
     AsyncTask::new(FindTextTask {
@@ -696,7 +700,7 @@ impl Task for FindTextTask {
     }
 }
 
-/// Inspects bounded DOCX text context away from Node's event loop.
+/// Inspect current DOCX elements. Headings/paragraphs expose textTarget for replace_text and text formatting; paragraph formatting uses headings.paragraphTarget or paragraphs text + targetOccurrence. Heading occurrence and paragraph index are list positions. Copy table/cell handles or use zero-based row/column indices with expected labels. Refresh selectors after content edits.
 #[napi(js_name = "inspectDocx", ts_return_type = "Promise<InspectDocxOutput>")]
 pub fn inspect_docx_node(input: Buffer, request: InspectDocxInput) -> AsyncTask<InspectDocxTask> {
     let (focus, request) = inspect_request(request);
@@ -1540,6 +1544,10 @@ fn find_text_output(result: FindTextResult) -> FindTextOutput {
             .matches
             .into_iter()
             .map(|item| FindTextMatchOutput {
+                target: TextTargetInput {
+                    text: item.text.clone(),
+                    occurrence: Some(item.occurrence as u32),
+                },
                 occurrence: item.occurrence as u32,
                 text: item.text,
                 before: item.before,
@@ -1717,6 +1725,13 @@ fn page_output<T>(value: &InspectionPage<T>) -> InspectionPageOutput {
     }
 }
 
+fn text_target_output(target: TextTarget) -> TextTargetInput {
+    TextTargetInput {
+        text: target.text,
+        occurrence: target.occurrence.map(|n| n as u32),
+    }
+}
+
 fn heading_page_output(value: InspectionPage<DocxHeading>) -> HeadingPageOutput {
     HeadingPageOutput {
         page: page_output(&value),
@@ -1724,6 +1739,8 @@ fn heading_page_output(value: InspectionPage<DocxHeading>) -> HeadingPageOutput 
             .items
             .into_iter()
             .map(|item| HeadingOutput {
+                paragraph_target: item.paragraph_target.map(text_target_output),
+                text_target: item.text_target.map(text_target_output),
                 occurrence: item.occurrence as u32,
                 text: item.text,
                 style_name: item.style_name,
@@ -1748,6 +1765,7 @@ fn paragraph_page_output(value: InspectionPage<DocxParagraph>) -> ParagraphPageO
             .items
             .into_iter()
             .map(|item| ParagraphOutput {
+                text_target: item.text_target.map(text_target_output),
                 index: item.index as u32,
                 handle: item.handle,
                 target_occurrence: item.target_occurrence.map(|value| value as u32),

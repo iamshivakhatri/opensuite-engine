@@ -84,13 +84,9 @@ fn formats_three_header_cells_without_touching_repeated_text_elsewhere() {
             .map(|column| {
                 semantic_update(
                     TableCellRow::Header,
-                    if column == 0 {
-                        TableCellColumn::First
-                    } else {
-                        TableCellColumn::Header {
-                            text: ["", "Owner", "Actual"][column].into(),
-                            occurrence: None,
-                        }
+                    TableCellColumn::Header {
+                        text: ["Status", "Owner", "Actual"][column].into(),
+                        occurrence: None,
                     },
                     Some("17365d"),
                     true,
@@ -102,6 +98,14 @@ fn formats_three_header_cells_without_touching_repeated_text_elsewhere() {
     assert_eq!(
         result.operation.status,
         opensuite_protocol::OperationStatus::Applied
+    );
+    let mut wrong = operation.clone();
+    wrong.table.header_cells = vec!["Wrong".into()];
+    let failed = crate::execute_docx_set_table_cells_formatting(original.clone(), &wrong);
+    assert!(failed.output_artifact.is_none());
+    assert_eq!(
+        failed.operation.diagnostics[0].reason_code.as_deref(),
+        Some("EXPECTED_TEXT_MISMATCH")
     );
     let output = result.output_artifact.unwrap();
     for column in 0..3 {
@@ -134,7 +138,7 @@ fn formats_three_header_cells_without_touching_repeated_text_elsewhere() {
 #[test]
 fn semantic_cells_require_occurrences_for_duplicate_labels_and_headers() {
     let path = table_fixture(&format!(
-        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Metric</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>10</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>20</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>30</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>40</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>10</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>20</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>30</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>40</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
     ));
     let original = fs::read(&path).unwrap();
     let row = TableCellRow::Label {
@@ -143,7 +147,7 @@ fn semantic_cells_require_occurrences_for_duplicate_labels_and_headers() {
     };
     let column = TableCellColumn::Header {
         text: "Value".into(),
-        occurrence: Some(1),
+        occurrence: Some(2),
     };
     let updates = vec![
         semantic_update(row.clone(), TableCellColumn::First, Some("ABCDEF"), true),

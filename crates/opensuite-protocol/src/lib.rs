@@ -1378,6 +1378,7 @@ impl FindTextResult {
             "match_count": self.matches.len(),
             "matches": self.matches.iter().map(|item| serde_json::json!({
                 "occurrence": item.occurrence,
+                "target": { "text": item.text, "occurrence": item.occurrence },
                 "text": item.text,
                 "before": item.before,
                 "after": item.after,
@@ -1441,6 +1442,10 @@ pub struct DocxOverview {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocxHeading {
+    /// Selector among safe body text matches for paragraph formatting.
+    pub paragraph_target: Option<TextTarget>,
+    /// Exact text-search selector for this heading in the current artifact.
+    pub text_target: Option<TextTarget>,
     pub occurrence: usize,
     pub text: String,
     pub style_name: String,
@@ -1449,11 +1454,13 @@ pub struct DocxHeading {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocxParagraph {
+    /// Exact text-search selector; paragraph formatting uses target_occurrence instead.
+    pub text_target: Option<TextTarget>,
     /// Zero-based position among ordinary direct body paragraphs.
     pub index: usize,
     pub handle: Option<String>,
-    /// Zero-based occurrence among ordinary body paragraphs with the same
-    /// current-view text. This is the selector accepted by paragraph
+    /// Zero-based occurrence among safe body text matches.
+    /// This is the selector accepted by paragraph
     /// formatting mutations.
     pub target_occurrence: Option<usize>,
     pub text: String,

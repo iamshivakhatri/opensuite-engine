@@ -51,6 +51,16 @@ pub(super) fn resolve_table<'a>(
                     .map_err(document_invalid)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if requested_handle == Some(current_table_index)
+            && !target.header_cells.is_empty()
+            && !labels_match(&headers, &target.header_cells)
+        {
+            return Err(OperationResult::failed(
+                "PRECONDITION_FAILED",
+                "table handle header does not match expected text",
+            )
+            .with_reason_code("EXPECTED_TEXT_MISMATCH"));
+        }
         if requested_handle.is_some_and(|handle| handle == current_table_index)
             || (requested_handle.is_none() && labels_match(&headers, &target.header_cells))
         {

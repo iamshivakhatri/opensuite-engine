@@ -22,6 +22,14 @@ these definitions for mutation tools and automatic dynamic discovery. Read tools
 JSON-encoded read output. These contracts are published in engine 0.1.7. All five platform builds and the
 clean npm consumer check pass.
 
+Phase 3 local targeting: copy search `target` or inspection `textTarget` for text
+edits, and heading `paragraphTarget` or paragraph `targetOccurrence` for paragraph
+formatting. Positions are zero-based and artifact-local; refresh after content
+edits. Header-label column selection includes column zero and refuses duplicates
+without an explicit occurrence/index. Table handles with expected header labels
+must agree. No new mutation inputs or durable handle protocol; npm consumers need
+the next native release.
+
 ## Current Capability Groups
 
 - Package opening, source-aware semantic inspection, exact text search, bounded
