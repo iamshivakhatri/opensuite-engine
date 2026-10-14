@@ -18,7 +18,7 @@ function crc32(bytes) {
   return (value ^ 0xffffffff) >>> 0
 }
 
-function docxFixture() {
+function docxFixture(extraFiles = []) {
   const files = [
     ['[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'],
     ['_rels/.rels', `<Relationships><Relationship Id="rId1" Type="${office}" Target="word/document.xml"/></Relationships>`],
@@ -26,6 +26,7 @@ function docxFixture() {
     ['word/styles.xml', `<w:styles xmlns:w="${word}"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/></w:style><w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body Text"/></w:style></w:styles>`],
     ['word/document.xml', `<w:document xmlns:w="${word}"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Report heading</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Body"/></w:pPr><w:r><w:t>old text</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:p><w:r><w:t>Date:</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>table needle</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>second cell</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>uneven row</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Role</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CEO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CTO</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>`],
   ]
+  files.push(...extraFiles)
   let offset = 0
   const local = []
   const central = []
@@ -82,6 +83,17 @@ test('returns verified Buffer output for a valid replacement', async () => {
   const second = await executeDocxReplaceText(result.output, operation('OpenSuite replacement', 'Second replacement'))
   assert.equal(second.result.ok, true)
   assert.ok(Buffer.isBuffer(second.output))
+})
+
+test('malformed unrelated XML refuses a normal text edit without output', async () => {
+  for (const xml of ['', '<root/><other/>', '<root a="1" a="2"/>', '<bad:root/>']) {
+    const bytes = docxFixture([['word/custom.xml', xml]])
+    const original = Buffer.from(bytes)
+    const result = await executeDocxReplaceText(bytes, operation('old text'))
+    assert.equal(result.result.ok, false, xml)
+    assert.equal(result.output, undefined)
+    assert.deepEqual(bytes, original)
+  }
 })
 
 test('creates and authors a blank DOCX entirely as Buffers', async () => {

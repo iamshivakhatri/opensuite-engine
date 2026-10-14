@@ -1,5 +1,20 @@
 # OpenSuite Engine Status
 
+## Final DOCX acceptance (Phase 8)
+
+Conditional release readiness: supported local edits and the packed macOS ARM64
+consumer pass; fresh Word checks and current cross-platform distribution remain
+unverified. The existing OPC XML check now refuses balanced-but-invalid XML
+(empty/multiple roots, duplicate attributes, undeclared prefixes and bad entities).
+Repeated release builds clean the correct adapter cache. Failed packaging restores
+the manifest; metadata-only commands explicitly disable GitHub release creation.
+187 DOCX / 20 OPC / 4 protocol / 3 Node Rust and 37 native Node tests pass;
+formatting, compilation, strict release-crate Clippy and packed SDK types pass.
+General workspace Clippy still fails on existing PPTX warnings. No version bump,
+push, publish, tag or consumer-pin change. Full application evidence and the
+separate release checklist are in `opensuite/docs/phase8_release_readiness.md`
+in the sibling application repository. Phase 8 is not complete.
+
 ## Word semantics stabilization (Phase 7)
 
 Local, unpublished safety fixes refuse hidden text boundaries, enclosing

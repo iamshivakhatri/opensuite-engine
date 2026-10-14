@@ -191,7 +191,7 @@ jobs:
           # Inject platform optionalDependencies into package.json (napi-rs standard).
           # pack:dry-run restores the committed manifest afterward, so re-inject here
           # before publishing the root. Platforms are already on the registry.
-          npx napi prepublish -t npm --skip-optional-publish
+          npx napi prepublish -t npm --skip-optional-publish --no-gh-release
           root_name="$(node -p "require('./package.json').name")"
           root_version="$(node -p "require('./package.json').version")"
           echo "Publishing ${root_name}@${root_version} (root, ignore-scripts)"

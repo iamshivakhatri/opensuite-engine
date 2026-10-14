@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use quick_xml::{Reader, events::Event};
+use quick_xml::{NsReader, Reader, events::Event, name::ResolveResult};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 pub const LAYER: &str = "opc";
@@ -950,18 +950,58 @@ fn is_xml_part(name: &str) -> bool {
 }
 
 fn well_formed_xml(content: &[u8]) -> bool {
-    let mut reader = Reader::from_reader(content);
+    let mut reader = NsReader::from_reader(content);
     let mut buffer = Vec::new();
     let mut elements = Vec::new();
+    let mut roots = 0;
     loop {
-        match reader.read_event_into(&mut buffer) {
-            Ok(Event::Start(element)) => elements.push(element.name().as_ref().to_vec()),
-            Ok(Event::End(element)) => {
+        match reader.read_resolved_event_into(&mut buffer) {
+            Ok((namespace, event @ (Event::Start(_) | Event::Empty(_)))) => {
+                if matches!(namespace, ResolveResult::Unknown(_)) {
+                    return false;
+                }
+                let (Event::Start(element) | Event::Empty(element)) = &event else {
+                    unreachable!()
+                };
+                if elements.is_empty() {
+                    roots += 1;
+                    if roots > 1 {
+                        return false;
+                    }
+                }
+                for attribute in element.attributes() {
+                    let Ok(attribute) = attribute else {
+                        return false;
+                    };
+                    if matches!(
+                        reader.resolve_attribute(attribute.key).0,
+                        ResolveResult::Unknown(_)
+                    ) || attribute
+                        .decode_and_unescape_value(reader.decoder())
+                        .is_err()
+                    {
+                        return false;
+                    }
+                }
+                if matches!(event, Event::Start(_)) {
+                    elements.push(element.name().as_ref().to_vec());
+                }
+            }
+            Ok((_, Event::End(element))) => {
                 if elements.pop().as_deref() != Some(element.name().as_ref()) {
                     return false;
                 }
             }
-            Ok(Event::Eof) => return elements.is_empty(),
+            Ok((_, Event::Text(text))) => {
+                let Ok(text) = text.unescape() else {
+                    return false;
+                };
+                if elements.is_empty() && !text.trim().is_empty() {
+                    return false;
+                }
+            }
+            Ok((_, Event::CData(_))) if elements.is_empty() => return false,
+            Ok((_, Event::Eof)) => return roots == 1 && elements.is_empty(),
             Ok(_) => buffer.clear(),
             Err(_) => return false,
         }
@@ -1220,6 +1260,33 @@ mod tests {
             Err(PackageError::MalformedXmlPart(_))
         ));
         fs::remove_file(input).unwrap();
+    }
+
+    #[test]
+    fn verification_rejects_invalid_xml_even_when_tags_are_balanced() {
+        for xml in [
+            "",
+            "<root/><other/>",
+            "<root a=\"1\" a=\"2\"/>",
+            "<bad:root/>",
+            "<root bad:attr=\"1\"/>",
+            "outside<root/>",
+            "<root>&unknown;</root>",
+            "<root a=\"&unknown;\"/>",
+        ] {
+            let input = package_file(
+                &content_types("/custom/main.xml"),
+                &relationships("custom/main.xml"),
+                &[("custom/main.xml", "<document/>"), ("extra.xml", xml)],
+            );
+            let package = Package::open(&input).unwrap();
+            assert!(
+                matches!(package.verify(), Err(PackageError::MalformedXmlPart(_))),
+                "accepted {xml:?}"
+            );
+            fs::remove_file(input).unwrap();
+        }
+        assert!(well_formed_xml("<?xml version=\"1.0\"?><root xmlns:x=\"urn:unknown\"><x:other x:attr=\"&amp;\"/>text</root>".as_bytes()));
     }
 
     #[test]

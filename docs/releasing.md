@@ -57,6 +57,12 @@ These are updated by `./scripts/release-engine.sh X.Y.Z`:
 Committed `package.json` must **not** contain `optionalDependencies` (bootstrap /
 `npm ci` would break before platform packages exist).
 
+Metadata-only `napi prepublish` calls must include both
+`--skip-optional-publish` and `--no-gh-release`: the installed CLI defaults GitHub
+release creation to true. `pack:dry-run` restores the original manifest even when
+a child command fails. A host-only package check does not replace fresh
+five-target artifact assembly and the full six-tarball check.
+
 ### C. Intentionally independent (do not bump for engine npm releases)
 
 | Location | Purpose |

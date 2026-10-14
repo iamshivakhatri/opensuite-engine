@@ -21,7 +21,7 @@ try {
     : spawnSync('rustc', ['-vV'], { encoding: 'utf8' }).stdout?.match(/^host: (.+)$/m)?.[1]
   if (!target) throw new Error('Cannot determine the native build target')
   // napi builds into target/<triple>, even for a host build.
-  run('cargo', ['clean', '-p', 'opensuite-node', '--target', target])
+  run('cargo', ['clean', '-p', 'opensuite-node', '--target', target, ...(args.includes('--debug') ? [] : ['--release'])])
   run('npx', napiArgs, { ...process.env, TYPE_DEF_TMP_PATH: join(folder, 'opensuite-node') })
   await generateInputs(root, folder)
   const contracts = readFileSync(join(root, 'operation-inputs.json'), 'utf8')

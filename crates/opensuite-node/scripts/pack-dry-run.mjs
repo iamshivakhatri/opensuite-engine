@@ -24,7 +24,7 @@ function run(command, args) {
     shell: process.platform === 'win32',
   })
   if (result.status !== 0) {
-    process.exit(result.status ?? 1)
+    throw new Error(`${command} failed: ${result.error?.message ?? result.status}`)
   }
 }
 
@@ -32,7 +32,7 @@ const committedPackageJson = readFileSync(packageJsonPath, 'utf8')
 
 try {
   // Inject exact optionalDependencies for the current version into package.json.
-  run('npx', ['napi', 'prepublish', '-t', 'npm', '--skip-optional-publish'])
+  run('npx', ['napi', 'prepublish', '-t', 'npm', '--skip-optional-publish', '--no-gh-release'])
   run(process.execPath, [join(root, 'scripts/validate-packages.mjs')])
 
   rmSync(tarballDir, { recursive: true, force: true })
