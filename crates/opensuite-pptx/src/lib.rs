@@ -870,9 +870,7 @@ mod tests {
         let entries = [
             (
                 "[Content_Types].xml",
-                format!(
-                    "<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/></Types>"
-                ),
+                "<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml\"/></Types>".to_string(),
             ),
             (
                 "_rels/.rels",
@@ -884,10 +882,11 @@ mod tests {
                 "ppt/presentation.xml",
                 format!(
                     "<p:presentation xmlns:p=\"{P}\" xmlns:r=\"{R}\"><p:sldIdLst>{}</p:sldIdLst></p:presentation>",
-                    order
-                        .iter()
-                        .map(|(id, _)| format!("<p:sldId r:id=\"{id}\"/>"))
-                        .collect::<String>()
+                    order.iter().fold(String::new(), |mut out, (id, _)| {
+                        use std::fmt::Write as _;
+                        let _ = write!(out, "<p:sldId r:id=\"{id}\"/>");
+                        out
+                    })
                 ),
             ),
             (

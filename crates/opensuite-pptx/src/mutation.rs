@@ -197,7 +197,7 @@ pub fn execute_pptx_replace_paragraph_text_range(
         return failed("INVALID_RANGE", "paragraph range is invalid")
             .with_target("replace_paragraph_text_range", &operation.paragraph_handle);
     }
-    if &text[operation.start_offset..operation.end_offset] != operation.expected_current_text {
+    if text[operation.start_offset..operation.end_offset] != operation.expected_current_text {
         return precondition(operation, "EXPECTED_TEXT_MISMATCH");
     }
     let main = match package.main_office_document() {
@@ -835,15 +835,13 @@ fn has_direct_geometry(value: &ShapeGeometry) -> bool {
     value.x.is_some() && value.y.is_some() && value.width.is_some() && value.height.is_some()
 }
 
+type AttrSpan = (usize, usize);
+type GeometryAttrSpans = (AttrSpan, AttrSpan, AttrSpan, AttrSpan);
+
 fn find_geometry_attributes(
     source: &[u8],
     target: crate::handles::ShapeHandle,
-) -> Option<(
-    (usize, usize),
-    (usize, usize),
-    (usize, usize),
-    (usize, usize),
-)> {
+) -> Option<GeometryAttrSpans> {
     let mut reader = NsReader::from_reader(source);
     let mut buffer = Vec::new();
     let mut depth = 0usize;

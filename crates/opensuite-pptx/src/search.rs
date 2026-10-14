@@ -65,8 +65,7 @@ pub fn find_pptx_text(input: Vec<u8>, request: &FindPptxText) -> PptxTextSearchR
     let limit = request
         .limit
         .unwrap_or(DEFAULT_RESULT_LIMIT)
-        .max(1)
-        .min(MAX_RESULT_LIMIT);
+        .clamp(1, MAX_RESULT_LIMIT);
     let mut matches = Vec::new();
     'slides: for slide in overview.slides {
         for shape in slide.shapes {
