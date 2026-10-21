@@ -86,7 +86,18 @@ pub fn inspect_docx_document(
                 *limit,
             )
         }
-        InspectDocxFocus::Tables { offset, limit } => tables(source, document, *offset, *limit),
+        InspectDocxFocus::Tables { offset, limit } => {
+            let stamp = match crate::mutation::section_fingerprint(package, main, source) {
+                Ok(stamp) => stamp,
+                Err(error) => {
+                    return InspectDocxResult::failed(
+                        error.diagnostics[0].code.clone(),
+                        "could not inspect cell picture targets",
+                    );
+                }
+            };
+            tables(source, document, *offset, *limit, stamp)
+        }
         InspectDocxFocus::TableRows {
             table_handle,
             row_offset,
@@ -595,16 +606,27 @@ fn tables(
     document: DocxDocument<'_>,
     offset: usize,
     limit: usize,
+    stamp: u64,
 ) -> InspectDocxResult {
     let Some(page) = page(offset, limit) else {
         return invalid_bounds();
     };
     let mut total = 0;
+    let mut direct_table_count = 0;
     let mut items = Vec::new();
     for block in document.blocks() {
         let BodyBlock::Table(table) = block else {
             continue;
         };
+        let picture_table_index = source
+            .node(table.source_id())
+            .and_then(|node| node.parent())
+            .filter(|parent| is_word(source, *parent, "body"))
+            .map(|_| {
+                let index = direct_table_count;
+                direct_table_count += 1;
+                index
+            });
         let occurrence = total;
         total += 1;
         if occurrence < page.0 || items.len() == page.1 {
@@ -627,6 +649,7 @@ fn tables(
         for (row_index, row) in table.rows().enumerate() {
             let mut cells = Vec::new();
             let mut cell_handles = Vec::new();
+            let mut picture_cell_handles = Vec::new();
             let mut cell_affordances = Vec::new();
             for (column_index, cell) in row.cells().enumerate() {
                 match cell.text_for_view(RevisionView::Current) {
@@ -639,6 +662,11 @@ fn tables(
                     }
                 }
                 cell_handles.push(format!("t{occurrence}:r{row_index}:c{column_index}"));
+                if let Some(index) = picture_table_index {
+                    picture_cell_handles.push(format!(
+                        "t{index}:r{row_index}:c{column_index}:{stamp:016x}"
+                    ));
+                }
                 let cell_reason = crate::mutation::table_cell_text_reason(source, cell.source_id());
                 cell_affordances.push(vec![
                     affordance("set_table_cell_text", cell_table_reason.or(cell_reason)),
@@ -649,6 +677,7 @@ fn tables(
                 handle: format!("t{occurrence}:r{row_index}"),
                 cells,
                 cell_handles,
+                picture_cell_handles,
                 cell_affordances,
             });
         }
@@ -842,7 +871,7 @@ mod tests {
                 size: None,
                 layout: None,
                 image_bytes: png(),
-                placement: opensuite_protocol::ParagraphPlacement::Start,
+                placement: opensuite_protocol::ParagraphPlacement::Start.into(),
                 alt_text: Some("diagram".to_owned()),
                 base_revision: None,
             },
@@ -1080,7 +1109,7 @@ mod tests {
         let source = source(
             "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:del><w:r><w:delText>old</w:delText></w:r></w:del><w:ins><w:r><w:t>new</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
         );
-        let result = tables(&source, DocxDocument::new(&source).unwrap(), 0, 1);
+        let result = tables(&source, DocxDocument::new(&source).unwrap(), 0, 1, 0);
         let Some(InspectDocxContent::Tables(tables)) = result.content else {
             panic!("expected tables")
         };
@@ -1152,7 +1181,7 @@ mod tests {
             .join("../../tests/fixtures/google-docs-table.docx");
         let package = Package::open(fixture).unwrap();
         let (main, source) = crate::open_main_source(&package).unwrap();
-        let result = tables(&source, DocxDocument::new(&source).unwrap(), 0, 1);
+        let result = tables(&source, DocxDocument::new(&source).unwrap(), 0, 1, 0);
         let Some(InspectDocxContent::Tables(tables)) = result.content else {
             panic!("expected tables")
         };

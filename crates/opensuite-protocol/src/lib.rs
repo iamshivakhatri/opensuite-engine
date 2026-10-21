@@ -1203,11 +1203,11 @@ pub struct SetPictureSize {
     pub base_revision: Option<String>,
 }
 
-/// Inserts one inline or floating PNG/JPEG in a dedicated main-body paragraph.
+/// Inserts a PNG/JPEG in a dedicated paragraph. Body pictures may float; cell pictures are inline.
 /// The engine determines the format and dimensions from the supplied bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InsertPicture {
-    /// Fit within declared section page/column bounds without upscaling.
+    /// Fit within declared section or cell bounds without upscaling.
     /// Inline only; cannot be combined with explicit size.
     pub auto_fit: bool,
     /// Alignment of the dedicated inline picture paragraph: left, center, or right.
@@ -1215,9 +1215,32 @@ pub struct InsertPicture {
     pub size: Option<PictureSizeChange>,
     pub layout: Option<PictureLayoutPatch>,
     pub image_bytes: Vec<u8>,
-    pub placement: ParagraphPlacement,
+    pub placement: PicturePlacement,
     pub alt_text: Option<String>,
     pub base_revision: Option<String>,
+}
+
+/// Body placement retains the existing paragraph placement semantics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PicturePlacement {
+    Body(ParagraphPlacement),
+    TableCell {
+        /// Fresh picture_cell_handles entry from table inspection.
+        handle: String,
+        position: CellPicturePosition,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CellPicturePosition {
+    Start,
+    End,
+}
+
+impl From<ParagraphPlacement> for PicturePlacement {
+    fn from(value: ParagraphPlacement) -> Self {
+        Self::Body(value)
+    }
 }
 
 /// Drawing units are English Metric Units (EMU): 914,400 per inch.
@@ -1575,6 +1598,8 @@ pub struct DocxTableRow {
     pub handle: String,
     pub cells: Vec<String>,
     pub cell_handles: Vec<String>,
+    /// Source-stamped handles for picture insertion, in column order; empty for wrapped tables.
+    pub picture_cell_handles: Vec<String>,
     pub cell_affordances: Vec<Vec<Affordance>>,
 }
 

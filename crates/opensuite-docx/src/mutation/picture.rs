@@ -1,7 +1,8 @@
+mod cell;
 mod inline;
 mod layout;
 use super::*;
-use inline::{automatic_extent, picture_fragment_for_body};
+use inline::{automatic_extent, picture_fragment};
 pub use layout::set_picture_layout_to_vec;
 use layout::{anchored_fragment, sized_extent};
 
@@ -16,7 +17,9 @@ pub(super) const JPEG_CONTENT_TYPE: &str = "image/jpeg";
 pub(super) struct InsertedPictureVerification<'a> {
     layout: Option<&'a opensuite_protocol::PictureLayoutPatch>,
     alignment: Option<opensuite_protocol::ParagraphAlignment>,
-    index: usize,
+    paragraph_start: usize,
+    container_start: usize,
+    document_xml: &'a [u8],
     picture_id: u32,
     width_emu: i64,
     height_emu: i64,
@@ -58,12 +61,23 @@ pub fn insert_picture_to_vec(
             "automatic fit requires inline layout and no explicit size; paragraph alignment requires inline layout",
         ));
     }
-    let placement = resolve_paragraph_placement(source, &operation.placement)?;
-    let (body, blocks) = direct_body_blocks(source)?;
-    let index = placement_index(&blocks, placement)?;
-    let insertion = body_insertion(source, body, &blocks, index)?;
+    let (container, insertion, cell) = match &operation.placement {
+        opensuite_protocol::PicturePlacement::Body(placement) => {
+            let placement = resolve_paragraph_placement(source, placement)?;
+            let (body, blocks) = direct_body_blocks(source)?;
+            let index = placement_index(&blocks, placement)?;
+            (body, body_insertion(source, body, &blocks, index)?, None)
+        }
+        opensuite_protocol::PicturePlacement::TableCell { handle, position } => {
+            if operation.layout.is_some() {
+                return Err(unsupported("table-cell pictures require inline layout"));
+            }
+            let cell = cell::resolve_insertion(package, main, source, handle, *position)?;
+            (cell.cell, cell.insertion, Some(cell))
+        }
+    };
     let (width_emu, height_emu) = if operation.auto_fit {
-        automatic_extent(package, main, source, insertion, original)?
+        automatic_extent(package, main, source, insertion, original, cell.as_ref())?
     } else {
         let size = operation.size.or_else(|| {
             (original.0 > MAX_INLINE_PICTURE_WIDTH_EMU).then_some(
@@ -76,9 +90,9 @@ pub fn insert_picture_to_vec(
     let (relationships_name, relationships_exist, relationships, relationship_id) =
         picture_relationships(package, main)?;
     let picture_id = next_picture_id(source)?;
-    let fragment = picture_fragment_for_body(
+    let fragment = picture_fragment(
         source,
-        body,
+        container,
         (width_emu, height_emu),
         picture_id,
         &relationship_id,
@@ -159,7 +173,9 @@ pub fn insert_picture_to_vec(
             InsertedPictureVerification {
                 layout: operation.layout.as_ref(),
                 alignment: operation.alignment,
-                index,
+                paragraph_start: insertion,
+                container_start: source.node(container).expect("container").span().start,
+                document_xml: &document,
                 picture_id,
                 width_emu,
                 height_emu,
@@ -175,7 +191,9 @@ pub fn insert_picture_to_vec(
         InsertedPictureVerification {
             layout: operation.layout.as_ref(),
             alignment: operation.alignment,
-            index,
+            paragraph_start: insertion,
+            container_start: source.node(container).expect("container").span().start,
+            document_xml: &document,
             picture_id,
             width_emu,
             height_emu,
@@ -405,16 +423,23 @@ pub fn delete_picture_to_vec(
             "delete_picture requires one simple picture drawing",
         ));
     }
-    let keep_paragraph = source.children(paragraph).any(|id| word(source, id, "pPr"));
+    let keep_paragraph = source.children(paragraph).any(|id| word(source, id, "pPr"))
+        || source
+            .node(paragraph)
+            .and_then(|node| node.parent())
+            .is_some_and(|parent| word(source, parent, "tc"));
     let before = body_texts(source)?;
-    let index = before
+    let mut expected = before
         .iter()
-        .position(|(id, _)| *id == paragraph)
-        .ok_or_else(|| {
-            OperationResult::failed("TARGET_NOT_FOUND", "picture paragraph was not found")
-        })?;
-    let mut expected = before.into_iter().map(|(_, text)| text).collect::<Vec<_>>();
+        .map(|(_, text)| text.clone())
+        .collect::<Vec<_>>();
     if !keep_paragraph {
+        let index = before
+            .iter()
+            .position(|(id, _)| *id == paragraph)
+            .ok_or_else(|| {
+                OperationResult::failed("TARGET_NOT_FOUND", "picture paragraph was not found")
+            })?;
         expected.remove(index);
     }
     let removed = if keep_paragraph { drawing } else { paragraph };
@@ -897,7 +922,6 @@ pub(super) fn verify_inserted_picture_bytes(
     output: &[u8],
     expected: &InsertedPictureVerification<'_>,
 ) -> Result<(), OperationResult> {
-    let expected_index = expected.index;
     let picture_id = expected.picture_id;
     let width_emu = expected.width_emu;
     let height_emu = expected.height_emu;
@@ -906,20 +930,25 @@ pub(super) fn verify_inserted_picture_bytes(
     let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
     let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
-    let (_, blocks) = direct_body_blocks(&source)?;
-    let paragraph = blocks.get(expected_index).ok_or_else(|| {
-        OperationResult::failed(
-            "DOCUMENT_INVALID",
-            "inserted picture paragraph was not found",
-        )
-    })?;
-    if !word(&source, *paragraph, "p") {
-        return Err(OperationResult::failed(
-            "DOCUMENT_INVALID",
-            "picture is not at the requested body position",
+    if source.original_bytes() != expected.document_xml {
+        return Err(document_invalid(
+            "picture insertion changed unrelated source",
         ));
     }
-    let properties = sections::section_child(&source, *paragraph, "pPr")?;
+    let paragraph = source
+        .node_ids()
+        .find(|id| {
+            word(&source, *id, "p")
+                && source.node(*id).is_some_and(|node| {
+                    node.span().start == expected.paragraph_start
+                        && node
+                            .parent()
+                            .and_then(|id| source.node(id))
+                            .is_some_and(|parent| parent.span().start == expected.container_start)
+                })
+        })
+        .ok_or_else(|| document_invalid("picture is not at the requested body or cell position"))?;
+    let properties = sections::section_child(&source, paragraph, "pPr")?;
     let alignment = properties
         .map(|id| sections::section_child(&source, id, "jc"))
         .transpose()?

@@ -15,7 +15,7 @@ fn operation(width: u32, height: u32) -> InsertPicture {
         size: None,
         layout: None,
         image_bytes: png(width, height),
-        placement: ParagraphPlacement::End,
+        placement: ParagraphPlacement::End.into(),
         alt_text: None,
         base_revision: None,
     }
@@ -237,7 +237,7 @@ fn selects_the_section_at_each_side_of_a_section_boundary() {
         let output = insert(
             input.clone(),
             &InsertPicture {
-                placement,
+                placement: placement.into(),
                 ..operation(4000, 1000)
             },
         );

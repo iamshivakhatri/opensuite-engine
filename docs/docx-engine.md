@@ -59,10 +59,15 @@ the next native release.
   size, common wrapping and positioning, and preservation-aware layout patches.
   Inline insertion optionally fits the insertion section's declared page/column
   bounds without upscaling and aligns left/center/right on the picture paragraph.
-  Fitting accounts for margins and resolved default paragraph indents/spacing;
-  explicit sizes retain their existing semantics. Picture deletion preserves any
-  owning paragraph properties, including section boundaries.
-  See [E1 image layout](e1-image-layout.md).
+  Insertion also targets fresh source-stamped table-cell handles, adding an inline
+  paragraph at the cell start/end while preserving existing text and properties.
+  Cell autoFit uses declared grid/cell widths, cell/table margins, section bounds,
+  and default paragraph spacing/indents without upscaling. Ambiguous geometry,
+  merged/nested structures, and cell floating layout fail safely; styled tables
+  and exact-height rows require explicit sizing. Explicit sizes retain their
+  existing semantics. Picture deletion preserves owning paragraph properties,
+  including section boundaries, and keeps cell paragraphs.
+  See [native image layout and cell insertion](e1-image-layout.md).
 - Page breaks and real section boundaries (next/continuous/odd/even page),
   independent section page setup, first-page behavior, numbering restart/continue,
   default/first/even simple headers/footers and PAGE fields, and link/unlink.

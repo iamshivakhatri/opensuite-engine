@@ -6,19 +6,17 @@ use opensuite_docx::{
     execute_docx_replace_picture, execute_docx_set_picture_layout, execute_docx_set_picture_size,
 };
 use opensuite_protocol::{
-    DeletePicture, ImageAlignment, ImageAxisPosition, ImagePayload, ImagePosition,
-    ImagePositionReference, ImageTextDistance, ImageWrap, InsertPicture, OperationResult,
-    ParagraphPlacement, PictureLayoutPatch, PictureSizeChange, PictureTarget, ReplacePicture,
-    SetPictureLayout, SetPictureSize,
+    CellPicturePosition, DeletePicture, ImageAlignment, ImageAxisPosition, ImagePayload,
+    ImagePosition, ImagePositionReference, ImageTextDistance, ImageWrap, InsertPicture,
+    OperationResult, ParagraphPlacement, PictureLayoutPatch, PicturePlacement, PictureSizeChange,
+    PictureTarget, ReplacePicture, SetPictureLayout, SetPictureSize,
 };
 
-use crate::{
-    ExecuteDocxReplaceTextOutput, ParagraphPlacementInput, SimpleTask, operation_result_output,
-};
+use crate::{ExecuteDocxReplaceTextOutput, SimpleTask, operation_result_output};
 
 #[napi(object)]
 pub struct InsertPictureInput {
-    /// Fit inline images to declared section page/column bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout.
+    /// Fit inline images to declared section or cell bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout.
     pub auto_fit: Option<bool>,
     /// Align the dedicated inline picture paragraph, including paragraphs with no text.
     /// @schema {"enum":["left","center","right"]}
@@ -27,7 +25,7 @@ pub struct InsertPictureInput {
     pub height_emu: Option<i64>,
     pub layout: Option<PictureLayoutInput>,
     pub image_bytes: Buffer,
-    pub placement: ParagraphPlacementInput,
+    pub placement: PicturePlacementInput,
     pub alt_text: Option<String>,
     pub base_revision: Option<String>,
 }
@@ -205,22 +203,54 @@ fn picture_target(handle: String) -> PictureTarget {
     }
 }
 
+#[napi(object)]
+/// @schema {"oneOf":[{"properties":{"kind":{"enum":["start","end"]}},"not":{"required":["position"]}},{"properties":{"kind":{"enum":["before","after"]}},"required":["handle"],"not":{"required":["position"]}},{"properties":{"kind":{"const":"tableCell"}},"required":["handle"]}]}
+pub struct PicturePlacementInput {
+    /// Existing body placements or a dedicated paragraph inside a table cell.
+    /// @schema {"enum":["start","end","before","after","tableCell"]}
+    pub kind: String,
+    /// For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles.
+    pub handle: Option<String>,
+    /// Only for tableCell. Defaults to end; existing paragraphs remain unchanged.
+    /// @schema {"enum":["start","end"]}
+    pub position: Option<String>,
+}
+
 fn picture_placement(
-    input: ParagraphPlacementInput,
-) -> std::result::Result<ParagraphPlacement, &'static str> {
-    match input.kind.as_str() {
-        "start" => Ok(ParagraphPlacement::Start),
-        "end" => Ok(ParagraphPlacement::End),
-        "before" => input
-            .handle
-            .map(|handle| ParagraphPlacement::Before { handle })
-            .ok_or("before placement requires a body block handle"),
-        "after" => input
-            .handle
-            .map(|handle| ParagraphPlacement::After { handle })
-            .ok_or("after placement requires a body block handle"),
-        _ => Err("picture placement is not supported"),
+    input: PicturePlacementInput,
+) -> std::result::Result<PicturePlacement, &'static str> {
+    if input.kind == "tableCell" {
+        let position = match input.position.as_deref().unwrap_or("end") {
+            "start" => CellPicturePosition::Start,
+            "end" => CellPicturePosition::End,
+            _ => return Err("cell picture position must be start or end"),
+        };
+        return Ok(PicturePlacement::TableCell {
+            handle: input
+                .handle
+                .ok_or("tableCell placement requires a fresh pictureCellHandles entry")?,
+            position,
+        });
     }
+    if input.position.is_some() {
+        return Err("position is only supported for tableCell placement");
+    }
+    let body = match input.kind.as_str() {
+        "start" => ParagraphPlacement::Start,
+        "end" => ParagraphPlacement::End,
+        "before" => ParagraphPlacement::Before {
+            handle: input
+                .handle
+                .ok_or("before placement requires a body block handle")?,
+        },
+        "after" => ParagraphPlacement::After {
+            handle: input
+                .handle
+                .ok_or("after placement requires a body block handle")?,
+        },
+        _ => return Err("picture placement is not supported"),
+    };
+    Ok(body.into())
 }
 
 fn picture_size(

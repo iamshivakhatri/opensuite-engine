@@ -460,7 +460,7 @@ export interface InsertParagraphsInput {
 }
 
 export interface InsertPictureInput {
-  /** Fit inline images to declared section page/column bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout. */
+  /** Fit inline images to declared section or cell bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout. */
   autoFit?: boolean
   /**
    * Align the dedicated inline picture paragraph, including paragraphs with no text.
@@ -471,7 +471,7 @@ export interface InsertPictureInput {
   heightEmu?: number
   layout?: PictureLayoutInput
   imageBytes: Buffer
-  placement: ParagraphPlacementInput
+  placement: PicturePlacementInput
   altText?: string
   baseRevision?: string
 }
@@ -714,6 +714,22 @@ export interface PictureOutput {
   heightEmu: number
   altText?: string
   affordances: Array<AffordanceOutput>
+}
+
+/** @schema {"oneOf":[{"properties":{"kind":{"enum":["start","end"]}},"not":{"required":["position"]}},{"properties":{"kind":{"enum":["before","after"]}},"required":["handle"],"not":{"required":["position"]}},{"properties":{"kind":{"const":"tableCell"}},"required":["handle"]}]} */
+export interface PicturePlacementInput {
+  /**
+   * Existing body placements or a dedicated paragraph inside a table cell.
+   * @schema {"enum":["start","end","before","after","tableCell"]}
+   */
+  kind: string
+  /** For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles. */
+  handle?: string
+  /**
+   * Only for tableCell. Defaults to end; existing paragraphs remain unchanged.
+   * @schema {"enum":["start","end"]}
+   */
+  position?: string
 }
 
 export interface ReplacePictureInput {
@@ -1087,6 +1103,8 @@ export interface TableRowOutput {
   handle: string
   cells: Array<string>
   cellHandles: Array<string>
+  /** Fresh cell targets for executeDocxInsertPicture. Re-inspect after every edit. */
+  pictureCellHandles: Array<string>
   cellAffordances: Array<Array<AffordanceOutput>>
 }
 

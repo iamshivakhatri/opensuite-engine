@@ -1,5 +1,35 @@
 # OpenSuite Engine Status
 
+## Table-cell pictures and native image coverage (E2, local)
+
+The existing Rust/N-API picture insertion now accepts table-cell placement through
+fresh `rows[].pictureCellHandles[]` from table inspection. It creates a dedicated
+inline paragraph at cell start/end (default end), preserving populated/multiple
+paragraphs and cell/table properties. Alignment, exact/proportional sizing,
+media/relationships, image inspection, replacement, resizing, and deletion reuse
+the existing picture system. Cell deletion keeps a valid paragraph. Existing body
+inputs are unchanged; generated schemas/declarations include the new placement.
+
+Cell autoFit uses explicit grid widths, agreeing absolute cell/table widths,
+cell-over-table margins, section bounds, and resolved default paragraph spacing
+and indents. It preserves aspect ratio and never upscales. Missing, conflicting,
+percentage, inherited table-style, fixed-row-height, or other ambiguous geometry
+fails safely. Merged/nested tables, wrapped cells, protected boundaries, stale
+handles, and floating cell insertion are refused. See the supported/refused list
+and native example in [image layout](e1-image-layout.md#e2-table-cell-picture-insertion).
+
+207 DOCX / 20 OPC / 4 protocol / 3 Node Rust and 43 native Node tests pass,
+including package preservation and round trips. Formatting, workspace compilation,
+strict Clippy for DOCX/OPC/protocol/Node/CLI, generated SDK schemas/type checks,
+and diff checks pass. Five temporary LibreOffice PDF renders (cells, combined,
+wide, tall, logo) produced six pages;
+every page was visually inspected. Cell text and picture borders stay inside the
+table. The mixed imported/native fixture preserves unfamiliar drawing XML and
+original unrelated parts. Page-relative floats can occupy page edges/margins;
+there is no collision-free placement guarantee. Word/Google Docs review, richer
+table fitting, and header/footer image authoring remain pending. E2 is engine-only;
+no application TypeScript, version/pin, publication, or push changes.
+
 ## Safe automatic inline images (Phase A1, local)
 
 Existing Rust/N-API picture insertion now accepts optional section-aware

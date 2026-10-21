@@ -185,7 +185,13 @@ pub(crate) fn section_fingerprint(
     let (_, relationships) = relationship_xml(package, main)?;
     add(&relationships);
     let mut names = std::collections::BTreeSet::new();
-    for rel in package.part_relationships(main).map_err(package_failure)? {
+    let relationships = match package.part_relationships(main) {
+        Ok(relationships) => relationships,
+        // A document with no related parts can legally omit its relationships part.
+        Err(PackageError::MissingPartRelationships(_)) => Vec::new(),
+        Err(error) => return Err(package_failure(error)),
+    };
+    for rel in relationships {
         if ["/header", "/footer", "/settings"]
             .iter()
             .any(|suffix| rel.relationship_type.as_str().ends_with(suffix))

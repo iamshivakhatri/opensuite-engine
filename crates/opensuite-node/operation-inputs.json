@@ -902,7 +902,7 @@
       "properties": {
         "autoFit": {
           "type": "boolean",
-          "description": "Fit inline images to declared section page/column bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout."
+          "description": "Fit inline images to declared section or cell bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout."
         },
         "alignment": {
           "type": "string",
@@ -1070,19 +1070,73 @@
                 "start",
                 "end",
                 "before",
-                "after"
+                "after",
+                "tableCell"
               ],
-              "description": "start/end need no handle; before/after need an inspected body_blocks handle."
+              "description": "Existing body placements or a dedicated paragraph inside a table cell."
             },
             "handle": {
               "type": "string",
-              "description": "Omit for start/end. Required for before/after; copy from the latest relevant document.inspect."
+              "description": "For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles."
+            },
+            "position": {
+              "type": "string",
+              "enum": [
+                "start",
+                "end"
+              ],
+              "description": "Only for tableCell. Defaults to end; existing paragraphs remain unchanged."
             }
           },
           "required": [
             "kind"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "start",
+                    "end"
+                  ]
+                }
+              },
+              "not": {
+                "required": [
+                  "position"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "before",
+                    "after"
+                  ]
+                }
+              },
+              "required": [
+                "handle"
+              ],
+              "not": {
+                "required": [
+                  "position"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "tableCell"
+                }
+              },
+              "required": [
+                "handle"
+              ]
+            }
+          ]
         },
         "altText": {
           "type": "string"

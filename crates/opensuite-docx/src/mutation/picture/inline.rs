@@ -1,8 +1,8 @@
 use super::*;
 
-pub(super) fn picture_fragment_for_body(
+pub(super) fn picture_fragment(
     source: &SourceDocument,
-    body: NodeId,
+    container: NodeId,
     extent: (i64, i64),
     picture_id: u32,
     relationship_id: &str,
@@ -10,7 +10,15 @@ pub(super) fn picture_fragment_for_body(
     alignment: Option<opensuite_protocol::ParagraphAlignment>,
 ) -> Result<Vec<u8>, OperationResult> {
     let (width_emu, height_emu) = extent;
-    let prefix = word_prefix_for(source, body, "body")?;
+    let prefix = word_prefix_for(
+        source,
+        container,
+        if word(source, container, "tc") {
+            "tc"
+        } else {
+            "body"
+        },
+    )?;
     let name = |local: &str| qualify(&prefix, local);
     let description = alt_text
         .filter(|value| !value.is_empty())
@@ -51,6 +59,7 @@ pub(super) fn automatic_extent(
     source: &SourceDocument,
     insertion: usize,
     original: (i64, i64),
+    cell: Option<&cell::CellInsertion>,
 ) -> Result<(i64, i64), OperationResult> {
     let invalid = || {
         OperationResult::failed(
@@ -163,6 +172,9 @@ pub(super) fn automatic_extent(
             };
             width = (width - (count - 1) * spacing) / count;
         }
+    }
+    if let Some(cell) = cell {
+        (width, height) = cell::fit_bounds(package, main, source, cell, (width, height))?;
     }
     // New image paragraphs inherit document defaults, not the adjacent paragraph.
     // Deduct only reliably resolved indents; negative/hanging indents never widen the bound.

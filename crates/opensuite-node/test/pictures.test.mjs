@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import binding from '../index.js'
-import { deflateSync } from 'node:zlib'
+import { image, documentXml } from './picture-support.mjs'
 import { spawnSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 
@@ -57,36 +57,6 @@ test('returns a structured picture failure', async () => {
   assert.equal(result.output, undefined)
 })
 
-// Valid, deterministic PNGs keep the same fixtures usable in external renderers.
-function image(width, height) {
-  function chunk(type, data) {
-    const content = Buffer.concat([Buffer.from(type), data])
-    let crc = 0xffffffff
-    for (const byte of content) {
-      crc ^= byte
-      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0)
-    }
-    const result = Buffer.alloc(data.length + 12)
-    result.writeUInt32BE(data.length); content.copy(result, 4); result.writeUInt32BE((crc ^ 0xffffffff) >>> 0, result.length - 4)
-    return result
-  }
-  const header = Buffer.alloc(13)
-  header.writeUInt32BE(width); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 2
-  const pixels = Buffer.alloc((width * 3 + 1) * height)
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    const offset = y * (width * 3 + 1) + 1 + x * 3
-    const edge = x < 8 || y < 8 || x >= width - 8 || y >= height - 8
-    pixels[offset] = edge ? 20 : 60 + Math.floor(x / width * 100)
-    pixels[offset + 1] = edge ? 40 : 100 + Math.floor(y / height * 100)
-    pixels[offset + 2] = edge ? 60 : 210
-  }
-  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))])
-}
-function documentXml(bytes) {
-  const result = spawnSync('python3', ['-c', 'import io,sys,zipfile; sys.stdout.buffer.write(zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())).read("word/document.xml"))'], { input: bytes })
-  assert.equal(result.status, 0, result.stderr.toString())
-  return result.stdout.toString()
-}
 function fixture(bytes, mode) {
   const result = spawnSync('python3', ['-c', `
 import io,sys,zipfile

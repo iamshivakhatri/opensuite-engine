@@ -1509,7 +1509,7 @@ fn insert_picture(
             size: None,
             layout: None,
             image_bytes,
-            placement,
+            placement: placement.into(),
             alt_text,
             base_revision: None,
         },

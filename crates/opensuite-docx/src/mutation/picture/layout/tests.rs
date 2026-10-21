@@ -42,7 +42,7 @@ fn seed(floating: bool) -> Vec<u8> {
             auto_fit: false,
             alignment: None,
             image_bytes: png,
-            placement: ParagraphPlacement::End,
+            placement: ParagraphPlacement::End.into(),
             size: Some(PictureSizeChange::WidthEmu(914_400)),
             layout: floating.then(layout),
             alt_text: Some("Preserve me".into()),
@@ -477,7 +477,7 @@ fn automatic_inline_insertion_preserves_existing_inline_and_floating_drawings() 
         bytes,
         &InsertPicture {
             image_bytes: png(2, 1),
-            placement: ParagraphPlacement::End,
+            placement: ParagraphPlacement::End.into(),
             size: Some(PictureSizeChange::WidthEmu(914_400)),
             layout: Some(layout()),
             auto_fit: false,
@@ -501,7 +501,7 @@ fn automatic_inline_insertion_preserves_existing_inline_and_floating_drawings() 
         bytes.clone(),
         &InsertPicture {
             image_bytes: png(2000, 1000),
-            placement: ParagraphPlacement::Start,
+            placement: ParagraphPlacement::Start.into(),
             size: None,
             layout: None,
             auto_fit: true,

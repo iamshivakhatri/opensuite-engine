@@ -1,4 +1,4 @@
-# E1 image positioning and layout
+# Native image positioning and layout
 
 The existing picture parser already recognizes `wp:inline` and `wp:anchor`,
 resolves images against their owning package part, and reads display extents.
@@ -8,7 +8,7 @@ there is no second drawing parser, relationship model, dependency, or renderer.
 
 ## Typed operations and inspection
 
-- `InsertPicture` keeps its paragraph placement and media/package handling. An
+- `InsertPicture` reuses paragraph placement and media/package handling. An
   optional size accepts width, height, or both. One dimension derives the other
   with integer arithmetic. Neither retains intrinsic 96-DPI sizing, capped at
   the existing 6.5-inch default width without automatic upscaling. Explicit
@@ -68,7 +68,8 @@ Resizing patches only the drawing and picture-transform extent attributes.
 Moving patches only requested position properties, wrap, behind-text flag, or
 text-distance attributes. Unknown extensions, effects, crop, alternate text,
 IDs, anchor flags, and unrelated document/package parts stay intact.
-Deletion still removes a plain dedicated picture paragraph. When any paragraph
+Deletion removes a plain dedicated body picture paragraph. Cell picture deletion
+keeps the paragraph so a cell always retains valid paragraph content. When any paragraph
 properties exist, it removes only the drawing, keeping the paragraph/run and all
 properties, including `w:sectPr`, section boundaries, and property history.
 The shared protected-source guard permits only that selected drawing: enclosing
@@ -89,6 +90,108 @@ is reused unchanged; layout snapshots/handles and mutations remain main-part
 only. Header/footer image authoring/update needs scoped targeting and is deferred.
 There is no generic drawing editor, exact rendering, crop/effects editing, or
 branding concept in Rust. Automatic workspace logos keep their inline behavior.
+
+## E2 table-cell picture insertion
+
+The same Rust `InsertPicture` and native `executeDocxInsertPicture` now insert
+inline PNG/JPEG images into an exact cell of a direct body table. Inspection with
+`focus: { kind: "tables" }` adds `rows[].pictureCellHandles[]` (Rust
+`picture_cell_handles`), in column order. These opaque handles combine the
+existing table/row/column identity with the existing picture/section source
+fingerprint. Copy a fresh handle after every edit; legacy unstamped `cellHandles`
+are not picture insertion targets. Tables inside content controls expose an empty
+picture-handle list. Their presence does not shift a later direct table's picture
+target. Changed source or relationships invalidate prior picture-cell handles.
+
+```js
+const snapshot = await engine.inspectDocx(bytes, { focus: { kind: "tables" } });
+const handle = snapshot.tables.items[0].rows[1].pictureCellHandles[1];
+const result = await engine.executeDocxInsertPicture(bytes, {
+  imageBytes,
+  placement: { kind: "tableCell", handle, position: "end" },
+  autoFit: true,
+  alignment: "center",
+});
+if (!result.result.ok) throw new Error(JSON.stringify(result.result.diagnostics));
+bytes = result.output;
+const layout = JSON.parse(await engine.inspectDocxLayout(bytes, {}));
+// layout.images contains the existing fresh image handles and display dimensions.
+```
+
+`position` is `start` or `end` (default `end`). A dedicated picture paragraph goes
+before the first or after the last existing cell paragraph. Existing text,
+paragraphs, numbering, shading, borders, cell properties, section properties, and
+unrelated XML remain unchanged. Multiple cell paragraphs and repeated picture
+insertions are supported. Alignment and explicit sizing use the existing inline
+writer: one explicit dimension preserves aspect ratio; both specify exact size.
+Explicit sizing can upscale. Cell placement always requires inline layout;
+floating layout is refused even without autoFit. Existing body placements and
+binary input/output remain compatible. Rust callers wrap existing
+`ParagraphPlacement` with `.into()` or `PicturePlacement::Body`; cell placement is
+`PicturePlacement::TableCell { handle, position: CellPicturePosition::End }`.
+
+Cell `autoFit` uses the existing integer extent calculation, preserves the
+intrinsic aspect ratio, and never upscales. It requires one positive grid width
+per column. Every declared cell width must be absolute (`dxa`, meaning twips)
+and agree with its grid column. A declared absolute table width must agree with
+the grid sum; an omitted width or `auto` width of zero may use that explicit grid.
+The grid plus any nonnegative table indent must fit the insertion section's
+page/column width. Width is the selected column minus left/right cell margins.
+Cell margins override table margins side by side; without either, OOXML defaults
+are 108 twips left/right and zero top/bottom. Vertical margins reduce the existing
+full-section height bound. Resolved default paragraph indents and before/after
+spacing are then deducted by the existing section fitter. This does not estimate
+remaining page space or remaining height beside existing cell text.
+
+Supported structures are simple rectangular direct body tables with ordinary
+rows/cells and one or more direct paragraphs in the selected cell. Merges
+(`gridSpan`, `vMerge`, or legacy `hMerge`), nested tables, omitted grid cells,
+wrapped rows/cells, tracked table property changes, and protected insertion
+boundaries are refused. AutoFit additionally refuses missing/duplicate/invalid
+geometry, conflicting or percentage widths, table styles (including an inherited
+default table style), floating or bidirectional tables, logical start/end margins,
+nonzero cell spacing, vertical text, no-wrap/fit-text cells, row property exceptions,
+and exact-height rows. A fixed row's remaining height depends on its existing
+content. These cases return `INVALID_CELL_GEOMETRY`; unsupported structure and
+stale-target failures retain the existing structured diagnostic convention.
+Explicit sizing needs no cell-width calculation, but still applies structural,
+source-handle, and protection guards.
+
+All images reuse the existing media allocator, relationship writer, XML generator,
+layout inspector, replacement, resize, and deletion operations. Reopen verification
+checks the exact output main XML, insertion paragraph and owning cell, dimensions,
+alignment, embedded payload, and requested layout. Cell deletion removes only the
+drawing and keeps its paragraph. No new binary insertion export or image engine.
+
+### E2 verification and limits
+
+The focused Rust cell tests and native `test/cell-pictures.test.mjs` generate their
+DOCX inputs in memory. They cover populated/multi-paragraph cells, separate and
+repeated cell insertion, start/end order, margins/defaults, no upscaling, explicit
+sizes, replacement, proportional resizing, deletion, media relationships, source
+preservation, stale/invalid targets, wrapped-table indexing, and refused geometry.
+Existing image tests cover portrait/landscape/section/column bounds, tall images,
+all four wraps, supported position references, imported layout mutation, and
+section-preserving deletion. The combined native fixture retains an imported
+LibreOffice drawing with an unfamiliar extension byte for byte through edits;
+its other original package payloads are preserved.
+
+Native tests regenerate `/private/tmp/opensuite-e2-cells.docx` and
+`/private/tmp/opensuite-e2-combined.docx`, alongside the existing A1 samples.
+LibreOffice rendered cells, combined, wide, tall, and logo fixtures into
+`/private/tmp/opensuite-e2-render/`: six pages across five PDFs. All pages were
+visually reviewed. The cell fixture retains its captions, alignment, and image
+borders inside the table. The combined fixture opens over two pages; page-relative
+floating images appear at declared page edges, including the top margin. This is
+renderer evidence for these fixtures, not a guarantee of collision-free floating
+placement. No permanent binary fixtures or paid models were added.
+
+Before E3, remaining image gaps include header/footer authoring, floating cell
+insertion, merged/nested or styled-table automatic fitting, inline/floating
+conversion, exact remaining-page/cell-space fitting, and collision detection.
+Existing format/wrapping/crop/effect limits remain. Word and Google Docs review
+of E2 outputs is still pending. No application TypeScript, version/pin, publication,
+or push changes are included.
 
 ## Bridge and product
 

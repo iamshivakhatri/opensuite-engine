@@ -513,6 +513,8 @@ pub struct TableRowOutput {
     pub handle: String,
     pub cells: Vec<String>,
     pub cell_handles: Vec<String>,
+    /// Fresh cell targets for executeDocxInsertPicture. Re-inspect after every edit.
+    pub picture_cell_handles: Vec<String>,
     pub cell_affordances: Vec<Vec<AffordanceOutput>>,
 }
 
@@ -1849,11 +1851,13 @@ fn table_output(value: DocxTable) -> TableOutput {
                      handle,
                      cells,
                      cell_handles,
+                     picture_cell_handles,
                      cell_affordances,
                  }| TableRowOutput {
                     handle,
                     cells,
                     cell_handles,
+                    picture_cell_handles,
                     cell_affordances: cell_affordances
                         .into_iter()
                         .map(|values| values.into_iter().map(affordance_output).collect())

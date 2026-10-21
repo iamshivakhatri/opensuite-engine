@@ -250,7 +250,12 @@ pub fn execute_docx_insert_picture(
             operation: structured_failure(
                 error,
                 "insert_picture",
-                placement_handle(&operation.placement),
+                match &operation.placement {
+                    opensuite_protocol::PicturePlacement::Body(placement) => {
+                        placement_handle(placement)
+                    }
+                    opensuite_protocol::PicturePlacement::TableCell { handle, .. } => Some(handle),
+                },
             ),
             output_artifact: None,
         },
