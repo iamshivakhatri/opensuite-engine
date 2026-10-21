@@ -1,5 +1,37 @@
 # OpenSuite Engine Status
 
+## Header/footer pictures and embedded image access (E3, local)
+
+The existing picture insertion accepts fresh section handles and explicit
+header/footer default/first/even variants. It appends inline paragraphs without
+rewriting existing text, formatting, PAGE fields or drawings. Missing parts reuse
+the section creation path; shared/inherited parts, inactive variants, floating
+layout, rich root containers and unsafe geometry fail safely. Header/footer
+fitting uses page side margins and header/footer distance, preserves proportions,
+and avoids upscaling by default. Existing body/cell inputs are unchanged.
+
+Rust/N-API `inspect_docx_images` / `inspectDocxImages` supplies bounded image facts
+and source-validated retrieval handles across body, cells and header/footer parts.
+`read_docx_embedded_image` / `readDocxEmbeddedImage` returns original PNG/JPEG
+bytes, with 20 MiB / 64-million-pixel bounds. It validates local XML, relationships
+and selected media without changing the document or reading unrelated media.
+Shared media reads are supported; linked, stale, ambiguous, malformed and
+unsupported inputs are refused. Binary reads are explicitly backend-only and
+excluded from JSON inputs; generated SDK types, schemas and inventory are updated.
+
+217 DOCX / 20 OPC / 4 protocol / 3 Node Rust and 51 native Node tests pass,
+including all E1/E2 regressions, preservation, malformed cases, ownership and
+save/reopen. Workspace compilation, formatting, strict release-crate/CLI Clippy,
+SDK/schema checks and diff checks pass. Four final temporary LibreOffice renders
+produced seven visually inspected pages covering variants, page numbers,
+formatting, separate sections and an imported float. LibreOffice omitted an even
+header when the fixture lacked an explicit even footer; the complete variant
+fixture rendered all logos. Word/Google Docs E3 review is untested. Header/footer
+resize/replace/delete and floating authoring remain deferred. Exact later app
+integration and boundaries are in [native image behavior](e1-image-layout.md#e3-headerfooter-insertion-and-embedded-image-access).
+E3 is engine-only: no application changes, model calls, publish, version/pin
+updates, or push.
+
 ## Table-cell pictures and native image coverage (E2, local)
 
 The existing Rust/N-API picture insertion now accepts table-cell placement through
@@ -27,7 +59,7 @@ every page was visually inspected. Cell text and picture borders stay inside the
 table. The mixed imported/native fixture preserves unfamiliar drawing XML and
 original unrelated parts. Page-relative floats can occupy page edges/margins;
 there is no collision-free placement guarantee. Word/Google Docs review, richer
-table fitting, and header/footer image authoring remain pending. E2 is engine-only;
+table fitting, and richer header/footer image editing remain pending. E2 is engine-only;
 no application TypeScript, version/pin, publication, or push changes.
 
 ## Safe automatic inline images (Phase A1, local)

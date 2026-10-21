@@ -1071,13 +1071,24 @@
                 "end",
                 "before",
                 "after",
-                "tableCell"
+                "tableCell",
+                "header",
+                "footer"
               ],
-              "description": "Existing body placements or a dedicated paragraph inside a table cell."
+              "description": "Body, table cell, or an explicitly selected header/footer. Shared/inherited parts are refused."
+            },
+            "variant": {
+              "type": "string",
+              "enum": [
+                "default",
+                "first",
+                "even"
+              ],
+              "description": "Only for header/footer; must be explicit. Enable first/even page behavior separately."
             },
             "handle": {
               "type": "string",
-              "description": "For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles."
+              "description": "For header/footer use a fresh section handle. For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles."
             },
             "position": {
               "type": "string",
@@ -1103,8 +1114,17 @@
                 }
               },
               "not": {
-                "required": [
-                  "position"
+                "anyOf": [
+                  {
+                    "required": [
+                      "position"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "variant"
+                    ]
+                  }
                 ]
               }
             },
@@ -1121,8 +1141,17 @@
                 "handle"
               ],
               "not": {
-                "required": [
-                  "position"
+                "anyOf": [
+                  {
+                    "required": [
+                      "position"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "variant"
+                    ]
+                  }
                 ]
               }
             },
@@ -1134,7 +1163,31 @@
               },
               "required": [
                 "handle"
-              ]
+              ],
+              "not": {
+                "required": [
+                  "variant"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "header",
+                    "footer"
+                  ]
+                }
+              },
+              "required": [
+                "handle",
+                "variant"
+              ],
+              "not": {
+                "required": [
+                  "position"
+                ]
+              }
             }
           ]
         },
@@ -3464,6 +3517,28 @@
     "jsonInput": true,
     "jsonOutput": true
   },
+  "inspectDocxImages": {
+    "description": "Inspect embedded images in body, cells, and header/footer parts. Default 20, maximum 100. Includes source-validated retrieval handles, format, intrinsic/display dimensions, alt text, ownership, layout and refusal diagnostics. No binary data in JSON.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "jsonInput": true,
+    "jsonOutput": true
+  },
   "inspectDocxLayout": {
     "description": "Inspect structural section geometry, explicit pagination controls, table/image dimensions, floating-image positions/wrap, fresh image handles, and width warnings. No automatic page positions. Default returns summaries; blockLimit (0–100) and blockOffset request details; sectionIndex selects a zero-based section.",
     "inputSchema": {
@@ -3556,5 +3631,24 @@
     },
     "jsonInput": true,
     "jsonOutput": true
+  },
+  "readDocxEmbeddedImage": {
+    "description": "Backend-only read of original embedded PNG/JPEG bytes (20 MiB / 64 million pixels maximum). Never register as a model-callable tool. Returns structured diagnostics and no imageBytes on failure; does not change the DOCX.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "description": "Fresh handle from inspectDocxImages. Body/layout picture handles are not accepted."
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "jsonInput": false,
+    "jsonOutput": false,
+    "backendOnly": true
   }
 }

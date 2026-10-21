@@ -19,7 +19,8 @@ N-API compiler type records generate TypeScript declarations and JSON schemas;
 Rust field comments supply descriptions and extra restrictions. Native metadata
 returns these embedded schemas and a JSON/binary input flag. The product uses
 these definitions for mutation tools and automatic dynamic discovery. Read tools also consume generated inputs; native metadata explicitly marks
-JSON-encoded read output. These contracts are published in engine 0.1.7. All five platform builds and the
+JSON-encoded read output. E3 also marks binary retrieval `backendOnly`, excluding
+it from JSON tool inputs. These contracts are published in engine 0.1.7. All five platform builds and the
 clean npm consumer check pass.
 
 Phase 3 local targeting: copy search `target` or inspection `textTarget` for text
@@ -67,7 +68,14 @@ the next native release.
   and exact-height rows require explicit sizing. Explicit sizes retain their
   existing semantics. Picture deletion preserves owning paragraph properties,
   including section boundaries, and keeps cell paragraphs.
-  See [native image layout and cell insertion](e1-image-layout.md).
+  Inline header/footer insertion targets fresh section handles and explicit
+  default/first/even variants, safely creates missing parts, preserves existing
+  content, and refuses shared/inherited parts. It fits to header/footer margin
+  geometry by default. Read-only image inspection covers body, cells and
+  header/footer parts; backend-only binary retrieval returns original PNG/JPEG
+  bytes through source-validated handles with size limits. Rich/linked/ambiguous
+  images fail safely. Header/footer image updates and floating authoring remain
+  deferred. See [native image behavior and integration](e1-image-layout.md).
 - Page breaks and real section boundaries (next/continuous/odd/even page),
   independent section page setup, first-page behavior, numbering restart/continue,
   default/first/even simple headers/footers and PAGE fields, and link/unlink.

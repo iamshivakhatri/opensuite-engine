@@ -96,3 +96,43 @@ export interface NoteSummary { kind: 'footnote' | 'endnote'; id: number | null; 
 export interface NoteSettings { kind: 'footnote' | 'endnote'; partName: string; sectionIndex: number | null; numberFormat: string | null; restart: string | null; position: string | null; start: string | null }
 
 export interface NoteInspection { ok: boolean; notes: NoteSummary[]; total: number; footnoteCount: number; endnoteCount: number; unsupportedCount: number; offset: number; hasMore: boolean; settings: NoteSettings[]; diagnostics: Array<{code: string; message: string}> }
+
+export interface ImagePositionFacts {
+  reference: string | null
+  alignment: string | null
+  offsetEmu: number | null
+}
+export interface ImageAnchorFacts {
+  horizontal: ImagePositionFacts | null
+  vertical: ImagePositionFacts | null
+  wrap: string | null
+  behindText: boolean | null
+  distanceEmu: Record<string, number>
+  editable: boolean
+}
+/** Retrieval handles are separate from existing body/layout mutation handles. */
+export interface EmbeddedImageSnapshot {
+  index: number
+  partName: string
+  handle: string | null
+  format: 'png' | 'jpeg' | null
+  intrinsicWidthPx: number | null
+  intrinsicHeightPx: number | null
+  displayWidthEmu: number | null
+  displayHeightEmu: number | null
+  altText: string | null
+  kind: 'inline' | 'floating'
+  anchor: ImageAnchorFacts | null
+  relationshipId: string | null
+  mediaPartName: string | null
+  sizeBytes: number | null
+  diagnostics: string[]
+}
+export interface ImageInspection {
+  ok: boolean
+  total: number
+  offset: number
+  hasMore: boolean
+  images: EmbeddedImageSnapshot[]
+  diagnostics: Array<{ code: string; message: string }>
+}

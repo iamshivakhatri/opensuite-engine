@@ -1,3 +1,8 @@
+mod access;
+pub use access::{
+    EmbeddedImageSnapshot, ImageInspection, MAX_EMBEDDED_IMAGE_BYTES, inspect_docx_images,
+    read_docx_embedded_image,
+};
 use std::fmt;
 
 use opensuite_opc::{Package, PackageError, Part, RelationshipTarget};

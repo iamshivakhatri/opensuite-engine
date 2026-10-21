@@ -15,6 +15,10 @@ pub(super) fn picture_fragment(
         container,
         if word(source, container, "tc") {
             "tc"
+        } else if word(source, container, "hdr") {
+            "hdr"
+        } else if word(source, container, "ftr") {
+            "ftr"
         } else {
             "body"
         },
@@ -176,6 +180,16 @@ pub(super) fn automatic_extent(
     if let Some(cell) = cell {
         (width, height) = cell::fit_bounds(package, main, source, cell, (width, height))?;
     }
+    fit_to_bounds(package, main, original, (width, height))
+}
+
+pub(super) fn fit_to_bounds(
+    package: &Package,
+    main: &Part,
+    original: (i64, i64),
+    bounds_twips: (i64, i64),
+) -> Result<(i64, i64), OperationResult> {
+    let (mut width, mut height) = bounds_twips;
     // New image paragraphs inherit document defaults, not the adjacent paragraph.
     // Deduct only reliably resolved indents; negative/hanging indents never widen the bound.
     if let Some(styles) = crate::load_styles(package, main).map_err(document_invalid)? {
@@ -197,7 +211,10 @@ pub(super) fn automatic_extent(
             + i64::from(formatting.first_line_indent_twips.unwrap_or(0).max(0));
     }
     if width <= 0 || height <= 0 {
-        return Err(invalid());
+        return Err(OperationResult::failed(
+            "INVALID_PAGE_GEOMETRY",
+            "picture bounds leave no usable space",
+        ));
     }
     let bounds = (width * 635, height * 635);
     // Choose the limiting axis once so rounding cannot progressively change ratio.

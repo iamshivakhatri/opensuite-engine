@@ -87,8 +87,9 @@ pub use numbering::{
     NumberingInstance, NumberingLevel, load_numbering,
 };
 pub use picture::{
-    ImageAnchorFacts, ImagePart, ImagePositionFacts, ImageReference, Picture, PictureError,
-    PictureExtent, PictureKind, PictureMetadata,
+    EmbeddedImageSnapshot, ImageAnchorFacts, ImageInspection, ImagePart, ImagePositionFacts,
+    ImageReference, MAX_EMBEDDED_IMAGE_BYTES, Picture, PictureError, PictureExtent, PictureKind,
+    PictureMetadata, inspect_docx_images, read_docx_embedded_image,
 };
 pub use references::{Bookmark, BookmarkId, Hyperlink, HyperlinkTarget, ReferenceError};
 pub use section::{

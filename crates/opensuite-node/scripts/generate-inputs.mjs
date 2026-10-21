@@ -10,15 +10,16 @@ export function inputContracts(source, integerFields = new Map()) {
   const interfaces = new Map(file.statements.filter(ts.isInterfaceDeclaration).map((node) => [node.name.text, node]))
   const docs = (node) => {
     const blocks = ts.getJSDocCommentsAndTags(node).filter(ts.isJSDoc)
-    let description = '', patch = {}, jsonOutput = false
+    let description = '', patch = {}, jsonOutput = false, backendOnly = false
     for (const block of blocks) {
       if (typeof block.comment === 'string') description += block.comment + '\n'
       for (const tag of block.tags ?? []) {
+        if (tag.tagName.text === 'backendOnly') backendOnly = true
         if (tag.tagName.text === 'jsonOutput') jsonOutput = true
         if (tag.tagName.text === 'schema') patch = { ...patch, ...JSON.parse(tag.comment) }
       }
     }
-    return { description: description.trim(), patch, jsonOutput }
+    return { description: description.trim(), patch, jsonOutput, backendOnly }
   }
   const merge = (base, patch) => {
     const result = { ...base }
@@ -78,7 +79,7 @@ export function inputContracts(source, integerFields = new Map()) {
     const inputSchema = merge(args.length ? schema(args[0].type) : { type: 'object', properties: {}, required: [], additionalProperties: false }, doc.patch)
     if (inputSchema.type !== 'object') throw new Error(`${name} input must be an object`)
     for (const key of inputSchema.required ?? []) if (!inputSchema.properties[key]) throw new Error(`${name}: required field ${key} does not exist`)
-    contracts[name] = { description: doc.description || name.replace(/([a-z])([A-Z])/g, '$1 $2'), inputSchema, jsonInput: !hasBinary(inputSchema), jsonOutput: doc.jsonOutput }
+    contracts[name] = { description: doc.description || name.replace(/([a-z])([A-Z])/g, '$1 $2'), inputSchema, jsonInput: !hasBinary(inputSchema) && !doc.backendOnly, jsonOutput: doc.jsonOutput, ...(doc.backendOnly ? { backendOnly: true } : {}) }
   }
   return contracts
 }

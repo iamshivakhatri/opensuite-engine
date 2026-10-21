@@ -85,9 +85,9 @@ Grouped/mixed drawings, ambiguous containers/positions, linked assets for resize
 unsupported reference/alignment combinations, simple-position anchors, and
 polygon wraps fail safely. Tight/through images remain inspectable; resizing a
 simple imported image can preserve its unsupported wrapping without editing it.
-Inline↔floating conversion is deferred. Existing header/footer picture parsing
-is reused unchanged; layout snapshots/handles and mutations remain main-part
-only. Header/footer image authoring/update needs scoped targeting and is deferred.
+Inline↔floating conversion is deferred. E3 reuses header/footer picture parsing
+for scoped inline insertion and binary retrieval (below). Existing layout snapshot
+handles and resize/replace/delete/layout mutations remain main-part only.
 There is no generic drawing editor, exact rendering, crop/effects editing, or
 branding concept in Rust. Automatic workspace logos keep their inline behavior.
 
@@ -192,6 +192,120 @@ conversion, exact remaining-page/cell-space fitting, and collision detection.
 Existing format/wrapping/crop/effect limits remain. Word and Google Docs review
 of E2 outputs is still pending. No application TypeScript, version/pin, publication,
 or push changes are included.
+
+## E3 header/footer insertion and embedded image access
+
+`InsertPicture.placement` adds `HeaderFooter { target, kind, variant }`. Node
+extends the same `executeDocxInsertPicture` method with
+`{ kind: "header" | "footer", handle: sectionHandle, variant: "default" | "first" | "even" }`.
+The handle must come from fresh section inspection. Existing body/cell inputs
+retain their behavior. The operation appends a dedicated inline paragraph after
+existing direct paragraphs, retaining their exact XML, formatting, fields, and
+imported drawings. Floating header/footer insertion is refused.
+
+Missing parts use the existing section header/footer creation path, including
+its relationship/content-type allocation and preservation of the following
+section's former empty content. Existing shared parts and inherited parts are
+refused: isolate/unlink them explicitly with the section API first. That API
+still refuses copying parts that own relationships, so shared image-rich headers
+remain a supported inspection case, not an automatic isolation workflow. First
+and even variants require separately enabled first-page/document-wide odd/even
+behavior. Insertion never toggles those flags or changes an existing variant link.
+The section inspector's `supported` flag still describes its simple text/PAGE
+writer; it is not an image-insertion or retrieval support flag.
+
+Header/footer insertion fits by default, even when `autoFit` is omitted. It uses
+96-DPI intrinsic dimensions and the shared integer proportional sizing code,
+without upscaling. Width uses page width minus side margins and gutter, without
+body-column narrowing. Height uses top margin minus header distance, or bottom
+margin minus footer distance, less a 120-twip baseline allowance. Resolved default
+paragraph indents/spacing are deducted through the same fitting helper as E1/E2.
+Explicit size retains proportional/exact semantics but must fit those bounds;
+`autoFit` plus explicit size is refused. Optional left/center/right alignment
+uses the existing paragraph writer. These are bounds for the new image, not a
+calculation of space remaining after other header/footer content. Rendering is
+still required for crowded layouts.
+
+Direct paragraph containers are supported. Header/footer tables or root wrappers,
+tracked changes, malformed/crossing field/range structures, duplicate relationship
+IDs, strict OOXML authoring, ambiguous geometry, inherited exact line heights,
+shared/inherited parts, and inactive first/even variants fail safely. The shared
+media allocator avoids existing names, and each picture relationship belongs to
+the actual owning part; headers outside `/word/` use an absolute package target.
+Reopen checks verify the exact patched source, alignment, geometry, image bytes,
+and package validity. Untouched package payloads remain unchanged.
+
+Read-only Rust `inspect_docx_images(bytes, offset, limit)` / Node
+`inspectDocxImages(bytes, { offset?, limit? })` returns JSON facts: owning part,
+PNG/JPEG format, intrinsic pixel size, displayed EMU size, bounded alt text,
+inline/floating kind, anchor/wrap facts, media part/relationship, payload size,
+and a fresh retrieval handle. Main-document images (including table cells) come
+first, then all header/footer parts in package-name order, including unused parts.
+Default 20, maximum 100 records; media outside the requested page is not loaded.
+Unsupported drawings/references have diagnostics and a null retrieval handle.
+These handles are separate from body/layout mutation handles.
+
+Rust `read_docx_embedded_image(bytes, handle)` / Node
+`readDocxEmbeddedImage(bytes, { handle })` returns original embedded PNG/JPEG bytes,
+without decoding, transcoding, or changing the DOCX. The Node response contains
+`result` and, on success, `imageBytes: Buffer`; failure has structured diagnostics
+and no image bytes. A successful read reports no changes. Retrieval loads only
+the selected media. Shared media can be read from each supported referencing
+location. The byte limit is checked from the ZIP entry size before decompression:
+20 MiB per image and 64 million intrinsic pixels. The existing dimension parser
+is reused; this is not a full raster decoder or image integrity validator.
+
+Handles use the existing deterministic FNV-1a convention over owning part name,
+local XML, owning relationship bytes, selected media name and bytes, plus the
+picture index. Changes to any of those invalidate the handle. Unrelated parts
+need not invalidate it. Equal content produces equal handles; these are local
+source checks, not durable IDs or cryptographic security tokens. Linked/internal
+or external references, embed+link combinations, missing/wrong/duplicate image
+relationships, malformed/unsupported media, format/content-type mismatch,
+ambiguous drawings, stale handles, and oversized images are refused. Rich
+DrawingML is preserved during unrelated insertion; retrieval requires one direct
+picture/blip and does not interpret effects, crops, OCR, or image meaning.
+
+The binary method is explicitly `backendOnly: true`, `jsonInput: false`, and
+`jsonOutput: false` in generated native metadata. It must never become a raw
+model-callable tool or put pixels/base64 in JSON capabilities. `inspect_images`
+remains a normal JSON read; declarations, schemas, inventory and loader include
+both methods.
+
+### E3 verification and later application integration
+
+217 DOCX, 20 OPC, 4 protocol, and 3 Node-crate Rust tests pass; 51 native Node tests
+cover E1/E2 regressions, variants, missing parts, PAGE and formatting preservation,
+section sharing/inheritance, relationship ownership, distinct/shared media,
+body/cell/header/footer retrieval, stale source/relationships/media, JPEG,
+linked/malformed/duplicate relationships, payload/pixel bounds, save/reopen,
+and preservation of imported floating drawings and unfamiliar extensions.
+Workspace compilation, strict release-crate/CLI Clippy, formatting, SDK/schema
+checks, and diff checks pass.
+
+Four final temporary LibreOffice PDF renders (footer with PAGE and formatting,
+three-page first/even/default headers and footers, two independent sections,
+and a new header with an imported floating body picture) produced seven pages.
+All pages were visually inspected: centered images retain aspect ratio and full
+borders, text/formatting and page numbers survive, sections remain separate,
+and the imported float remains on the right with text wrapping. A separate
+three-page experiment with an even header but no explicit even footer omitted
+the even header in this LibreOffice build; adding explicit footer variants made
+it render. The engine preserves the requested links rather than compensating
+for renderer behavior. Microsoft Word and Google Docs E3 review remain untested.
+
+Later app integration must load a build containing E3; extend the engine-client
+picture placement type with the header/footer alternatives and fresh section
+handles; add the decoded inspection output type and bounded read wrapper; and
+honor `backendOnly` as well as the JSON transport flags during tool discovery.
+The backend should resolve approved retrieval handles against current artifact
+bytes and pass the returned Buffer to the existing vision attachment pipeline.
+Pixels stay out of model tool JSON and capability responses. Re-inspect after
+relevant edits; reuse the current save/verification lifecycle for insertion.
+No app TypeScript, model calls, publication, version/pin updates, or push are part
+of E3. Header/footer resize/replace/delete, floating authoring, rich DrawingML
+editing, richer cell fitting, and rendered collision/remaining-space fitting
+remain outside this pass.
 
 ## Bridge and product
 

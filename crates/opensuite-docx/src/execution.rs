@@ -255,6 +255,9 @@ pub fn execute_docx_insert_picture(
                         placement_handle(placement)
                     }
                     opensuite_protocol::PicturePlacement::TableCell { handle, .. } => Some(handle),
+                    opensuite_protocol::PicturePlacement::HeaderFooter { target, .. } => {
+                        Some(&target.handle)
+                    }
                 },
             ),
             output_artifact: None,

@@ -204,12 +204,15 @@ fn picture_target(handle: String) -> PictureTarget {
 }
 
 #[napi(object)]
-/// @schema {"oneOf":[{"properties":{"kind":{"enum":["start","end"]}},"not":{"required":["position"]}},{"properties":{"kind":{"enum":["before","after"]}},"required":["handle"],"not":{"required":["position"]}},{"properties":{"kind":{"const":"tableCell"}},"required":["handle"]}]}
+/// @schema {"oneOf":[{"properties":{"kind":{"enum":["start","end"]}},"not":{"anyOf":[{"required":["position"]},{"required":["variant"]}]}},{"properties":{"kind":{"enum":["before","after"]}},"required":["handle"],"not":{"anyOf":[{"required":["position"]},{"required":["variant"]}]}},{"properties":{"kind":{"const":"tableCell"}},"required":["handle"],"not":{"required":["variant"]}},{"properties":{"kind":{"enum":["header","footer"]}},"required":["handle","variant"],"not":{"required":["position"]}}]}
 pub struct PicturePlacementInput {
-    /// Existing body placements or a dedicated paragraph inside a table cell.
-    /// @schema {"enum":["start","end","before","after","tableCell"]}
+    /// Body, table cell, or an explicitly selected header/footer. Shared/inherited parts are refused.
+    /// @schema {"enum":["start","end","before","after","tableCell","header","footer"]}
     pub kind: String,
-    /// For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles.
+    /// Only for header/footer; must be explicit. Enable first/even page behavior separately.
+    /// @schema {"enum":["default","first","even"]}
+    pub variant: Option<String>,
+    /// For header/footer use a fresh section handle. For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles.
     pub handle: Option<String>,
     /// Only for tableCell. Defaults to end; existing paragraphs remain unchanged.
     /// @schema {"enum":["start","end"]}
@@ -219,6 +222,29 @@ pub struct PicturePlacementInput {
 fn picture_placement(
     input: PicturePlacementInput,
 ) -> std::result::Result<PicturePlacement, &'static str> {
+    if input.kind == "header" || input.kind == "footer" {
+        if input.position.is_some() {
+            return Err("position is only supported for tableCell placement");
+        }
+        let variant = match input.variant.as_deref() {
+            Some("default") => opensuite_protocol::HeaderFooterVariant::Default,
+            Some("first") => opensuite_protocol::HeaderFooterVariant::First,
+            Some("even") => opensuite_protocol::HeaderFooterVariant::Even,
+            _ => return Err("header/footer requires explicit default, first, or even variant"),
+        };
+        return Ok(PicturePlacement::HeaderFooter {
+            target: opensuite_protocol::SectionTarget {
+                handle: input
+                    .handle
+                    .ok_or("header/footer requires a fresh section handle")?,
+            },
+            kind: crate::page_composition::header_footer_kind(&input.kind)?,
+            variant,
+        });
+    }
+    if input.variant.is_some() {
+        return Err("variant is only supported for header/footer placement");
+    }
     if input.kind == "tableCell" {
         let position = match input.position.as_deref().unwrap_or("end") {
             "start" => CellPicturePosition::Start,
@@ -385,4 +411,106 @@ pub fn set_picture_layout(
         }),
         execute_docx_set_picture_layout,
     )
+}
+
+#[napi(object)]
+pub struct ImageInspectionInput {
+    pub offset: Option<u32>,
+    /// @schema {"minimum":1,"maximum":100}
+    pub limit: Option<u32>,
+}
+#[napi(object)]
+pub struct ReadEmbeddedImageInput {
+    /// Fresh handle from inspectDocxImages. Body/layout picture handles are not accepted.
+    pub handle: String,
+}
+#[napi(object)]
+pub struct ReadEmbeddedImageOutput {
+    pub result: crate::OperationResultOutput,
+    pub image_bytes: Option<Buffer>,
+}
+
+/// Inspect embedded images in body, cells, and header/footer parts. Default 20, maximum 100. Includes source-validated retrieval handles, format, intrinsic/display dimensions, alt text, ownership, layout and refusal diagnostics. No binary data in JSON.
+/// @jsonOutput
+#[napi(js_name = "inspectDocxImages", ts_return_type = "Promise<string>")]
+pub fn inspect_images(
+    input: Buffer,
+    options: Option<ImageInspectionInput>,
+) -> AsyncTask<ImageInspectionTask> {
+    let options = options.unwrap_or(ImageInspectionInput {
+        offset: None,
+        limit: None,
+    });
+    AsyncTask::new(ImageInspectionTask {
+        input: input.to_vec(),
+        offset: options.offset.unwrap_or(0) as usize,
+        limit: options.limit.unwrap_or(20) as usize,
+    })
+}
+pub struct ImageInspectionTask {
+    input: Vec<u8>,
+    offset: usize,
+    limit: usize,
+}
+impl Task for ImageInspectionTask {
+    type Output = String;
+    type JsValue = String;
+    fn compute(&mut self) -> Result<String> {
+        serde_json::to_string(&opensuite_docx::inspect_docx_images(
+            std::mem::take(&mut self.input),
+            self.offset,
+            self.limit,
+        ))
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+    fn resolve(&mut self, _env: Env, output: String) -> Result<String> {
+        Ok(output)
+    }
+}
+
+/// Backend-only read of original embedded PNG/JPEG bytes (20 MiB / 64 million pixels maximum). Never register as a model-callable tool. Returns structured diagnostics and no imageBytes on failure; does not change the DOCX.
+/// @backendOnly
+#[napi(
+    js_name = "readDocxEmbeddedImage",
+    ts_return_type = "Promise<ReadEmbeddedImageOutput>"
+)]
+pub fn read_embedded_image(
+    input: Buffer,
+    operation: ReadEmbeddedImageInput,
+) -> AsyncTask<EmbeddedImageTask> {
+    AsyncTask::new(EmbeddedImageTask {
+        input: input.to_vec(),
+        handle: operation.handle,
+    })
+}
+pub struct EmbeddedImageTask {
+    input: Vec<u8>,
+    handle: String,
+}
+impl Task for EmbeddedImageTask {
+    type Output = std::result::Result<Vec<u8>, OperationResult>;
+    type JsValue = ReadEmbeddedImageOutput;
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(opensuite_docx::read_docx_embedded_image(
+            std::mem::take(&mut self.input),
+            &self.handle,
+        ))
+    }
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        let (result, image_bytes) = match output {
+            Ok(bytes) => (
+                OperationResult {
+                    status: opensuite_protocol::OperationStatus::Applied,
+                    changes: Vec::new(),
+                    diagnostics: Vec::new(),
+                },
+                Some(Buffer::from(bytes)),
+            ),
+            Err(error) => (error, None),
+        };
+        Ok(ReadEmbeddedImageOutput {
+            result: operation_result_output(result),
+            image_bytes,
+        })
+    }
 }

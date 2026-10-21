@@ -156,6 +156,7 @@ export interface DocxOperationOutput {
   inputSchema?: string
   jsonInput: boolean
   jsonOutput: boolean
+  backendOnly: boolean
 }
 
 /** Accept one supported insertion or deletion using its fresh inspect_tracked_changes handle. Keeps inserted content or removes deleted content. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported. */
@@ -406,6 +407,12 @@ export interface ImageDistanceInput {
   rightEmu?: number
 }
 
+export interface ImageInspectionInput {
+  offset?: number
+  /** @schema {"minimum":1,"maximum":100} */
+  limit?: number
+}
+
 /** @schema {"oneOf":[{"required":["alignment"]},{"required":["offsetEmu"]}]} */
 export interface ImagePositionInput {
   /** @schema {"enum":["page","margin","column","paragraph"]} */
@@ -566,6 +573,12 @@ export interface InspectDocxFocusInput {
   after?: number
 }
 
+/**
+ * Inspect embedded images in body, cells, and header/footer parts. Default 20, maximum 100. Includes source-validated retrieval handles, format, intrinsic/display dimensions, alt text, ownership, layout and refusal diagnostics. No binary data in JSON.
+ * @jsonOutput
+ */
+export declare function inspectDocxImages(input: Buffer, options?: ImageInspectionInput | undefined | null): Promise<string>
+
 export interface InspectDocxInput {
   focus?: InspectDocxFocusInput
   /** Compatibility input for the original context-only binding. */
@@ -716,20 +729,41 @@ export interface PictureOutput {
   affordances: Array<AffordanceOutput>
 }
 
-/** @schema {"oneOf":[{"properties":{"kind":{"enum":["start","end"]}},"not":{"required":["position"]}},{"properties":{"kind":{"enum":["before","after"]}},"required":["handle"],"not":{"required":["position"]}},{"properties":{"kind":{"const":"tableCell"}},"required":["handle"]}]} */
+/** @schema {"oneOf":[{"properties":{"kind":{"enum":["start","end"]}},"not":{"anyOf":[{"required":["position"]},{"required":["variant"]}]}},{"properties":{"kind":{"enum":["before","after"]}},"required":["handle"],"not":{"anyOf":[{"required":["position"]},{"required":["variant"]}]}},{"properties":{"kind":{"const":"tableCell"}},"required":["handle"],"not":{"required":["variant"]}},{"properties":{"kind":{"enum":["header","footer"]}},"required":["handle","variant"],"not":{"required":["position"]}}]} */
 export interface PicturePlacementInput {
   /**
-   * Existing body placements or a dedicated paragraph inside a table cell.
-   * @schema {"enum":["start","end","before","after","tableCell"]}
+   * Body, table cell, or an explicitly selected header/footer. Shared/inherited parts are refused.
+   * @schema {"enum":["start","end","before","after","tableCell","header","footer"]}
    */
   kind: string
-  /** For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles. */
+  /**
+   * Only for header/footer; must be explicit. Enable first/even page behavior separately.
+   * @schema {"enum":["default","first","even"]}
+   */
+  variant?: string
+  /** For header/footer use a fresh section handle. For tableCell, copy pictureCellHandles from fresh table inspection. Before/after use body block handles. */
   handle?: string
   /**
    * Only for tableCell. Defaults to end; existing paragraphs remain unchanged.
    * @schema {"enum":["start","end"]}
    */
   position?: string
+}
+
+/**
+ * Backend-only read of original embedded PNG/JPEG bytes (20 MiB / 64 million pixels maximum). Never register as a model-callable tool. Returns structured diagnostics and no imageBytes on failure; does not change the DOCX.
+ * @backendOnly
+ */
+export declare function readDocxEmbeddedImage(input: Buffer, operation: ReadEmbeddedImageInput): Promise<ReadEmbeddedImageOutput>
+
+export interface ReadEmbeddedImageInput {
+  /** Fresh handle from inspectDocxImages. Body/layout picture handles are not accepted. */
+  handle: string
+}
+
+export interface ReadEmbeddedImageOutput {
+  result: OperationResultOutput
+  imageBytes?: Buffer
 }
 
 export interface ReplacePictureInput {

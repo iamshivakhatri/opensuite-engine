@@ -46,6 +46,11 @@ with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())) as source:
 export function editDocument(bytes, edit) {
   const parts = packageParts(bytes)
   parts['word/document.xml'] = Buffer.from(edit(parts['word/document.xml'].toString()))
+  return editParts(bytes, () => parts)
+}
+
+export function editParts(bytes, edit) {
+  const parts = edit(packageParts(bytes))
   const result = spawnSync('python3', ['-c', `
 import io,sys,zipfile,json,base64
 parts=json.load(sys.stdin)

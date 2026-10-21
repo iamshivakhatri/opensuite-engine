@@ -58,7 +58,8 @@ pub use page_composition::{
 };
 pub use pictures::{
     execute_docx_delete_picture_node, execute_docx_insert_picture_node,
-    execute_docx_replace_picture_node, execute_docx_set_picture_size_node, set_picture_layout,
+    execute_docx_replace_picture_node, execute_docx_set_picture_size_node, inspect_images,
+    read_embedded_image, set_picture_layout,
 };
 pub use sections::{
     insert_section_break, inspect_docx_sections, set_odd_even_headers, set_section_header_footer,
@@ -377,6 +378,7 @@ pub struct DocxOperationOutput {
     pub input_schema: Option<String>,
     pub json_input: bool,
     pub json_output: bool,
+    pub backend_only: bool,
 }
 
 #[napi(object)]
@@ -652,6 +654,9 @@ pub fn get_docx_capabilities() -> RuntimeCapabilitiesOutput {
                                 input_schema: inputs[node_export]
                                     .get("inputSchema")
                                     .map(|schema| schema.to_string()),
+                                backend_only: inputs[node_export]["backendOnly"]
+                                    .as_bool()
+                                    .unwrap_or(false),
                                 json_output: inputs[node_export]["jsonOutput"]
                                     .as_bool()
                                     .unwrap_or(false),

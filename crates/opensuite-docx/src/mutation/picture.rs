@@ -1,4 +1,5 @@
 mod cell;
+mod header_footer;
 mod inline;
 mod layout;
 use super::*;
@@ -15,6 +16,7 @@ pub(super) const PNG_CONTENT_TYPE: &str = "image/png";
 pub(super) const JPEG_CONTENT_TYPE: &str = "image/jpeg";
 
 pub(super) struct InsertedPictureVerification<'a> {
+    owner: &'a PartName,
     layout: Option<&'a opensuite_protocol::PictureLayoutPatch>,
     alignment: Option<opensuite_protocol::ParagraphAlignment>,
     paragraph_start: usize,
@@ -45,10 +47,6 @@ pub fn insert_picture_to_vec(
     operation: &InsertPicture,
 ) -> Result<Vec<u8>, OperationResult> {
     let image = crate::read_image_info(&operation.image_bytes).map_err(image_info_error)?;
-    let (extension, content_type) = match image.format {
-        crate::ImageFormat::Png => ("png", PNG_CONTENT_TYPE),
-        crate::ImageFormat::Jpeg => ("jpeg", JPEG_CONTENT_TYPE),
-    };
     let original = (
         i64::from(image.dimensions.width_px) * EMU_PER_PIXEL_AT_96_DPI,
         i64::from(image.dimensions.height_px) * EMU_PER_PIXEL_AT_96_DPI,
@@ -60,6 +58,12 @@ pub fn insert_picture_to_vec(
             "INVALID_OPERATION",
             "automatic fit requires inline layout and no explicit size; paragraph alignment requires inline layout",
         ));
+    }
+    if matches!(
+        operation.placement,
+        opensuite_protocol::PicturePlacement::HeaderFooter { .. }
+    ) {
+        return header_footer::insert(package, main, source, operation, original);
     }
     let (container, insertion, cell) = match &operation.placement {
         opensuite_protocol::PicturePlacement::Body(placement) => {
@@ -75,6 +79,7 @@ pub fn insert_picture_to_vec(
             let cell = cell::resolve_insertion(package, main, source, handle, *position)?;
             (cell.cell, cell.insertion, Some(cell))
         }
+        opensuite_protocol::PicturePlacement::HeaderFooter { .. } => unreachable!(),
     };
     let (width_emu, height_emu) = if operation.auto_fit {
         automatic_extent(package, main, source, insertion, original, cell.as_ref())?
@@ -85,6 +90,32 @@ pub fn insert_picture_to_vec(
             )
         });
         sized_extent(original, size)?
+    };
+    insert_at(
+        package,
+        main,
+        source,
+        operation,
+        container,
+        insertion,
+        (width_emu, height_emu),
+    )
+}
+
+fn insert_at(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    operation: &InsertPicture,
+    container: NodeId,
+    insertion: usize,
+    extent: (i64, i64),
+) -> Result<Vec<u8>, OperationResult> {
+    let (width_emu, height_emu) = extent;
+    let image = crate::read_image_info(&operation.image_bytes).map_err(image_info_error)?;
+    let (extension, content_type) = match image.format {
+        crate::ImageFormat::Png => ("png", PNG_CONTENT_TYPE),
+        crate::ImageFormat::Jpeg => ("jpeg", JPEG_CONTENT_TYPE),
     };
     let media_name = next_media_part_name(package, extension)?;
     let (relationships_name, relationships_exist, relationships, relationship_id) =
@@ -118,12 +149,15 @@ pub fn insert_picture_to_vec(
     let relationship_xml = append_xml_element(
         &relationships,
         &format!(
-            r#"<Relationship Id="{relationship_id}" Type="{IMAGE_RELATIONSHIP_TYPE}" Target="media/{}"/>"#,
-            media_name
-                .as_str()
-                .rsplit('/')
-                .next()
-                .expect("media file name")
+            r#"<Relationship Id="{relationship_id}" Type="{IMAGE_RELATIONSHIP_TYPE}" Target="{}"/>"#,
+            if main.name.as_str().rsplit_once('/').map(|v| v.0) == Some("/word") {
+                media_name
+                    .as_str()
+                    .strip_prefix("/word/")
+                    .expect("media path")
+            } else {
+                media_name.as_str()
+            }
         ),
     )?;
     if relationships_exist {
@@ -171,6 +205,7 @@ pub fn insert_picture_to_vec(
             added,
             &content_types,
             InsertedPictureVerification {
+                owner: &main.name,
                 layout: operation.layout.as_ref(),
                 alignment: operation.alignment,
                 paragraph_start: insertion,
@@ -189,6 +224,7 @@ pub fn insert_picture_to_vec(
         added,
         &[],
         InsertedPictureVerification {
+            owner: &main.name,
             layout: operation.layout.as_ref(),
             alignment: operation.alignment,
             paragraph_start: insertion,
@@ -311,18 +347,24 @@ pub(super) fn picture_relationships(
         br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#.to_vec()
     };
     let next = match package.part_relationships(main) {
-        Ok(values) => values
-            .iter()
-            .filter_map(|relationship| {
-                relationship
-                    .id
-                    .as_str()
-                    .strip_prefix("rId")?
-                    .parse::<u32>()
-                    .ok()
-            })
-            .max()
-            .unwrap_or(0),
+        Ok(values) => {
+            let mut used_ids = HashSet::new();
+            if values.iter().any(|rel| !used_ids.insert(rel.id.as_str())) {
+                return Err(unsupported("picture owner has duplicate relationship ids"));
+            }
+            values
+                .iter()
+                .filter_map(|relationship| {
+                    relationship
+                        .id
+                        .as_str()
+                        .strip_prefix("rId")?
+                        .parse::<u32>()
+                        .ok()
+                })
+                .max()
+                .unwrap_or(0)
+        }
         Err(PackageError::MissingPartRelationships(_)) => 0,
         Err(error) => return Err(OperationResult::failed(error.code(), error.to_string())),
     }
@@ -337,9 +379,7 @@ pub(super) fn picture_relationships(
 }
 
 pub(super) fn next_picture_id(source: &SourceDocument) -> Result<u32, OperationResult> {
-    crate::DocxDocument::new(source)
-        .map_err(document_invalid)?
-        .pictures()
+    crate::picture::pictures(source)
         .filter_map(|picture| picture.metadata()?.id?.parse::<u32>().ok())
         .max()
         .unwrap_or(0)
@@ -929,7 +969,9 @@ pub(super) fn verify_inserted_picture_bytes(
     let expected_layout = expected.layout;
     let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
-    let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let main = package.part(expected.owner).map_err(document_invalid)?;
+    let source = SourceDocument::parse(package.read_part(&main).map_err(document_invalid)?)
+        .map_err(document_invalid)?;
     if source.original_bytes() != expected.document_xml {
         return Err(document_invalid(
             "picture insertion changed unrelated source",
@@ -958,9 +1000,7 @@ pub(super) fn verify_inserted_picture_bytes(
     {
         return Err(document_invalid("inserted picture alignment changed"));
     }
-    let picture = crate::DocxDocument::new(&source)
-        .map_err(document_invalid)?
-        .pictures()
+    let picture = crate::picture::pictures(&source)
         .find(|picture| {
             picture.metadata().and_then(|metadata| metadata.id) == Some(picture_id.to_string())
         })
