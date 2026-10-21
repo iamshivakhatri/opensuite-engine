@@ -7,6 +7,7 @@ mod deletion;
 mod formatting;
 mod layout;
 mod lifecycle;
+pub(in crate::mutation) use layout::ensure_simple_layout_table;
 pub use layout::*;
 mod row;
 mod shading;

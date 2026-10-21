@@ -375,3 +375,178 @@ fn text_formatting_does_not_duplicate_pending_property_revisions() {
     }
     fs::remove_file(input).unwrap();
 }
+
+fn character_style_fixture(body: &str) -> Vec<u8> {
+    let package = Package::from_bytes(crate::create_blank_docx()).unwrap();
+    let (main, _) = crate::open_main_source(&package).unwrap();
+    let bytes = package
+        .write_replaced_part_to_vec(
+            &main,
+            format!("<w:document xmlns:w=\"{WORD}\"><w:body>{body}</w:body></w:document>")
+                .as_bytes(),
+        )
+        .unwrap();
+    crate::execute_docx_create_style(
+        bytes,
+        &opensuite_protocol::CreateStyle {
+            style_id: "Accent".into(),
+            style_type: opensuite_protocol::WordStyleType::Character,
+            properties: opensuite_protocol::WordStylePatch {
+                name: Some("Accent display name".into()),
+                run: TextFormattingPatch {
+                    color: Some(PropertyPatch::Set("124733".into())),
+                    italic: Some(PropertyPatch::Set(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            base_revision: None,
+        },
+    )
+    .output_artifact
+    .unwrap()
+}
+fn character_style_operation(text: &str) -> SetTextFormatting {
+    SetTextFormatting {
+        target: TextTarget {
+            text: text.into(),
+            occurrence: None,
+        },
+        formatting: TextFormattingPatch {
+            character_style_id: Some(PropertyPatch::Set("Accent".into())),
+            ..Default::default()
+        },
+        base_revision: None,
+    }
+}
+fn main_xml(bytes: &[u8]) -> String {
+    let p = Package::from_bytes(bytes.to_vec()).unwrap();
+    String::from_utf8(p.read_part(&p.main_office_document().unwrap()).unwrap()).unwrap()
+}
+
+#[test]
+fn applies_and_removes_existing_character_style_across_partial_runs_with_package_preservation() {
+    let original = character_style_fixture(
+        "<w:p><w:r><w:rPr><w:b/><w:lang w:val=\"en-US\"/></w:rPr><w:t>Before selected</w:t></w:r><w:r><w:rPr><w:u/></w:rPr><w:t> text after</w:t></w:r></w:p>",
+    );
+    let op = character_style_operation("selected text");
+    let output = crate::execute_docx_set_text_formatting(original.clone(), &op)
+        .output_artifact
+        .unwrap();
+    let xml = main_xml(&output);
+    assert_eq!(xml.matches("<w:rStyle w:val=\"Accent\"/>").count(), 2);
+    assert!(xml.contains("<w:rStyle w:val=\"Accent\"/><w:b/><w:lang w:val=\"en-US\"/>"));
+    assert!(xml.contains("<w:rStyle w:val=\"Accent\"/><w:u/>"));
+    let p = Package::from_bytes(original.clone()).unwrap();
+    let q = Package::from_bytes(output.clone()).unwrap();
+    for name in p
+        .part_names_with_prefix("/")
+        .filter(|n| n.as_str() != "/word/document.xml")
+    {
+        assert_eq!(
+            p.read_part_by_name(name).unwrap(),
+            q.read_part_by_name(name).unwrap()
+        );
+    }
+    let mut clear = op;
+    clear.formatting.character_style_id = Some(PropertyPatch::Clear);
+    let cleared = crate::execute_docx_set_text_formatting(output, &clear)
+        .output_artifact
+        .unwrap();
+    assert!(!main_xml(&cleared).contains("<w:rStyle"));
+    assert_eq!(
+        crate::text_search::resolve_text(
+            &crate::open_main_source(&Package::from_bytes(cleared.clone()).unwrap())
+                .unwrap()
+                .1,
+            "Before selected text after"
+        )
+        .unwrap()
+        .len(),
+        1
+    );
+    assert!(main_xml(&cleared).contains("<w:b/><w:lang w:val=\"en-US\"/>"));
+}
+
+#[test]
+fn character_style_validates_id_type_and_ambiguous_targets_without_output() {
+    let bytes = character_style_fixture(
+        "<w:p><w:r><w:t>Same</w:t></w:r></w:p><w:p><w:r><w:t>Same</w:t></w:r></w:p>",
+    );
+    let mut op = character_style_operation("Same");
+    let ambiguous = crate::execute_docx_set_text_formatting(bytes.clone(), &op);
+    assert!(ambiguous.output_artifact.is_none());
+    assert_eq!(ambiguous.operation.diagnostics[0].code, "TARGET_AMBIGUOUS");
+    op.target.occurrence = Some(1);
+    for (id, code) in [
+        ("Missing", "MISSING_STYLE"),
+        ("Normal", "STYLE_TYPE_MISMATCH"),
+    ] {
+        op.formatting.character_style_id = Some(PropertyPatch::Set(id.into()));
+        let result = crate::execute_docx_set_text_formatting(bytes.clone(), &op);
+        assert!(result.output_artifact.is_none());
+        assert_eq!(result.operation.diagnostics[0].code, code);
+    }
+    op.formatting.character_style_id = Some(PropertyPatch::Set("Accent".into()));
+    assert!(
+        crate::execute_docx_set_text_formatting(bytes, &op)
+            .output_artifact
+            .is_some()
+    );
+}
+
+#[test]
+fn character_style_preserves_imported_references_and_refuses_protected_or_ambiguous_run_xml() {
+    let body = "<w:p><w:r><w:rPr><w:rStyle w:val=\"ImportedUnknown\"/><w:b/></w:rPr><w:t>Text</w:t></w:r></w:p>";
+    let original = character_style_fixture(body);
+    let mut op = character_style_operation("Text");
+    op.formatting.character_style_id = Some(PropertyPatch::Clear);
+    let cleared = crate::execute_docx_set_text_formatting(original, &op)
+        .output_artifact
+        .unwrap();
+    assert!(main_xml(&cleared).contains("<w:rPr><w:b/></w:rPr>"));
+    for body in [
+        "<w:p><w:r><w:rPr><w:rStyle/><w:rStyle/></w:rPr><w:t>Text</w:t></w:r></w:p>",
+        "<w:p><w:r><w:rPr/><w:rPr/><w:t>Text</w:t></w:r></w:p>",
+        "<w:p><w:r><w:rPr><w:rStyle w:val=\"Accent\" extra=\"keep\"/></w:rPr><w:t>Text</w:t></w:r></w:p>",
+        "<w:p><w:r><w:rPr><w:rPrChange/></w:rPr><w:t>Text</w:t></w:r></w:p>",
+        "<w:bookmarkStart w:id=\"1\"/><w:p><w:r><w:t>Text</w:t></w:r></w:p><w:bookmarkEnd w:id=\"1\"/>",
+        "<w:p><w:hyperlink><w:r><w:t>Text</w:t></w:r></w:hyperlink></w:p>",
+        "<w:p><w:ins w:id=\"1\"><w:r><w:t>Text</w:t></w:r></w:ins></w:p>",
+        "<w:tbl><w:tr><w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>Text</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    ] {
+        let bytes = character_style_fixture(body);
+        for value in [PropertyPatch::Clear, PropertyPatch::Set("Accent".into())] {
+            let mut op = character_style_operation("Text");
+            op.formatting.character_style_id = Some(value);
+            assert!(
+                crate::execute_docx_set_text_formatting(bytes.clone(), &op)
+                    .output_artifact
+                    .is_none(),
+                "{body}"
+            );
+        }
+    }
+}
+
+#[test]
+fn character_style_whole_runs_supports_alternate_word_prefix_and_simple_cells() {
+    for body in [
+        "<w:p><w:r><w:rPr/><w:t>Text</w:t></w:r></w:p>",
+        "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Text</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    ] {
+        let bytes = character_style_fixture(body);
+        let p = Package::from_bytes(bytes).unwrap();
+        let (main, source) = crate::open_main_source(&p).unwrap();
+        let xml = String::from_utf8(source.original_bytes().to_vec())
+            .unwrap()
+            .replace("w:", "x:")
+            .replace("xmlns:w=", "xmlns:x=");
+        let bytes = p.write_replaced_part_to_vec(&main, xml.as_bytes()).unwrap();
+        let output =
+            crate::execute_docx_set_text_formatting(bytes, &character_style_operation("Text"))
+                .output_artifact
+                .unwrap();
+        assert!(main_xml(&output).contains("<x:rStyle x:val=\"Accent\"/>"));
+    }
+}

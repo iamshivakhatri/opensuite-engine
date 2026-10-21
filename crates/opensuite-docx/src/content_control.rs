@@ -108,6 +108,54 @@ impl ContentControl<'_> {
         properties
     }
 
+    /// Current text, capped by Unicode characters; deleted/moved-from text is excluded.
+    pub(crate) fn bounded_visible_text(
+        &self,
+        limit: usize,
+    ) -> Result<(String, bool), SemanticError> {
+        let Some(content) = self.content_id else {
+            return Ok((String::new(), false));
+        };
+        let span = self
+            .source
+            .node(content)
+            .ok_or(SemanticError::InvalidTextNode)?
+            .span();
+        let mut text = String::new();
+        let mut count = 0;
+        for id in self
+            .source
+            .node_ids()
+            .filter(|id| word(self.source, *id, "t"))
+        {
+            let node = self.source.node(id).ok_or(SemanticError::InvalidTextNode)?;
+            if node.span().start <= span.start || node.span().end >= span.end {
+                continue;
+            }
+            let mut parent = node.parent();
+            let mut hidden = false;
+            while let Some(id) = parent {
+                if word(self.source, id, "del") || word(self.source, id, "moveFrom") {
+                    hidden = true;
+                    break;
+                }
+                parent = self.source.node(id).and_then(|node| node.parent());
+            }
+            if hidden {
+                continue;
+            }
+            let value = crate::semantic::text_value(self.source, id)?;
+            for ch in value.chars() {
+                if count == limit {
+                    return Ok((text, true));
+                }
+                text.push(ch);
+                count += 1;
+            }
+        }
+        Ok((text, false))
+    }
+
     pub fn visible_text(&self) -> Result<String, SemanticError> {
         let Some(content_id) = self.content_id else {
             return Ok(String::new());

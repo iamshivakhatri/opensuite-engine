@@ -26,22 +26,9 @@ fn resolve_layout_table(
             "table layout handle is stale; inspect tables again",
         ));
     }
-    if let Some(settings) = sections::settings_part(package, main)? {
-        let settings =
-            SourceDocument::parse(package.read_part(&settings).map_err(document_invalid)?)
-                .map_err(document_invalid)?;
-        if settings.node_ids().any(|id| {
-            word(&settings, id, "documentProtection")
-                && !matches!(
-                    settings.node(id).unwrap().attribute("enforcement"),
-                    Some("0" | "false" | "off")
-                )
-        }) {
-            return Err(unsupported("table layout cannot edit a protected document")
-                .with_reason_code("UNSUPPORTED_TABLE_LAYOUT"));
-        }
-    }
-    let (index, table, rows, _) = resolve_table(
+    ensure_document_unprotected(package, main)
+        .map_err(|error| error.with_reason_code("UNSUPPORTED_TABLE_LAYOUT"))?;
+    let (index, table, _, _) = resolve_table(
         source,
         &TableTarget {
             handle: Some(handle.to_owned()),
@@ -49,6 +36,24 @@ fn resolve_layout_table(
             occurrence: None,
         },
     )?;
+    ensure_simple_layout_table(source, table)?;
+    Ok((index, table))
+}
+
+pub(in crate::mutation) fn ensure_simple_layout_table(
+    source: &SourceDocument,
+    table: NodeId,
+) -> Result<(), OperationResult> {
+    let document = crate::DocxDocument::new(source).map_err(document_invalid)?;
+    let rows = document
+        .blocks()
+        .find_map(|block| match block {
+            crate::BodyBlock::Table(value) if value.source_id() == table => {
+                Some(value.rows().collect::<Vec<_>>())
+            }
+            _ => None,
+        })
+        .ok_or_else(|| unsupported("table must be a direct body table"))?;
     if let Some(reason) = table_mutation_reason(source, table) {
         return Err(
             unsupported("table layout requires a simple rectangular body table")
@@ -90,7 +95,7 @@ fn resolve_layout_table(
         "UNSUPPORTED_TABLE_LAYOUT",
         false,
     )?;
-    Ok((index, table))
+    Ok(())
 }
 
 /// Inserts only at a direct table boundary, or updates our own exact separator.

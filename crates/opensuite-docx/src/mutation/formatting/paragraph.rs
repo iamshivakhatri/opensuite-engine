@@ -296,7 +296,7 @@ pub(super) fn ppr_insertion_at_start(
     ppr_insertion(source, ppr, replacement)
 }
 
-pub(super) fn formatting_patches(
+pub(in crate::mutation) fn formatting_patches(
     source: &SourceDocument,
     paragraph: NodeId,
     patch: &ParagraphFormattingPatch,
@@ -310,6 +310,13 @@ pub(super) fn formatting_patches(
         let children = new_formatting_children(patch, &name, prefix);
         if children.is_empty() {
             return Ok(Vec::new());
+        }
+        if source.children(paragraph).next().is_none() {
+            return Ok(vec![common::element_insertion(
+                source,
+                paragraph,
+                format!("<{}>{}</{}>", name("pPr"), children, name("pPr")).into_bytes(),
+            )?]);
         }
         let at = source
             .children(paragraph)
@@ -522,7 +529,29 @@ pub(crate) fn simple_property(
             replacement: value.into_bytes(),
         }),
         (None, Some(value)) if !value.is_empty() => {
-            patches.push(ppr_insertion(source, ppr, value.into_bytes())?)
+            let following = [
+                "textDirection",
+                "textAlignment",
+                "textboxTightWrap",
+                "outlineLvl",
+                "divId",
+                "cnfStyle",
+                "rPr",
+                "sectPr",
+                "pPrChange",
+            ];
+            if let Some(next) = source
+                .children(ppr)
+                .find(|id| local == "jc" && following.iter().any(|name| word(source, *id, name)))
+            {
+                let at = source.node(next).expect("property exists").span().start;
+                patches.push(Patch {
+                    span: SourceSpan { start: at, end: at },
+                    replacement: value.into_bytes(),
+                });
+            } else {
+                patches.push(ppr_insertion(source, ppr, value.into_bytes())?);
+            }
         }
         _ => {}
     }

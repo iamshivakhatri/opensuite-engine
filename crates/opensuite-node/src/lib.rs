@@ -26,7 +26,7 @@ mod table_cell_formatting;
 mod table_layout;
 pub use table_layout::{set_table_row_layout, set_table_spacing};
 mod text_formatting;
-pub use content_controls::execute_docx_set_content_control_text_node;
+pub use content_controls::{execute_docx_set_content_control_text_node, inspect_content_controls};
 pub use hyperlinks::execute_docx_set_hyperlink_node;
 pub use lists::execute_docx_set_paragraphs_list_node;
 use opensuite_docx::{

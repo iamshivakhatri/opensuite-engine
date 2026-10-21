@@ -758,6 +758,7 @@ module.exports.findDocxText = nativeBinding.findDocxText
 module.exports.getDocxCapabilities = nativeBinding.getDocxCapabilities
 module.exports.inspectDocx = nativeBinding.inspectDocx
 module.exports.inspectDocxComments = nativeBinding.inspectDocxComments
+module.exports.inspectDocxContentControls = nativeBinding.inspectDocxContentControls
 module.exports.inspectDocxFields = nativeBinding.inspectDocxFields
 module.exports.inspectDocxImages = nativeBinding.inspectDocxImages
 module.exports.inspectDocxLayout = nativeBinding.inspectDocxLayout

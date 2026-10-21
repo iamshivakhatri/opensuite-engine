@@ -467,3 +467,68 @@ pub(super) fn write_related_xml_part(
         .write_package_with_named_changes_to_vec(&replaced, &added)
         .map_err(document_invalid)
 }
+
+pub(super) fn ensure_document_unprotected(
+    package: &Package,
+    main: &Part,
+) -> Result<(), OperationResult> {
+    if let Some(settings) = sections::settings_part(package, main)? {
+        let settings =
+            SourceDocument::parse(package.read_part(&settings).map_err(document_invalid)?)
+                .map_err(document_invalid)?;
+        if settings.node_ids().any(|id| {
+            word(&settings, id, "documentProtection")
+                && !matches!(
+                    settings.node(id).unwrap().attribute("enforcement"),
+                    Some("0" | "false" | "off")
+                )
+        }) {
+            return Err(unsupported("cannot edit a protected document")
+                .with_reason_code("DOCUMENT_PROTECTED"));
+        }
+    }
+    Ok(())
+}
+
+/// A changed scalar property must not discard unfamiliar attributes or children.
+pub(super) fn ensure_simple_property(
+    source: &SourceDocument,
+    parent: NodeId,
+    local: &str,
+) -> Result<(), OperationResult> {
+    let nodes = source
+        .children(parent)
+        .filter(|id| word(source, *id, local))
+        .collect::<Vec<_>>();
+    if nodes.len() > 1
+        || nodes.iter().any(|id| {
+            let node = source.node(*id).unwrap();
+            if source.children(*id).next().is_some() {
+                return true;
+            }
+            let SourceNodeKind::Element { start_tag, .. } = node.kind() else {
+                return true;
+            };
+            let Ok(prefix) = word_prefix_for(source, *id, local) else {
+                return true;
+            };
+            let expected = format!("{}val", attr_prefix(&prefix));
+            let mut reader = quick_xml::Reader::from_reader(
+                &source.original_bytes()[start_tag.start..start_tag.end],
+            );
+            match reader.read_event() {
+                Ok(quick_xml::events::Event::Start(tag) | quick_xml::events::Event::Empty(tag)) => {
+                    tag.attributes().any(|attr| {
+                        attr.map_or(true, |attr| attr.key.as_ref() != expected.as_bytes())
+                    })
+                }
+                _ => true,
+            }
+        })
+    {
+        return Err(unsupported(format!(
+            "{local} has duplicate or unfamiliar property XML"
+        )));
+    }
+    Ok(())
+}

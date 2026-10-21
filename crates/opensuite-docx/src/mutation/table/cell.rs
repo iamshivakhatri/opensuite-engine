@@ -391,6 +391,17 @@ pub(super) fn resolve_table_cell_in_table(
     headers: &[String],
     target: &TableCellTarget,
 ) -> Result<ResolvedTableCell, OperationResult> {
+    resolve_cell_in_table(source, table_index, rows, headers, target, false)
+}
+
+pub(super) fn resolve_cell_in_table(
+    source: &SourceDocument,
+    table_index: usize,
+    rows: &[crate::Row<'_>],
+    headers: &[String],
+    target: &TableCellTarget,
+    allow_multiple_paragraphs: bool,
+) -> Result<ResolvedTableCell, OperationResult> {
     if (target.row.is_some() || target.column.is_some())
         && (target.handle.is_some()
             || !target.row_label.is_empty()
@@ -428,7 +439,9 @@ pub(super) fn resolve_table_cell_in_table(
             })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
-        if let Some(reason) = table_cell_text_reason(source, cell) {
+        if let Some(reason) = table_cell_text_reason(source, cell).filter(|reason| {
+            !(allow_multiple_paragraphs && *reason == AffordanceReason::MultipleParagraphs)
+        }) {
             return Err(unsupported(
                 "set_table_cells_text requires one ordinary paragraph with direct runs",
             )
@@ -488,7 +501,9 @@ pub(super) fn resolve_table_cell_in_table(
             })?
             .source_id();
         let paragraphs = direct_cell_paragraphs(source, cell);
-        if let Some(reason) = table_cell_text_reason(source, cell) {
+        if let Some(reason) = table_cell_text_reason(source, cell).filter(|reason| {
+            !(allow_multiple_paragraphs && *reason == AffordanceReason::MultipleParagraphs)
+        }) {
             return Err(unsupported(
                 "set_table_cells_text requires one ordinary paragraph with direct runs",
             )
@@ -566,7 +581,9 @@ pub(super) fn resolve_table_cell_in_table(
         candidates.pop().expect("one candidate")
     };
     let paragraphs = direct_cell_paragraphs(source, cell);
-    if let Some(reason) = table_cell_text_reason(source, cell) {
+    if let Some(reason) = table_cell_text_reason(source, cell).filter(|reason| {
+        !(allow_multiple_paragraphs && *reason == AffordanceReason::MultipleParagraphs)
+    }) {
         return Err(unsupported(
             "set_table_cells_text requires one ordinary paragraph with direct runs",
         )

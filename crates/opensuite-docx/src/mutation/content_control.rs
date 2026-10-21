@@ -14,34 +14,7 @@ pub fn set_content_control_text_to_vec(
             "resolved content control text does not match expected current text",
         ));
     }
-    let patches = if target.text.is_empty() {
-        if operation.replacement.is_empty() {
-            Vec::new()
-        } else {
-            vec![empty_cell_patch(
-                source,
-                target.paragraph,
-                &operation.replacement,
-            )?]
-        }
-    } else {
-        let matches = crate::text_search::resolve_text(source, &target.text)
-            .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
-        let Some(matched) = matches.into_iter().find(|matched| {
-            matched.start == 0
-                && matched.end == target.text.len()
-                && matched
-                    .segments
-                    .iter()
-                    .all(|segment| is_descendant(source, segment.id, target.control))
-        }) else {
-            return Err(OperationResult::failed(
-                "DOCUMENT_INVALID",
-                "resolved content control has no compatible text source range",
-            ));
-        };
-        patches_for_match(source, &matched, &operation.replacement)?
-    };
+    let patches = content_control_patches(source, &target, &operation.replacement)?;
     let patched = apply_patches(source, patches)?;
     let before = all_content_control_texts(source)?;
     let Some(index) = before.iter().position(|item| item.0 == target.control) else {
@@ -99,6 +72,50 @@ pub fn set_content_control_text(
         operation.expected_current_text.clone(),
         operation.replacement.clone(),
     )
+}
+
+/// Use the mutation's own patch planner so inspection cannot promise unsupported run edits.
+pub(crate) fn content_control_text_support(
+    source: &SourceDocument,
+    target: &ContentControlTarget,
+) -> Result<(), OperationResult> {
+    let target = resolve_content_control(source, target)?;
+    content_control_patches(source, &target, &target.text).map(|_| ())
+}
+
+fn content_control_patches(
+    source: &SourceDocument,
+    target: &ResolvedContentControl,
+    replacement: &str,
+) -> Result<Vec<Patch>, OperationResult> {
+    if target.text.is_empty() {
+        if replacement.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(vec![empty_cell_patch(
+                source,
+                target.paragraph,
+                replacement,
+            )?])
+        }
+    } else {
+        let matches = crate::text_search::resolve_text(source, &target.text)
+            .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
+        let Some(matched) = matches.into_iter().find(|matched| {
+            matched.start == 0
+                && matched.end == target.text.len()
+                && matched
+                    .segments
+                    .iter()
+                    .all(|segment| is_descendant(source, segment.id, target.control))
+        }) else {
+            return Err(OperationResult::failed(
+                "DOCUMENT_INVALID",
+                "resolved content control has no compatible text source range",
+            ));
+        };
+        patches_for_match(source, &matched, replacement)
+    }
 }
 
 pub(super) struct ResolvedContentControl {

@@ -2,6 +2,11 @@
 
 mod comment;
 mod content_control;
+mod content_control_inspection;
+pub use content_control_inspection::{
+    ContentControlInspection, ContentControlSelector, ContentControlSnapshot,
+    inspect_docx_content_controls,
+};
 mod execution;
 mod field;
 mod field_inspection;

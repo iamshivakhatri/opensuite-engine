@@ -119,3 +119,152 @@ fn content_control_targets_require_occurrence_and_expected_text() {
     );
     fs::remove_file(input).unwrap();
 }
+
+#[test]
+fn inspection_supplies_exact_duplicate_targets_and_preserves_all_other_controls() {
+    let control = |text| {
+        format!(
+            "<w:sdt><w:sdtPr><w:tag w:val=\"client\"/><w:alias w:val=\"Client name\"/><w:text/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:sdtContent></w:sdt>"
+        )
+    };
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body>{}{}</w:body></w:document>",
+        control("First"),
+        control("Second")
+    ));
+    let original = fs::read(&input).unwrap();
+    let snapshot = crate::inspect_docx_content_controls(original.clone(), 0, 20);
+    assert!(snapshot.ok);
+    assert_eq!(snapshot.total, 2);
+    assert_eq!(snapshot.controls[1].paragraph_index, Some(1));
+    assert_eq!(snapshot.controls[1].text.as_deref(), Some("Second"));
+    assert!(snapshot.controls[1].text_mutation_supported);
+    assert_eq!(snapshot.controls[1].target_match_count, 2);
+    assert!(
+        snapshot.controls[1]
+            .reasons
+            .iter()
+            .any(|r| r == "OCCURRENCE_REQUIRED")
+    );
+    let target = snapshot.controls[1].target.as_ref().unwrap();
+    let result = crate::execute_docx_set_content_control_text(
+        original,
+        &SetContentControlText {
+            target: ContentControlTarget {
+                tag: target.tag.clone(),
+                alias: target.alias.clone(),
+                occurrence: Some(target.occurrence),
+            },
+            expected_current_text: snapshot.controls[1].text.clone().unwrap(),
+            replacement: "Updated".into(),
+            base_revision: None,
+        },
+    );
+    let output = result.output_artifact.unwrap();
+    let reopened = crate::inspect_docx_content_controls(output.clone(), 0, 20);
+    assert_eq!(reopened.controls[0].text.as_deref(), Some("First"));
+    assert_eq!(reopened.controls[1].text.as_deref(), Some("Updated"));
+    let package = Package::from_bytes(output).unwrap();
+    let before = Package::open(&input).unwrap();
+    for name in before
+        .part_names_with_prefix("/")
+        .filter(|n| n.as_str() != "/word/document.xml")
+    {
+        assert_eq!(
+            before.read_part_by_name(name).unwrap(),
+            package.read_part_by_name(name).unwrap()
+        );
+    }
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
+fn inspection_reports_unsupported_and_unnamed_controls_without_changing_xml() {
+    for (properties, content) in [
+        ("<w:tag w:val=\"x\"/><w:date/>", "<w:p/>"),
+        (
+            "<w:tag w:val=\"x\"/><w:text/><w:lock w:val=\"contentLocked\"/>",
+            "<w:p/>",
+        ),
+        ("<w:tag w:val=\"x\"/><w:text/><w:dataBinding/>", "<w:p/>"),
+        ("<w:tag w:val=\"x\"/><w:text/><w:showingPlcHdr/>", "<w:p/>"),
+        ("<w:tag w:val=\"x\"/><w:text/>", "<w:p/><w:p/>"),
+        (
+            "<w:tag w:val=\"x\"/><w:text/>",
+            "<w:r><w:t>Inline</w:t></w:r>",
+        ),
+        ("<w:text/>", "<w:p/>"),
+    ] {
+        let input = table_fixture(&format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:sdt><w:sdtPr>{properties}</w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt></w:body></w:document>"
+        ));
+        let original = fs::read(&input).unwrap();
+        let snapshot = crate::inspect_docx_content_controls(original.clone(), 0, 20);
+        assert!(snapshot.ok);
+        assert!(
+            !snapshot.controls[0].text_mutation_supported,
+            "{properties}"
+        );
+        assert!(!snapshot.controls[0].reasons.is_empty());
+        assert_eq!(fs::read(&input).unwrap(), original);
+        fs::remove_file(input).unwrap();
+    }
+    assert!(!crate::inspect_docx_content_controls(vec![], 0, 20).ok);
+}
+
+#[test]
+fn inspection_bounds_unicode_values_pages_and_uses_current_text() {
+    let mut controls = String::new();
+    for i in 0..105 {
+        write!(controls, "<w:sdt><w:sdtPr><w:tag w:val=\"{i}\"/><w:text/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:sdtContent></w:sdt>", "界".repeat(2001)).unwrap();
+    }
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body>{}<w:sdt><w:sdtPr><w:alias w:val=\"Only alias\"/><w:text/></w:sdtPr><w:sdtContent><w:p><w:del><w:r><w:t>Hidden</w:t></w:r></w:del><w:r><w:t>Visible</w:t></w:r></w:p></w:sdtContent></w:sdt></w:body></w:document>",
+        controls
+    ));
+    let bytes = fs::read(&input).unwrap();
+    let snapshot = crate::inspect_docx_content_controls(bytes.clone(), 0, usize::MAX);
+    assert_eq!(snapshot.controls.len(), 100);
+    assert!(snapshot.has_more);
+    assert_eq!(
+        snapshot.controls[0].text.as_ref().unwrap().chars().count(),
+        2000
+    );
+    assert!(snapshot.controls[0].truncated);
+    assert!(!snapshot.controls[0].text_mutation_supported);
+    let page = crate::inspect_docx_content_controls(bytes.clone(), 105, 20);
+    assert!(!page.has_more);
+    assert_eq!(page.controls[0].text.as_deref(), Some("Visible"));
+    assert_eq!(
+        page.controls[0].target.as_ref().unwrap().alias.as_deref(),
+        Some("Only alias")
+    );
+    assert!(
+        crate::inspect_docx_content_controls(bytes, usize::MAX, 20)
+            .controls
+            .is_empty()
+    );
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
+fn inspection_checks_the_actual_text_patch_guards_for_mixed_formatting_and_hidden_boundaries() {
+    for content in [
+        "<w:r><w:rPr><w:b/></w:rPr><w:t>Mixed</w:t></w:r><w:r><w:t> text</w:t></w:r>",
+        "<w:r><w:t>Mixed</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t> text</w:t></w:r>",
+    ] {
+        let input = table_fixture(&format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:sdt><w:sdtPr><w:tag w:val=\"mixed\"/><w:richText/></w:sdtPr><w:sdtContent><w:p>{content}</w:p></w:sdtContent></w:sdt></w:body></w:document>"
+        ));
+        let bytes = fs::read(&input).unwrap();
+        let inspected = crate::inspect_docx_content_controls(bytes.clone(), 0, 20);
+        assert!(!inspected.controls[0].text_mutation_supported);
+        assert!(!inspected.controls[0].reasons.is_empty());
+        let result = crate::execute_docx_set_content_control_text(
+            bytes,
+            &control_operation(Some("mixed"), None, "Mixed text", "New"),
+        );
+        assert!(result.output_artifact.is_none());
+        fs::remove_file(input).unwrap();
+    }
+}

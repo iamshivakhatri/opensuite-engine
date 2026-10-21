@@ -20,6 +20,11 @@ pub fn set_text_formatting(
         Ok(value) => value,
         Err(result) => return result,
     };
+    if let Err(result) =
+        validate_character_style(package, main, source, &runs, &operation.formatting)
+    {
+        return result;
+    }
     let patches = match range_text_formatting_patches(source, &runs, &operation.formatting) {
         Ok(value) => value,
         Err(result) => return result,
@@ -51,13 +56,95 @@ pub fn set_text_formatting_to_vec(
     source: &SourceDocument,
     operation: &SetTextFormatting,
 ) -> Result<Vec<u8>, OperationResult> {
-    let (_, runs) = resolve_formatting_runs(source, &operation.target)?;
-    write_patches_to_vec(
+    let (text, runs) = resolve_formatting_runs(source, &operation.target)?;
+    validate_character_style(package, main, source, &runs, &operation.formatting)?;
+    let output = write_patches_to_vec(
         package,
         main,
         source,
         range_text_formatting_patches(source, &runs, &operation.formatting)?,
-    )
+    )?;
+    let reopened = Package::from_bytes(output.clone()).map_err(document_invalid)?;
+    verify_text_formatting_package(&reopened, &operation.target, &text, &operation.formatting)?;
+    Ok(output)
+}
+
+fn validate_character_style(
+    package: &Package,
+    main: &Part,
+    source: &SourceDocument,
+    runs: &[FormattingRangeRun],
+    patch: &TextFormattingPatch,
+) -> Result<(), OperationResult> {
+    let Some(style_patch) = &patch.character_style_id else {
+        return Ok(());
+    };
+    ensure_document_unprotected(package, main)?;
+    for (run, _, _, _) in runs {
+        let rprs = source
+            .children(*run)
+            .filter(|id| word(source, *id, "rPr"))
+            .collect::<Vec<_>>();
+        if rprs.len() > 1 {
+            return Err(unsupported("run has duplicate properties"));
+        }
+        if let Some(rpr) = rprs.first() {
+            ensure_simple_property(source, *rpr, "rStyle")?;
+        }
+        let mut parent = source.node(*run).and_then(|n| n.parent());
+        while let Some(id) = parent {
+            if word(source, id, "tbl") {
+                table::ensure_simple_layout_table(source, id)?;
+                break;
+            }
+            parent = source.node(id).and_then(|n| n.parent());
+        }
+    }
+    let regions = runs
+        .iter()
+        .map(|(run, _, _, _)| source.node(*run).unwrap().span())
+        .collect::<Vec<_>>();
+    protected_range::ensure_safe_source_ranges(source, &regions, "UNSAFE_RUN_STRUCTURE", false)?;
+    if let PropertyPatch::Set(id) = style_patch {
+        let styles = crate::load_styles(package, main).map_err(document_invalid)?;
+        if let Some(styles) = &styles {
+            let source = styles.source();
+            let definitions = source
+                .children(source.root())
+                .filter(|node| {
+                    word(source, *node, "style")
+                        && source.node(*node).unwrap().attribute("styleId") == Some(id.as_str())
+                })
+                .collect::<Vec<_>>();
+            if definitions.len() > 1 {
+                return Err(OperationResult::failed(
+                    "DUPLICATE_STYLE_ID",
+                    "style ID matches multiple definitions",
+                ));
+            }
+            if definitions.first().is_some_and(|node| {
+                source.node(*node).unwrap().attribute("type") != Some("character")
+            }) {
+                return Err(OperationResult::failed(
+                    "STYLE_TYPE_MISMATCH",
+                    "requested style must be a character style",
+                ));
+            }
+        }
+        let style = styles
+            .as_ref()
+            .and_then(|styles| styles.style(&crate::StyleId::new(id.clone())))
+            .ok_or_else(|| {
+                OperationResult::failed("MISSING_STYLE", "character style ID was not found")
+            })?;
+        if style.style_type() != crate::StyleType::Character {
+            return Err(OperationResult::failed(
+                "STYLE_TYPE_MISMATCH",
+                "requested style must be a character style",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(in crate::mutation) fn table_cell_text_formatting_patches(
@@ -364,6 +451,15 @@ fn text_formatting_patches(
             .expect("run parent"),
     )?;
     let name = |local: &str| qualify(prefix, local);
+    if patch.character_style_id.is_some()
+        && source
+            .children(run)
+            .filter(|id| word(source, *id, "rPr"))
+            .count()
+            > 1
+    {
+        return Err(unsupported("run has duplicate properties"));
+    }
     let rpr = source.children(run).find(|id| word(source, *id, "rPr"));
     if rpr.is_none() {
         let children = new_text_formatting_children(patch, &name, prefix);
@@ -400,6 +496,25 @@ pub(crate) fn run_property_patches(
     let prefix = prefix.as_str();
     let name = |local: &str| qualify(prefix, local);
     let mut patches = Vec::new();
+    if let Some(value) = &patch.character_style_id {
+        ensure_simple_property(source, rpr, "rStyle")?;
+        text_simple_property(
+            source,
+            rpr,
+            "rStyle",
+            Some(match value {
+                PropertyPatch::Set(id) => format!(
+                    "<{} {}val=\"{}\"/>",
+                    name("rStyle"),
+                    attr_prefix(prefix),
+                    escape(id)
+                ),
+                PropertyPatch::Clear => String::new(),
+            }),
+            0,
+            &mut patches,
+        )?;
+    }
     text_boolean_property(
         source,
         rpr,
@@ -510,6 +625,14 @@ pub(crate) fn new_text_formatting_children(
     prefix: &str,
 ) -> String {
     let mut result = String::new();
+    if let Some(PropertyPatch::Set(id)) = &patch.character_style_id {
+        result.push_str(&format!(
+            "<{} {}val=\"{}\"/>",
+            name("rStyle"),
+            attr_prefix(prefix),
+            escape(id)
+        ));
+    }
     if let Some(PropertyPatch::Set(value)) = &patch.font_family {
         result.push_str(&font_xml(name, prefix, value));
     }
@@ -813,8 +936,17 @@ fn verify_text_formatting_output(
     patch: &TextFormattingPatch,
 ) -> Result<(), OperationResult> {
     let package = Package::open(output).map_err(document_invalid)?;
+    verify_text_formatting_package(&package, target, text, patch)
+}
+
+fn verify_text_formatting_package(
+    package: &Package,
+    target: &TextTarget,
+    text: &str,
+    patch: &TextFormattingPatch,
+) -> Result<(), OperationResult> {
     package.verify().map_err(document_invalid)?;
-    let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let (_, source) = crate::open_main_source(package).map_err(document_invalid)?;
     let (resolved, runs) = resolve_formatting_runs(&source, target)?;
     if resolved != text {
         return Err(OperationResult::failed(
@@ -831,7 +963,18 @@ fn verify_text_formatting_output(
                 .map(|rpr| crate::styles::run_formatting(&source, rpr))
                 .transpose()
                 .map_err(document_invalid)
-                .map(|direct| text_formatting_matches(&direct.unwrap_or_default(), patch))
+                .map(|direct| {
+                    let style_id = source
+                        .children(*run)
+                        .find(|id| word(&source, *id, "rPr"))
+                        .and_then(|rpr| {
+                            source.children(rpr).find(|id| word(&source, *id, "rStyle"))
+                        })
+                        .and_then(|id| source.node(id).unwrap().attribute("val"))
+                        .map(str::to_owned);
+                    matches_text_value(&style_id, patch.character_style_id.as_ref(), str::to_owned)
+                        && text_formatting_matches(&direct.unwrap_or_default(), patch)
+                })
         })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()

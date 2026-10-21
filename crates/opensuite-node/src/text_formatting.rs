@@ -8,6 +8,8 @@ use crate::{SimpleTask, TextTargetInput, text_target};
 #[napi(object)]
 pub struct SetTextFormattingInput {
     pub target: TextTargetInput,
+    /// Existing character style ID from style inspection. Clear with clear: ["characterStyleId"].
+    pub character_style_id: Option<String>,
     pub bold: Option<bool>,
     pub italic: Option<bool>,
     /// @schema {"minimum":1,"maximum":65535}
@@ -30,7 +32,7 @@ pub struct SetTextFormattingInput {
     pub base_revision: Option<String>,
 }
 
-/// Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous.
+/// Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Apply an existing character style with characterStyleId; clear: ["characterStyleId"] removes only that reference and restores inheritance. Other run properties remain unchanged. Occurrence is zero-based when ambiguous.
 #[napi(
     js_name = "executeDocxSetTextFormatting",
     ts_return_type = "Promise<ExecuteDocxReplaceTextOutput>"
@@ -71,6 +73,11 @@ pub fn execute_docx_set_text_formatting_node(
         operation: SetTextFormatting {
             target: text_target(operation.target),
             formatting: TextFormattingPatch {
+                character_style_id: property(
+                    operation.character_style_id,
+                    &clear,
+                    "characterStyleId",
+                ),
                 bold: property(operation.bold, &clear, "bold"),
                 italic: property(operation.italic, &clear, "italic"),
                 font_size_half_points: property(size, &clear, "fontSizeHalfPoints"),
@@ -88,6 +95,7 @@ pub fn execute_docx_set_text_formatting_node(
 }
 
 pub(crate) const TEXT_PROPERTIES: &[&str] = &[
+    "characterStyleId",
     "bold",
     "italic",
     "fontSizeHalfPoints",

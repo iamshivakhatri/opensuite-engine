@@ -141,9 +141,10 @@ fn properties(
     };
     let clear = input.clear.unwrap_or_default();
     for key in &clear {
-        if !["basedOn", "next"].contains(&key.as_str())
-            && !crate::text_formatting::TEXT_PROPERTIES.contains(&key.as_str())
-            && !PARAGRAPH_PROPERTIES.contains(&key.as_str())
+        if !(["basedOn", "next"].contains(&key.as_str())
+            || PARAGRAPH_PROPERTIES.contains(&key.as_str())
+            || key != "characterStyleId"
+                && crate::text_formatting::TEXT_PROPERTIES.contains(&key.as_str()))
         {
             return Err(napi::Error::from_reason(format!(
                 "unsupported style property to clear: {key}"
@@ -163,6 +164,7 @@ fn properties(
         based_on: property(input.based_on, &clear, "basedOn"),
         next: property(input.next, &clear, "next"),
         run: TextFormattingPatch {
+            character_style_id: None,
             bold: property(input.bold, &clear, "bold"),
             italic: property(input.italic, &clear, "italic"),
             font_family: property(input.font_family, &clear, "fontFamily"),

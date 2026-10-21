@@ -66,6 +66,11 @@ fn change_style(
             "creating a style requires an explicit display name",
         ));
     }
+    if properties.run.character_style_id.is_some() {
+        return Err(unsupported(
+            "style definitions cannot apply a character style reference",
+        ));
+    }
     validate_text_formatting(&properties.run)?;
     if matches!(
         properties.run.font_size_half_points,

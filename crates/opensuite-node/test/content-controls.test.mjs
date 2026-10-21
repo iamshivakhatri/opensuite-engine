@@ -75,3 +75,49 @@ test('updates one duplicate content control by occurrence', async () => {
   })
   assert.equal(locked.result.diagnostics[0].code, 'UNSUPPORTED_OPERATION')
 })
+
+test('inspection supplies exact selectors for duplicates and reports unsupported controls', async () => {
+  const input = contentControlsDocx()
+  const before = Buffer.from(input)
+  const snapshot = JSON.parse(await binding.inspectDocxContentControls(input))
+  assert.equal(snapshot.ok, true)
+  assert.equal(snapshot.total, 3)
+  assert.deepEqual(input, before)
+  assert.equal(snapshot.controls[1].targetMatchCount, 2)
+  assert.equal(snapshot.controls[1].textMutationSupported, true)
+  assert.equal(snapshot.controls[1].target.occurrence, 1)
+  assert.equal(snapshot.controls[1].paragraphIndex, 1)
+  assert.equal(snapshot.controls[2].textMutationSupported, false)
+  assert.ok(snapshot.controls[2].reasons.some(r => r.includes('unlocked')))
+  const selected = snapshot.controls[1]
+  const edited = await binding.executeDocxSetContentControlText(input, { target: selected.target, expectedCurrentText: selected.text, replacement: 'Selected by inspection' })
+  assert.equal(edited.result.ok, true)
+  const reopened = JSON.parse(await binding.inspectDocxContentControls(edited.output, { offset: 1, limit: 1 }))
+  assert.equal(reopened.controls[0].text, 'Selected by inspection')
+  assert.equal(reopened.hasMore, true)
+})
+
+test('inspection handles aliases, limits, unsupported inline controls and read-only failures', async () => {
+  const { editDocument } = await import('./picture-support.mjs')
+  const control = (properties, content) => `<w:sdt><w:sdtPr>${properties}</w:sdtPr><w:sdtContent>${content}</w:sdtContent></w:sdt>`
+  const paragraph = text => `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`
+  const controls = [
+    control('<w:alias w:val="Client name"/><w:text/>', paragraph('Alias only')),
+    control('<w:tag w:val="date"/><w:date/>', paragraph('2026-10-20')),
+    control('<w:tag w:val="long"/><w:text/>', paragraph('界'.repeat(2001))),
+    `<w:p>${control('<w:tag w:val="inline"/><w:text/>', '<w:r><w:t>Inline</w:t></w:r>')}</w:p>`,
+  ].join('')
+  const input = editDocument(binding.createBlankDocx(), xml => xml.replace('<w:body>', `<w:body>${controls}`))
+  const snapshot = JSON.parse(await binding.inspectDocxContentControls(input, { limit: 100 }))
+  assert.equal(snapshot.total, 4)
+  assert.equal(snapshot.controls[0].target.alias, 'Client name')
+  assert.equal(snapshot.controls[0].textMutationSupported, true)
+  assert.equal(snapshot.controls[1].kind, 'date')
+  assert.equal(snapshot.controls[1].textMutationSupported, false)
+  assert.equal([...snapshot.controls[2].text].length, 2000)
+  assert.equal(snapshot.controls[2].truncated, true)
+  assert.equal(snapshot.controls[2].textMutationSupported, false)
+  assert.equal(snapshot.controls[3].container, 'inline')
+  assert.equal(snapshot.controls[3].textMutationSupported, false)
+  assert.equal(JSON.parse(await binding.inspectDocxContentControls(Buffer.from('bad'))).ok, false)
+})

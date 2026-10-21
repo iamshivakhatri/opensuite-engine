@@ -77,3 +77,65 @@ with zipfile.ZipFile(sys.argv[1]) as a,zipfile.ZipFile(sys.argv[2]) as b:
   assert.equal(snapshot.styles.find(s => s.styleId === 'ImportedCustom').paragraphUsageCount, 1)
   }
 })
+
+test('existing character styles apply to partial text and clear without altering other formatting or styles', async () => {
+  const { documentXml, editDocument, packageParts } = await import('./picture-support.mjs')
+  let input = await apply(binding.createBlankDocx(), 'executeDocxInsertParagraph', { text: 'Before selected text after', placement: { kind: 'end' } })
+  input = await apply(input, 'executeDocxCreateStyle', { styleId: 'Accent', styleType: 'character', name: 'Accent display name', italic: true, color: '124733' })
+  input = editDocument(input, xml => xml.replace('<w:t>Before selected text after</w:t>', '<w:rPr><w:b/><w:lang w:val="en-US"/></w:rPr><w:t>Before selected text after</w:t>'))
+  const output = await apply(input, 'executeDocxSetTextFormatting', { target: { text: 'selected text' }, characterStyleId: 'Accent' })
+  assert.equal((documentXml(output).match(/<w:rStyle w:val="Accent"\/>/g) ?? []).length, 1)
+  assert.match(documentXml(output), /<w:rStyle w:val="Accent"\/><w:b\/><w:lang w:val="en-US"\/>/)
+  const before = packageParts(input), after = packageParts(output)
+  for (const name of Object.keys(before).filter(n => n !== 'word/document.xml')) assert.deepEqual(after[name], before[name], name)
+  const cleared = await apply(output, 'executeDocxSetTextFormatting', { target: { text: 'selected text' }, clear: ['characterStyleId'] })
+  assert.doesNotMatch(documentXml(cleared), /<w:rStyle/)
+  assert.match(documentXml(cleared), /<w:b\/><w:lang w:val="en-US"\/>/)
+  assert.equal((await binding.findDocxText(cleared, { text: 'Before selected text after' })).matchCount, 1)
+})
+
+test('native character styles reject invalid types, missing IDs and protected targets without output', async () => {
+  const { editDocument, editParts } = await import('./picture-support.mjs')
+  let input = await apply(binding.createBlankDocx(), 'executeDocxInsertParagraph', { text: 'Target text', placement: { kind: 'end' } })
+  input = await apply(input, 'executeDocxCreateStyle', { styleId: 'Accent', styleType: 'character', name: 'Accent', italic: true })
+  for (const [style, code] of [['Normal', 'STYLE_TYPE_MISMATCH'], ['Missing', 'MISSING_STYLE']]) {
+    const result = await binding.executeDocxSetTextFormatting(input, { target: { text: 'Target text' }, characterStyleId: style })
+    assert.equal(result.result.diagnostics[0].code, code); assert.equal(result.output, undefined)
+  }
+  for (const edit of [
+    xml => xml.replace('<w:p>', '<w:bookmarkStart w:id="8"/><w:p>').replace('</w:p>', '</w:p><w:bookmarkEnd w:id="8"/>'),
+    xml => xml.replace('<w:r>', '<w:r><w:rPr><w:rStyle/><w:rStyle/></w:rPr>'),
+    xml => xml.replace('<w:r>', '<w:hyperlink><w:r>').replace('</w:r>', '</w:r></w:hyperlink>'),
+  ]) {
+    const result = await binding.executeDocxSetTextFormatting(editDocument(input, edit), { target: { text: 'Target text' }, characterStyleId: 'Accent' })
+    assert.equal(result.result.ok, false); assert.equal(result.output, undefined)
+  }
+  const protectedInput = editParts(input, parts => {
+    parts['word/settings.xml'] = Buffer.from(parts['word/settings.xml'].toString().replace('</w:settings>', '<w:documentProtection w:enforcement="1"/></w:settings>'))
+    return parts
+  })
+  const protectedResult = await binding.executeDocxSetTextFormatting(protectedInput, { target: { text: 'Target text' }, characterStyleId: 'Accent' })
+  assert.equal(protectedResult.result.ok, false); assert.equal(protectedResult.output, undefined)
+})
+
+test('imported character style definitions and unselected references survive application and removal', async () => {
+  const { editDocument, editParts, packageParts, documentXml } = await import('./picture-support.mjs')
+  let input = await apply(binding.createBlankDocx(), 'executeDocxInsertParagraphs', { texts: ['Apply here', 'Keep reference'], placement: {kind:'end'} })
+  input = editParts(input, parts => {
+    parts['word/styles.xml'] = Buffer.from(parts['word/styles.xml'].toString().replace('</w:styles>', '<w:style w:type="character" w:styleId="ImportedAccent" w:customStyle="1"><w:name w:val="Imported accent"/><w:aliases w:val="Imported alias"/><w:rPr><w:i/><w:color w:val="124733"/></w:rPr></w:style><w:style w:type="table" w:styleId="TableOnly"><w:name w:val="Table only"/></w:style></w:styles>'))
+    return parts
+  })
+  input = editDocument(input, xml => xml.replace('<w:t>Keep reference</w:t>', '<w:rPr><w:rStyle w:val="ImportedAccent"/></w:rPr><w:t>Keep reference</w:t>'))
+  const applied = await apply(input, 'executeDocxSetTextFormatting', {target:{text:'Apply here'},characterStyleId:'ImportedAccent'})
+  const cleared = await apply(applied, 'executeDocxSetTextFormatting', {target:{text:'Apply here'},clear:['characterStyleId']})
+  assert.equal(documentXml(cleared).replace("<w:rPr></w:rPr>", ""),documentXml(input))
+  assert.deepEqual(packageParts(cleared)['word/styles.xml'],packageParts(input)['word/styles.xml'])
+  const wrongType = await binding.executeDocxSetTextFormatting(input,{target:{text:'Apply here'},characterStyleId:'TableOnly'})
+  assert.equal(wrongType.result.diagnostics[0].code,'STYLE_TYPE_MISMATCH'); assert.equal(wrongType.output,undefined)
+  const ambiguous = editParts(input, parts => {
+    parts['word/styles.xml'] = Buffer.from(parts['word/styles.xml'].toString().replace('</w:styles>', '<w:style w:type="table" w:styleId="ImportedAccent"/></w:styles>'))
+    return parts
+  })
+  const duplicate = await binding.executeDocxSetTextFormatting(ambiguous,{target:{text:'Apply here'},characterStyleId:'ImportedAccent'})
+  assert.equal(duplicate.result.diagnostics[0].code,'DUPLICATE_STYLE_ID'); assert.equal(duplicate.output,undefined)
+})

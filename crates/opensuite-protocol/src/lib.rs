@@ -167,6 +167,11 @@ pub const DOCX_CAPABILITIES: &[DocxCapability] = &[
     DocxCapability::rust("pictures", DocxCapabilityKind::Feature),
     DocxCapability::rust("fields", DocxCapabilityKind::Feature),
     DocxCapability::rust("content_controls", DocxCapabilityKind::Feature),
+    DocxCapability::node(
+        "inspect_content_controls",
+        DocxCapabilityKind::Read,
+        "inspectDocxContentControls",
+    ),
     DocxCapability::rust("tracked_changes", DocxCapabilityKind::Feature),
     DocxCapability::rust("comments", DocxCapabilityKind::Feature),
     DocxCapability::node(
@@ -951,9 +956,18 @@ pub struct TableCellTextFormatting {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TableCellFormattingUpdate {
+    pub alignment: Option<PropertyPatch<TableAlignment>>,
+    pub vertical_alignment: Option<PropertyPatch<CellVerticalAlignment>>,
     pub target: TableCellTarget,
     pub fill: Option<String>,
     pub text_formatting: Option<TableCellTextFormatting>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CellVerticalAlignment {
+    Top,
+    Center,
+    Bottom,
 }
 
 /// Formats several cells of one simple table in a single mutation.
@@ -1033,6 +1047,8 @@ pub struct SetParagraphFormatting {
 /// Direct character formatting expressed in native Word half-point units.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextFormattingPatch {
+    /// Existing character style ID; clear removes only the run style reference.
+    pub character_style_id: Option<PropertyPatch<String>>,
     pub bold: Option<PropertyPatch<bool>>,
     pub italic: Option<PropertyPatch<bool>>,
     pub font_size_half_points: Option<PropertyPatch<u16>>,
@@ -2266,7 +2282,7 @@ mod tests {
 
         assert_eq!(
             json.replace("\"style_snapshot\",", ""),
-            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","inspect_images","read_embedded_image","pictures","fields","content_controls","tracked_changes","comments","inspect_notes","insert_note","update_note","delete_note","inspect_comments","inspect_fields","insert_fields","insert_toc","inspect_tracked_changes","accept_revision","reject_revision","insert_tracked_text","delete_tracked_text","replace_text_with_tracked_change","add_comment","update_comment","delete_comment","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","layout_snapshot","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","create_style","update_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","set_picture_layout","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","set_table_spacing","set_table_row_layout","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
+            r#"{"engine_version":"0.1.0","formats":[{"capabilities":["inspect","text","tables","styles","paragraph_formatting","numbering","sections","headers_footers","references","inspect_images","read_embedded_image","pictures","fields","content_controls","inspect_content_controls","tracked_changes","comments","inspect_notes","insert_note","update_note","delete_note","inspect_comments","inspect_fields","insert_fields","insert_toc","inspect_tracked_changes","accept_revision","reject_revision","insert_tracked_text","delete_tracked_text","replace_text_with_tracked_change","add_comment","update_comment","delete_comment","revision_views","replace_text","create_blank_docx","body_blocks","insert_page_break","delete_page_break","set_page_setup","set_header_footer_text","set_page_number","inspect_sections","layout_snapshot","insert_section_break","set_section_properties","set_section_header_footer","set_odd_even_headers","insert_paragraph","insert_paragraphs","insert_paragraph_after","delete_paragraph","set_table_cell_text","set_content_control_text","set_paragraph_formatting","set_text_formatting","set_hyperlink","set_paragraph_style","create_style","update_style","set_paragraphs_list","replace_picture","delete_picture","set_picture_size","set_picture_layout","insert_picture","insert_table_row","insert_table_rows","set_table_cells_text","semantic_table_cell_targets","insert_table_column","create_table","delete_table","delete_table_row","semantic_table_row_deletion","delete_table_column","set_table_formatting","set_table_column_widths","set_table_cell_shading","set_table_cells_formatting","set_table_spacing","set_table_row_layout","find_text","inspect_context"],"format":"docx"}],"protocol_version":1}"#
         );
         assert!(json.contains("style_snapshot"));
         assert!(!json.contains("mutation"));

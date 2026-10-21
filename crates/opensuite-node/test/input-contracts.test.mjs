@@ -39,3 +39,19 @@ test('a new Rust input automatically gains a JSON schema; unsupported inputs sto
   assert.deepEqual(definition.inputSchema.properties, { target: { type: 'string' }, value: { type: 'boolean' } })
   assert.throws(() => inputContracts('export declare function bad(bytes: Buffer, op: Unknown): void'), /Unknown or recursive/)
 })
+
+test('E5A uses one new read API and extends existing formatting input contracts', () => {
+  const operations = engine.getDocxCapabilities().formats[0].operations
+  const read = operations.find(op => op.id === 'inspect_content_controls')
+  assert.equal(read.nodeExport, 'inspectDocxContentControls')
+  assert.equal(read.jsonOutput, true)
+  const inspection = JSON.parse(read.inputSchema)
+  assert.equal(inspection.properties.limit.maximum, 100)
+  const cell = JSON.parse(operations.find(op => op.id === 'set_table_cells_formatting').inputSchema).properties.updates.items.properties
+  assert.deepEqual(cell.alignment.enum, ['left', 'center', 'right'])
+  assert.deepEqual(cell.verticalAlignment.enum, ['top', 'center', 'bottom'])
+  assert.deepEqual(cell.clear.items.enum, ['alignment', 'verticalAlignment'])
+  const text = JSON.parse(operations.find(op => op.id === 'set_text_formatting').inputSchema)
+  assert.equal(text.properties.characterStyleId.type, 'string')
+  assert.equal(text.required.includes('characterStyleId'), false)
+})

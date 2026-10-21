@@ -2448,7 +2448,7 @@
     "jsonOutput": false
   },
   "executeDocxSetTableCellsFormatting": {
-    "description": "Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them.",
+    "description": "Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Alignment applies to every direct cell paragraph; verticalAlignment applies to the cell. clear: [\"alignment\", \"verticalAlignment\"] restores inheritance. Simple multi-paragraph cells are supported when alignment is requested. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2576,6 +2576,34 @@
                 "required": [],
                 "additionalProperties": false,
                 "description": "Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells."
+              },
+              "alignment": {
+                "type": "string",
+                "enum": [
+                  "left",
+                  "center",
+                  "right"
+                ],
+                "description": "Applies to every direct paragraph, including empty paragraphs. Omission preserves alignment."
+              },
+              "verticalAlignment": {
+                "type": "string",
+                "enum": [
+                  "top",
+                  "center",
+                  "bottom"
+                ]
+              },
+              "clear": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "alignment",
+                    "verticalAlignment"
+                  ]
+                },
+                "description": "Remove direct alignment and restore inheritance; omitted properties stay unchanged."
               },
               "fill": {
                 "type": "string"
@@ -3175,7 +3203,7 @@
     "jsonOutput": false
   },
   "executeDocxSetTextFormatting": {
-    "description": "Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous.",
+    "description": "Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Apply an existing character style with characterStyleId; clear: [\"characterStyleId\"] removes only that reference and restores inheritance. Other run properties remain unchanged. Occurrence is zero-based when ambiguous.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3197,6 +3225,10 @@
             "text"
           ],
           "additionalProperties": false
+        },
+        "characterStyleId": {
+          "type": "string",
+          "description": "Existing character style ID from style inspection. Clear with clear: [\"characterStyleId\"]."
         },
         "bold": {
           "type": "boolean"
@@ -3586,6 +3618,28 @@
   },
   "inspectDocxComments": {
     "description": "Inspect standard comments, author/date, bounded text, attached text, source-order paragraph locations, fresh handles, and malformed/orphan diagnostics. Default 20; maximum 100 per page. Re-inspect after editing. Resolved state and replies are unavailable.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "jsonInput": true,
+    "jsonOutput": true
+  },
+  "inspectDocxContentControls": {
+    "description": "Inspect main-document content controls: tag, alias, kind, bounded current text, part/paragraph location, exact mutation target with occurrence, and unsupported reasons. Copy target and complete text to set_content_control_text. Default 20, maximum 100 records; strings capped at 2000 characters. Truncated values cannot be used for mutation. Does not change XML.",
     "inputSchema": {
       "type": "object",
       "properties": {

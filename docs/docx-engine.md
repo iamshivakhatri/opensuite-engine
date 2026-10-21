@@ -95,6 +95,137 @@ DOCX mutations, including section editing, are exposed through Node/N-API.
 Capability details are kept in [status.md](status.md).
 
 
+## Content controls, cell alignment and character styles (E5A)
+
+`inspect_docx_content_controls` / Node `inspectDocxContentControls` is a read-only,
+JSON-output operation for structured document tags (Word content controls) in the
+main document. It reuses the source-backed SDT parser and the existing text
+mutation's selector and patch checks. Records include tag, alias, kind, current
+text, main part name, zero-based paragraph index, enclosing container, exact
+`target`, `targetMatchCount`, `textMutationSupported`, and refusal reasons.
+The paragraph is the enclosing paragraph for inline controls or the first
+contained paragraph for block controls. Header/footer controls are outside this
+inspection. No SDT XML is authored or changed by inspection.
+
+Defaults are offset zero and 20 records; limit is clamped to 1–100. Text, tag and
+alias are bounded to 2,000 Unicode characters. `truncated` values disable
+`textMutationSupported`; truncated selectors are not returned. Deleted/moved-from
+text is excluded. Unnamed controls remain inspectable but cannot be targeted.
+Targets include both available tag/alias values and an explicit zero-based
+occurrence among their matches. `OCCURRENCE_REQUIRED` explains duplicates; the
+returned target already resolves them. Absent tag/alias fields are omitted from
+the target so it can be passed directly to the existing native mutation. Refresh
+inspection after content changes. `expectedCurrentText` still guards the edit.
+
+Supported text mutations retain their existing limits: explicitly typed,
+unlocked, unbound text/rich-text controls without placeholder state, containing
+one ordinary direct paragraph. Inline controls, other control kinds, multiple
+paragraphs, incompatible run formatting, hidden boundaries, fields, wrappers and
+unsafe source text are reported with reasons. A complete inspection record does
+not bypass package validation or the mutation's existing preservation checks.
+
+```js
+const snapshot = JSON.parse(await engine.inspectDocxContentControls(bytes, { limit: 20 }))
+if (!snapshot.ok) throw new Error(JSON.stringify(snapshot.diagnostics))
+const control = snapshot.controls.find(item => item.textMutationSupported)
+if (!control) throw new Error('No supported content control on this page')
+const edit = await engine.executeDocxSetContentControlText(bytes, {
+  target: control.target,
+  expectedCurrentText: control.text,
+  replacement: 'Updated client name',
+})
+if (!edit.result.ok) throw new Error(JSON.stringify(edit.result.diagnostics))
+bytes = edit.output
+```
+
+The existing `set_table_cells_formatting` /
+`executeDocxSetTableCellsFormatting` accepts two optional fields on each update:
+
+- `alignment`: `left`, `center`, or `right`, authored as `w:jc` on **every direct
+  paragraph in the selected cell**, including empty paragraphs. There is no
+  first-paragraph-only behavior or paragraph selection inside a cell.
+- `verticalAlignment`: `top`, `center`, or `bottom`, authored as one `w:vAlign`
+  in the cell's `w:tcPr` properties.
+- `clear: ['alignment', 'verticalAlignment']`: remove either/both direct
+  properties and restore inheritance. Clearing an absent property is a no-op;
+  it does not write an explicit default. As with other formatting patches,
+  clearing a property takes precedence over a simultaneous set value.
+
+Existing table, row/column, legacy label and cell-handle selectors are reused.
+All updates remain atomic, with the existing 1–100 update bound. Omitted fields
+preserve imported properties and existing defaults. Alignment supports simple
+multi-paragraph cells; fill/text-only updates keep their earlier single-paragraph
+limits. Combining text formatting with alignment still requires ordinary text
+runs in each paragraph. Cell text, run properties, styles, widths, margins,
+borders, row heights and other package parts remain source-backed. Repeated
+alignment requests do not duplicate properties. Changed scalar properties with
+unknown attributes/children, duplicate property containers, merged/omitted,
+nested, floating/wrapped, protected or ambiguous table structures fail safely.
+Active document protection and pending property history are refused. Reopen
+checks verify cell text and the requested alignment values.
+
+```js
+await engine.executeDocxSetTableCellsFormatting(bytes, {
+  table: { handle: 't0' }, // Use a current inspected table handle or semantic selector.
+  updates: [{
+    target: { row: { kind: 'header' }, column: { kind: 'first' } },
+    alignment: 'center',
+    verticalAlignment: 'center',
+  }],
+})
+```
+
+The existing `set_text_formatting` / `executeDocxSetTextFormatting` accepts
+`characterStyleId`, an existing character style ID from style inspection. It
+writes `w:rStyle` before other run properties, using the current exact-text,
+occurrence, and partial/multiple-run splitting infrastructure. Style IDs are
+used, not display names. Missing IDs return `MISSING_STYLE`; paragraph-style IDs
+return `STYLE_TYPE_MISMATCH`. `clear: ['characterStyleId']` removes only the
+selected run reference, including unknown imported references, and restores
+inheritance. Other direct formatting, unselected style references, imported style
+definitions and unrelated XML remain unchanged. No style definitions are created
+or rewritten by application/removal, and direct formatting can still override
+style properties.
+
+Ordinary body text and existing supported simple table-cell text are accepted.
+Ambiguous text requires an explicit occurrence. Wrappers, revisions, protected
+ranges/documents, fields, unsafe runs, duplicate `rPr`/`rStyle`, and unfamiliar
+attributes/children on a changed style reference fail without output. Existing
+single-paragraph cell targeting limits remain. There is no new character-style
+operation or general style cascade; `TextFormattingPatch.character_style_id`
+uses the existing Rust `PropertyPatch::Set/Clear` convention. Style definitions
+continue to use `basedOn` for inheritance rather than a run style reference.
+
+```js
+await engine.executeDocxSetTextFormatting(bytes, {
+  target: { text: 'Selected phrase' }, characterStyleId: 'Accent',
+})
+// Removal: same target with clear: ['characterStyleId'].
+```
+
+Native capability metadata, declarations and input schemas include the read
+operation and both formatting extensions. Consumers need a native build from
+this change, must JSON-parse the inspection result, and must expose these optional
+fields through their existing formatting tools. No application changes, package
+publication, version/pin changes, or paid model calls are part of E5A.
+
+Focused Rust/native tests cover inspection-to-mutation, duplicate/alias targets,
+unsupported controls, bounds, all alignments, multiple/empty paragraphs, clearing,
+existing formatting and package preservation, style creation/application/removal,
+invalid IDs/types, protected structures, alternate prefixes and save/reopen.
+Four temporary LibreOffice renders of applied and cleared formatting each produced
+one visually reviewed page, including a LibreOffice-produced DOCX edited through
+the native binding. LibreOffice renamed the imported character style ID; fresh
+style inspection supplied the correct ID. Native edits preserved its stylesheet,
+unselected style references and all nine unrelated package parts byte-for-byte. Left/center/right and top/center/bottom positions were
+correct for single and multiple paragraphs. The character style changed size,
+color and italics while retaining direct bold; clearing restored inherited text
+formatting and left/top cell positions while preserving shading/borders. No
+clipping or missing text was observed. Word/Google Docs review remains untested.
+E5B is unstarted; application integration and broader interoperability checks
+remain follow-up work. Richer SDT authoring/editing and a general style cascade
+remain outside this change.
+
 ## Native table layout controls (E4)
 
 Rust `SetTableSpacing` / Node `executeDocxSetTableSpacing` inserts a gap only

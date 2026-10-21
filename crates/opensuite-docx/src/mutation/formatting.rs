@@ -6,7 +6,8 @@ mod text;
 
 pub use paragraph::*;
 pub(super) use paragraph::{
-    alignment_value, new_formatting_children, paragraph_property_patches, simple_property,
+    alignment_value, formatting_patches, new_formatting_children, paragraph_property_patches,
+    simple_property,
 };
 pub(super) use text::table_cell_text_formatting_patches;
 pub use text::*;

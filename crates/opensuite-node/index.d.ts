@@ -45,6 +45,12 @@ export interface CommentInspectionInput {
   limit?: number
 }
 
+export interface ContentControlInspectionInput {
+  offset?: number
+  /** @schema {"minimum":1,"maximum":100} */
+  limit?: number
+}
+
 export interface ContentControlTargetInput {
   tag?: string
   alias?: string
@@ -305,7 +311,7 @@ export declare function executeDocxSetSectionHeaderFooter(input: Buffer, operati
 /** Edit one section using its latest inspected handle. Margins use twips (1440 = one inch). Restart numbering with pageNumberStart or continuePageNumbering=true. */
 export declare function executeDocxSetSectionProperties(input: Buffer, operation: SetSectionPropertiesInput): Promise<ExecuteDocxReplaceTextOutput>
 
-/** Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them. */
+/** Format known whole table cells using table + row + column, including header and first-column cells, without find or inspect handles. Format all relevant cells in one call; set fill and direct text formatting together when needed. Alignment applies to every direct cell paragraph; verticalAlignment applies to the cell. clear: ["alignment", "verticalAlignment"] restores inheritance. Simple multi-paragraph cells are supported when alignment is requested. Supports fill (6-digit RGB), bold, italic, font family, font size in half-points, and text color. Handles remain available for cells that need them. */
 export declare function executeDocxSetTableCellsFormatting(input: Buffer, operation: SetTableCellsFormattingInput): Promise<ExecuteDocxReplaceTextOutput>
 
 /** Shade known table cells in one call using table + row + column, including header and first-column cells. Fill is 6-digit RGB without #; omit fill to clear. Use set_table_cells_formatting for fill and text together. */
@@ -329,7 +335,7 @@ export declare function executeDocxSetTableRowLayout(input: Buffer, operation: S
 /** Set an exact paragraph gap in points between two adjacent body tables (8 points = 160 twips). Reuses only an existing engine-authored separator; refuses arbitrary intervening content. Requires fresh layout handles for both tables. Preserves intentional adjacency until explicitly called. */
 export declare function executeDocxSetTableSpacing(input: Buffer, operation: SetTableSpacingInput): Promise<ExecuteDocxReplaceTextOutput>
 
-/** Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous. */
+/** Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Apply an existing character style with characterStyleId; clear: ["characterStyleId"] removes only that reference and restores inheritance. Other run properties remain unchanged. Occurrence is zero-based when ambiguous. */
 export declare function executeDocxSetTextFormatting(input: Buffer, operation: SetTextFormattingInput): Promise<ExecuteDocxReplaceTextOutput>
 
 /** Replace plain comment text using a fresh inspect_comments handle. Anchor, author, initials, and date stay unchanged. Inspect again after every edit. */
@@ -559,6 +565,12 @@ export declare function inspectDocx(input: Buffer, request: InspectDocxInput): P
  * @jsonOutput
  */
 export declare function inspectDocxComments(input: Buffer, options?: CommentInspectionInput | undefined | null): Promise<string>
+
+/**
+ * Inspect main-document content controls: tag, alias, kind, bounded current text, part/paragraph location, exact mutation target with occurrence, and unsupported reasons. Copy target and complete text to set_content_control_text. Default 20, maximum 100 records; strings capped at 2000 characters. Truncated values cannot be used for mutation. Does not change XML.
+ * @jsonOutput
+ */
+export declare function inspectDocxContentControls(input: Buffer, options?: ContentControlInspectionInput | undefined | null): Promise<string>
 
 /**
  * Inspect Word fields including TOC, PAGE, NUMPAGES, DATE, and unknown instructions. Returns bounded instruction and cached text separately, representation, part/paragraph location, dirty/locked flags when present, common TOC heading levels, and structural diagnostics. Main document and header/footer parts. Default 20, maximum 100 records; text capped at 2000 characters. Dirty means refresh requested; absent flags do not prove results are current. Does not calculate or edit fields.
@@ -1012,6 +1024,8 @@ export interface SetTableSpacingInput {
 
 export interface SetTextFormattingInput {
   target: TextTargetInput
+  /** Existing character style ID from style inspection. Clear with clear: ["characterStyleId"]. */
+  characterStyleId?: string
   bold?: boolean
   italic?: boolean
   /** @schema {"minimum":1,"maximum":65535} */
@@ -1092,6 +1106,18 @@ export interface TableCellColumnInput {
 export interface TableCellFormattingUpdateInput {
   /** @schema {"description":"Prefer row + column. Use a handle only when these selectors cannot express the cell. Legacy rowLabel + columnHeader remains supported for data cells."} */
   target: SemanticTableCellTargetInput
+  /**
+   * Applies to every direct paragraph, including empty paragraphs. Omission preserves alignment.
+   * @schema {"enum":["left","center","right"]}
+   */
+  alignment?: string
+  /** @schema {"enum":["top","center","bottom"]} */
+  verticalAlignment?: string
+  /**
+   * Remove direct alignment and restore inheritance; omitted properties stay unchanged.
+   * @schema {"items":{"type":"string","enum":["alignment","verticalAlignment"]}}
+   */
+  clear?: Array<string>
   fill?: string
   textFormatting?: TableCellTextFormattingInput
 }

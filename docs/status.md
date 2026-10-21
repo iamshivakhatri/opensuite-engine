@@ -1,5 +1,37 @@
 # OpenSuite Engine Status
 
+## Content controls, cell alignment and character styles (E5A, local)
+
+New read-only Rust/N-API `inspect_docx_content_controls` /
+`inspectDocxContentControls` exposes bounded tags, aliases, kinds, current text,
+part/paragraph locations, exact duplicate-safe targets and mutation support
+reasons. It reuses SDT parsing and the existing content-control mutation's own
+selector/patch checks. Main document only; default 20/max 100 records and
+2,000-character strings. Inspection never changes XML.
+
+Existing `set_table_cells_formatting` adds left/center/right paragraph alignment
+for every direct cell paragraph and top/center/bottom vertical cell alignment.
+Clearing removes direct properties and restores inheritance. Multiple/empty
+paragraphs are supported for alignment without changing earlier fill/text-only
+limits or defaults. Existing `set_text_formatting` adds `characterStyleId` and
+`clear: ['characterStyleId']`, reusing exact text targeting, partial-run splitting,
+style loading, source patches and protected-range guards. Other run/cell XML,
+imported styles and untouched package parts remain preserved. Unsafe, protected,
+merged/nested/wrapped or ambiguous structures fail without output. Full contracts,
+examples and limits are in [DOCX E5A controls](docx-engine.md#content-controls-cell-alignment-and-character-styles-e5a).
+
+243 DOCX / 20 OPC / 4 protocol / 3 Node Rust and 64 native Node tests pass,
+including E1–E4 regressions. Workspace compilation/tests, strict Clippy for
+DOCX/OPC/protocol/Node/CLI, formatting, SDK declaration/schema checks and diff
+checks pass. Four temporary LibreOffice renders produced four visually reviewed
+pages, including edits to a LibreOffice-saved DOCX: correct single/multiple-paragraph
+alignment and character style rendering; clearing restored inheritance while
+retaining bold, shading and borders. Imported style definitions and all nine
+unrelated package parts remained byte-identical during native edits. No
+clipping/missing text was observed. Word/Google Docs checks and application tool
+integration remain pending; E5B is unstarted. Engine-only: no application
+TypeScript, paid calls, version/pin changes, publishing or push.
+
 ## Native table layout controls (E4, local)
 
 New Rust/N-API `set_table_spacing` / `executeDocxSetTableSpacing` and

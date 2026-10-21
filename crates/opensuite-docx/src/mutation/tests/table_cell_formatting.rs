@@ -12,6 +12,8 @@ fn input() -> std::path::PathBuf {
 
 fn update(handle: &str, fill: Option<&str>, bold: bool) -> TableCellFormattingUpdate {
     TableCellFormattingUpdate {
+        alignment: None,
+        vertical_alignment: None,
         target: TableCellTarget {
             row: None,
             column: None,
@@ -270,4 +272,141 @@ fn supports_fill_only_and_text_only_and_rejects_all_invalid_updates_atomically()
     }
     assert!(!cell_xml(&original, 0, 0, 0).contains("<w:b"));
     fs::remove_file(path).unwrap();
+}
+
+fn alignment_update() -> TableCellFormattingUpdate {
+    let mut u = update("t0:r0:c0", None, false);
+    u.alignment = Some(PropertyPatch::Set(TableAlignment::Right));
+    u.vertical_alignment = Some(PropertyPatch::Set(
+        opensuite_protocol::CellVerticalAlignment::Bottom,
+    ));
+    u
+}
+
+#[test]
+fn aligns_all_cell_paragraphs_and_preserves_text_and_existing_cell_properties() {
+    let keep = "<w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:tcBorders><w:top w:val=\"single\" w:sz=\"8\"/></w:tcBorders><w:tcMar><w:left w:w=\"90\" w:type=\"dxa\"/></w:tcMar>";
+    let input = table_fixture(&format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:tcPr>{keep}<w:hideMark/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"80\"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>First</w:t></w:r></w:p><w:p/><w:p><w:r><w:t>Second</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+    ));
+    let original = fs::read(&input).unwrap();
+    let mut u = alignment_update();
+    u.fill = Some("ABCDEF".into());
+    let op = operation(vec![u]);
+    let output = crate::execute_docx_set_table_cells_formatting(original.clone(), &op)
+        .output_artifact
+        .unwrap();
+    let xml = cell_xml(&output, 0, 0, 0);
+    assert_eq!(xml.matches("<w:jc w:val=\"right\"/>").count(), 3);
+    assert_eq!(xml.matches("<w:vAlign w:val=\"bottom\"/>").count(), 1);
+    assert!(xml.contains("<w:vAlign w:val=\"bottom\"/><w:hideMark/>"));
+    for keep in [
+        "<w:tcW w:w=\"2400\" w:type=\"dxa\"/>",
+        "<w:tcMar><w:left w:w=\"90\" w:type=\"dxa\"/></w:tcMar>",
+        "<w:i/>",
+        "<w:spacing w:after=\"80\"/>",
+    ] {
+        assert!(xml.contains(keep));
+    }
+    let repeated = crate::execute_docx_set_table_cells_formatting(output.clone(), &op)
+        .output_artifact
+        .unwrap();
+    assert_eq!(cell_xml(&repeated, 0, 0, 0), xml);
+    let mut clear = alignment_update();
+    clear.alignment = Some(PropertyPatch::Clear);
+    clear.vertical_alignment = Some(PropertyPatch::Clear);
+    let cleared = crate::execute_docx_set_table_cells_formatting(output, &operation(vec![clear]))
+        .output_artifact
+        .unwrap();
+    let xml = cell_xml(&cleared, 0, 0, 0);
+    assert!(!xml.contains("<w:jc"));
+    assert!(!xml.contains("<w:vAlign"));
+    assert!(xml.contains("w:fill=\"ABCDEF\""));
+    fs::remove_file(input).unwrap();
+}
+
+#[test]
+fn alignment_handles_absent_and_empty_properties_and_clears_without_new_defaults() {
+    for properties in ["", "<w:tcPr/>", "<w:tcPr></w:tcPr>"] {
+        let input = table_fixture(&format!(
+            "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc>{properties}<w:p/></w:tc></w:tr></w:tbl></w:body></w:document>"
+        ));
+        let original = fs::read(&input).unwrap();
+        let mut clear = alignment_update();
+        clear.alignment = Some(PropertyPatch::Clear);
+        clear.vertical_alignment = Some(PropertyPatch::Clear);
+        let cleared = crate::execute_docx_set_table_cells_formatting(
+            original.clone(),
+            &operation(vec![clear]),
+        )
+        .output_artifact
+        .unwrap();
+        assert_eq!(cell_xml(&cleared, 0, 0, 0), cell_xml(&original, 0, 0, 0));
+        for (horizontal, vertical) in [
+            (
+                TableAlignment::Left,
+                opensuite_protocol::CellVerticalAlignment::Top,
+            ),
+            (
+                TableAlignment::Center,
+                opensuite_protocol::CellVerticalAlignment::Center,
+            ),
+            (
+                TableAlignment::Right,
+                opensuite_protocol::CellVerticalAlignment::Bottom,
+            ),
+        ] {
+            let mut u = alignment_update();
+            u.alignment = Some(PropertyPatch::Set(horizontal));
+            u.vertical_alignment = Some(PropertyPatch::Set(vertical));
+            u.fill = Some("ABCDEF".into());
+            let output = crate::execute_docx_set_table_cells_formatting(
+                original.clone(),
+                &operation(vec![u]),
+            )
+            .output_artifact
+            .unwrap();
+            let xml = cell_xml(&output, 0, 0, 0);
+            assert_eq!(xml.matches("<w:tcPr").count(), 1);
+            assert_eq!(xml.matches("<w:vAlign").count(), 1);
+            assert_eq!(xml.matches("<w:jc").count(), 1);
+            assert_eq!(xml.matches("<w:shd").count(), 1);
+        }
+        fs::remove_file(input).unwrap();
+    }
+}
+
+#[test]
+fn alignment_refuses_merged_nested_wrapped_and_protected_tables_and_duplicate_properties() {
+    let base = format!(
+        "<w:document xmlns:w=\"{WORD}\"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Text</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"
+    );
+    for (from, to) in [
+        ("<w:tc>", "<w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>"),
+        ("<w:tc>", "<w:tc><w:tcPr><w:hMerge/></w:tcPr>"),
+        ("<w:tc>", "<w:tc><w:tbl/>"),
+        ("<w:tbl>", "<w:tbl><w:tblPr><w:tblpPr/></w:tblPr>"),
+        ("<w:tr>", "<w:tr><w:trPr><w:trPrChange/></w:trPr>"),
+        ("<w:p>", "<w:p><w:bookmarkStart w:id=\"1\"/>"),
+        ("<w:p>", "<w:p><w:pPr><w:jc/><w:jc/></w:pPr>"),
+        ("<w:tc>", "<w:tc><w:tcPr><w:vAlign/><w:vAlign/></w:tcPr>"),
+        ("<w:tc>", "<w:tc><w:tcPr/><w:tcPr/>"),
+        ("<w:p>", "<w:p><w:pPr/><w:pPr/>"),
+        (
+            "<w:tc>",
+            "<w:tc><w:tcPr><w:vAlign w:val=\"top\" extra=\"keep\"/></w:tcPr>",
+        ),
+        (
+            "<w:p>",
+            "<w:p><w:pPr><w:jc w:val=\"left\" extra=\"keep\"/></w:pPr>",
+        ),
+    ] {
+        let input = table_fixture(&base.replace(from, to));
+        let result = crate::execute_docx_set_table_cells_formatting(
+            fs::read(&input).unwrap(),
+            &operation(vec![alignment_update()]),
+        );
+        assert!(result.output_artifact.is_none(), "{to}");
+        fs::remove_file(input).unwrap();
+    }
 }
