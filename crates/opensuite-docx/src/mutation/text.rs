@@ -117,7 +117,7 @@ pub(super) fn resolve_target(
     } else {
         matches.into_iter().next().expect("one match")
     };
-    let patches = patches_for_match(source, &matched, &operation.replacement)?;
+    let patches = text_patches(source, &matched, &operation.replacement, true)?;
     let first = source
         .node(matched.segments.first().unwrap().id)
         .unwrap()
@@ -169,6 +169,15 @@ pub(super) fn patches_for_match(
     matched: &crate::text_search::ResolvedTextMatch,
     replacement: &str,
 ) -> Result<Vec<Patch>, OperationResult> {
+    text_patches(source, matched, replacement, false)
+}
+
+fn text_patches(
+    source: &SourceDocument,
+    matched: &crate::text_search::ResolvedTextMatch,
+    replacement: &str,
+    allow_deleted_formatting: bool,
+) -> Result<Vec<Patch>, OperationResult> {
     let first = source
         .node(matched.segments.first().unwrap().id)
         .unwrap()
@@ -218,10 +227,63 @@ pub(super) fn patches_for_match(
         runs.push((segment, run, child));
     }
     let formatting = run_properties(source, runs[0].1);
-    if runs
+    let mixed_formatting = runs
         .iter()
-        .any(|(_, run, _)| run_properties(source, *run) != formatting)
-    {
+        .any(|(_, run, _)| run_properties(source, *run) != formatting);
+    if allow_deleted_formatting && mixed_formatting && matched.text != replacement {
+        // Unchanged context identifies a unique target but must keep its own style.
+        let mut prefix: usize = matched
+            .text
+            .chars()
+            .zip(replacement.chars())
+            .take_while(|(a, b)| a == b)
+            .map(|(c, _)| c.len_utf8())
+            .sum();
+        let mut suffix: usize = matched.text[prefix..]
+            .chars()
+            .rev()
+            .zip(replacement[prefix..].chars().rev())
+            .take_while(|(a, b)| a == b)
+            .map(|(c, _)| c.len_utf8())
+            .sum();
+        if prefix + suffix == matched.text.len() {
+            if prefix > 0 {
+                prefix -= matched.text[..prefix]
+                    .chars()
+                    .next_back()
+                    .unwrap()
+                    .len_utf8();
+            } else {
+                suffix -= matched.text.chars().next().unwrap().len_utf8();
+            }
+        }
+        if prefix > 0 || suffix > 0 {
+            let start = matched.start + prefix;
+            let end = matched.end - suffix;
+            let selected = crate::text_search::ResolvedTextMatch {
+                segments: matched
+                    .segments
+                    .iter()
+                    .filter(|s| s.end > start && s.start < end)
+                    .cloned()
+                    .collect(),
+                start,
+                end,
+                text: matched.text[prefix..matched.text.len() - suffix].to_owned(),
+                before: String::new(),
+                after: String::new(),
+                container: matched.container,
+                container_index: matched.container_index,
+            };
+            return text_patches(
+                source,
+                &selected,
+                &replacement[prefix..replacement.len() - suffix],
+                true,
+            );
+        }
+    }
+    if !allow_deleted_formatting && mixed_formatting {
         return Err(unsupported(
             "replace_text spans incompatible run formatting regions",
         ));
@@ -265,11 +327,14 @@ pub(super) fn patches_for_match(
         let prefix = &segment.source_text[..start];
         let suffix = &segment.source_text[end..];
         let matched_chars = segment.source_text[start..end].chars().count();
-        let distributed: String = if index + 1 == matched.segments.len() {
-            remaining.by_ref().collect()
-        } else {
-            remaining.by_ref().take(matched_chars).collect()
-        };
+        let distributed: String =
+            if (mixed_formatting && index == 0) || index + 1 == matched.segments.len() {
+                remaining.by_ref().collect()
+            } else {
+                remaining.by_ref().take(matched_chars).collect()
+            };
+        // Across different styles, new text inherits the first selected run;
+        // later selected text is removed without changing any run properties.
         let text = format!("{prefix}{distributed}{suffix}");
         let span = source.node(child).expect("source child exists").span();
         patches.push(Patch {

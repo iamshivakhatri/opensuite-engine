@@ -112,7 +112,6 @@ fn rejects_ambiguous_stale_unsafe_and_non_current_targets() {
     for (target, expected, code) in [
         ("Duplicate", "Duplicate", "TARGET_AMBIGUOUS"),
         ("OLD UNIQUE TEXT", "stale", "PRECONDITION_FAILED"),
-        ("Styled text", "Styled text", "UNSUPPORTED_OPERATION"),
         ("Linked text", "Linked text", "UNSUPPORTED_OPERATION"),
         ("OLD DELETED", "OLD DELETED", "TARGET_NOT_FOUND"),
         ("NEW INSERTED", "NEW INSERTED", "UNSUPPORTED_OPERATION"),
@@ -359,4 +358,89 @@ fn replacement_refuses_pending_text_and_paragraph_property_revisions() {
         assert!(result.output_artifact.is_none());
         fs::remove_file(input).unwrap();
     }
+}
+
+#[test]
+fn deletes_later_formatted_text_without_changing_any_run_properties() {
+    let xml = format!(
+        r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:r><w:t xml:space="preserve">Edit this sentence: </w:t></w:r><w:r><w:rPr><w:b/><w:color w:val="245678"/></w:rPr><w:t>December results</w:t></w:r><w:r><w:t>.</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let input = table_fixture(&xml);
+    let output = path("deleted-formatting");
+    let result = execute(
+        &input,
+        &output,
+        &operation("December results.", "December results.", "January resul"),
+    );
+    assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+    let mut expected = payloads(&input);
+    expected.insert(
+        "word/document.xml".to_owned(),
+        xml.replace("December results", "January resul")
+            .replace("<w:t>.</w:t>", "<w:t></w:t>")
+            .into_bytes(),
+    );
+    assert_eq!(payloads(&output), expected);
+    let package = Package::open(&output).unwrap();
+    package.verify().unwrap();
+    let (_, source) = crate::open_main_source(&package).unwrap();
+    assert_eq!(
+        crate::DocxDocument::new(&source)
+            .unwrap()
+            .paragraphs()
+            .next()
+            .unwrap()
+            .text_for_view(RevisionView::Current)
+            .unwrap(),
+        "Edit this sentence: January resul"
+    );
+    fs::remove_file(input).unwrap();
+    fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn longer_cross_format_replacement_keeps_the_first_selected_formatting() {
+    let input = fixture();
+    let output = path("incompatible-formatting");
+    let result = execute(
+        &input,
+        &output,
+        &operation("Styled text", "Styled text", "A longer replacement!"),
+    );
+    assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+    let mut expected = payloads(&input);
+    let xml = String::from_utf8(expected["word/document.xml"].clone())
+        .unwrap()
+        .replace("<w:t>Styled </w:t>", "<w:t>A longer replacement!</w:t>")
+        .replace(
+            "<w:rPr><w:b/></w:rPr><w:t>text</w:t>",
+            "<w:rPr><w:b/></w:rPr><w:t></w:t>",
+        );
+    expected.insert("word/document.xml".to_owned(), xml.into_bytes());
+    assert_eq!(payloads(&output), expected);
+    fs::remove_file(input).unwrap();
+    fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn unique_context_does_not_restyle_unchanged_text_or_the_changed_run() {
+    let xml = format!(
+        r#"<w:document xmlns:w="{WORD}"><w:body><w:p><w:r><w:t>Prefix </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>y</w:t></w:r><w:r><w:t> suffix</w:t></w:r></w:p><w:p><w:r><w:t>y</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let input = table_fixture(&xml);
+    let output = path("styled-context");
+    let result = execute(
+        &input,
+        &output,
+        &operation("Prefix y suffix", "Prefix y suffix", "Prefix x suffix"),
+    );
+    assert_eq!(result.status, opensuite_protocol::OperationStatus::Applied);
+    let mut expected = payloads(&input);
+    expected.insert(
+        "word/document.xml".to_owned(),
+        xml.replacen("<w:t>y</w:t>", "<w:t>x</w:t>", 1).into_bytes(),
+    );
+    assert_eq!(payloads(&output), expected);
+    fs::remove_file(input).unwrap();
+    fs::remove_file(output).unwrap();
 }

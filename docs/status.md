@@ -11,6 +11,14 @@ bounded content-control/table mutations retain their behavior. No operation
 inputs, package versions or dependencies changed. This flag is absent from the
 published 0.1.8 package; consumers must check the loaded native capabilities.
 
+Ordinary `replace_text` also supports a selection crossing different direct-run
+formatting: new text inherits the first changed run's properties, while later
+selected text is removed without rewriting run properties. Equal surrounding
+context stays untouched and retains its own style. Existing compatible-run
+text distribution, field/range/revision/protection checks and stricter table-cell
+and content-control mutations keep their behavior. Rust and native Node tests
+cover short/long replacements, contextual targeting and exact package preservation.
+
 ## DOCX stabilization (E6, local)
 
 Two combined-workflow bugs are corrected without new operations or input changes.

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import binding from '../index.js'
+import { packageParts } from './picture-support.mjs'
 
 const { createBlankDocx, executeDocxCreateTable, executeDocxDeleteParagraph, executeDocxDeleteTable, executeDocxDeleteTableColumn, executeDocxDeleteTableRow, executeDocxInsertParagraph, executeDocxInsertParagraphs, executeDocxInsertTableColumn, executeDocxInsertTableRow, executeDocxInsertTableRows, executeDocxReplaceText, executeDocxSetParagraphFormatting, executeDocxSetParagraphStyle, executeDocxSetTableCellsText, executeDocxSetTableFormatting, executeDocxSetTextFormatting, findDocxText, getDocxCapabilities, inspectDocx } = binding
 const office = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
@@ -360,4 +361,25 @@ test('reads and writes the same DOCX Buffer through the Rust engine', async () =
   const invalidBounds = await inspectDocx(input, { focus: { kind: 'tables', offset: 0, limit: 101 } })
   assert.equal(invalidBounds.ok, false)
   assert.equal(invalidBounds.diagnostics[0].code, 'INVALID_INSPECTION_BOUNDS')
+})
+
+
+test('cross-format editor replacements preserve all properties and unchanged context through Node', async () => {
+  const text = 'Edit this sentence: December results.'
+  const inserted = await executeDocxInsertParagraph(createBlankDocx(), { text, placement: { kind: 'end' } })
+  assert.equal(inserted.result.ok, true)
+  const styled = await executeDocxSetTextFormatting(inserted.output, { target: { text: 'December results' }, bold: true, color: '245678' })
+  assert.equal(styled.result.ok, true)
+  for (const replacement of ['January resul', 'A much longer January result']) {
+    const result = await executeDocxReplaceText(styled.output, operation(text, `Edit this sentence: ${replacement}`))
+    assert.equal(result.result.ok, true, JSON.stringify(result.result.diagnostics))
+    const expected = packageParts(styled.output)
+    expected['word/document.xml'] = Buffer.from(expected['word/document.xml'].toString().replace('December results', replacement).replace('<w:t>.</w:t>', '<w:t></w:t>'))
+    assert.deepEqual(packageParts(result.output), expected)
+  }
+  const changed = await executeDocxReplaceText(styled.output, operation(text, text.replace('December', 'January')))
+  assert.equal(changed.result.ok, true)
+  const expected = packageParts(styled.output)
+  expected['word/document.xml'] = Buffer.from(expected['word/document.xml'].toString().replace('December', 'January'))
+  assert.deepEqual(packageParts(changed.output), expected, 'unique plain context keeps the edited text bold and the period plain')
 })

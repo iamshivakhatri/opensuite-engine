@@ -103,6 +103,17 @@ DOCX mutations, including section editing, are exposed through Node/N-API.
 Capability details are kept in [status.md](status.md).
 
 
+## Ordinary text replacement across formatting
+
+Local `replace_text` can replace selected direct-run text with different formatting
+in one paragraph. New text uses the first changed run's formatting; later selected
+text is removed, and all run properties remain source-backed. Equal prefix/suffix
+context only identifies the source and keeps its own text and formatting. Compatible
+runs retain their existing distribution. Protected ranges, fields, revisions,
+inline wrappers and active document protection still refuse. Table-cell and
+content-control operations retain their separate stricter formatting rules.
+This local behavior does not change published 0.1.8 or operation inputs.
+
 ## Content controls, cell alignment and character styles (E5A)
 
 `inspect_docx_content_controls` / Node `inspectDocxContentControls` is a read-only,
