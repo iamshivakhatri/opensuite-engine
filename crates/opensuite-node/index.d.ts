@@ -323,6 +323,12 @@ export declare function executeDocxSetTableColumnWidths(input: Buffer, operation
 /** Set table alignment/margins/borders. */
 export declare function executeDocxSetTableFormatting(input: Buffer, operation: SetTableFormattingInput): Promise<ExecuteDocxReplaceTextOutput>
 
+/** Set the number of repeating leading table header rows and/or prevent a selected row from splitting across pages. Requires a fresh table layoutHandle; row handles must belong to that table. Omitted settings stay unchanged. Refuses merged, nested, floating, wrapped, protected, or ambiguous table structures. Pagination is determined by Word-compatible renderers. */
+export declare function executeDocxSetTableRowLayout(input: Buffer, operation: SetTableRowLayoutInput): Promise<ExecuteDocxReplaceTextOutput>
+
+/** Set an exact paragraph gap in points between two adjacent body tables (8 points = 160 twips). Reuses only an existing engine-authored separator; refuses arbitrary intervening content. Requires fresh layout handles for both tables. Preserves intentional adjacency until explicitly called. */
+export declare function executeDocxSetTableSpacing(input: Buffer, operation: SetTableSpacingInput): Promise<ExecuteDocxReplaceTextOutput>
+
 /** Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous. */
 export declare function executeDocxSetTextFormatting(input: Buffer, operation: SetTextFormattingInput): Promise<ExecuteDocxReplaceTextOutput>
 
@@ -985,6 +991,25 @@ export interface SetTableFormattingInput {
   baseRevision?: string
 }
 
+export interface SetTableRowLayoutInput {
+  table: TableLayoutTargetInput
+  /** Count of consecutive leading header rows; zero clears repetition. Omit to preserve headers. */
+  repeatingHeaderRows?: number
+  /** Existing row handle or exact data-row firstCellText selector, required with preventSplit. */
+  row?: TableRowTargetInput
+  /** True prevents row splitting; false explicitly allows it. Oversized rows may still span pages. */
+  preventSplit?: boolean
+  baseRevision?: string
+}
+
+export interface SetTableSpacingInput {
+  before: TableLayoutTargetInput
+  after: TableLayoutTargetInput
+  /** @schema {"minimum":0.05,"maximum":1584,"multipleOf":0.05} */
+  spacingPoints: number
+  baseRevision?: string
+}
+
 export interface SetTextFormattingInput {
   target: TextTargetInput
   bold?: boolean
@@ -1118,7 +1143,14 @@ export interface TableColumnOutput {
   text: string
 }
 
+export interface TableLayoutTargetInput {
+  /** Fresh tables.items[].layoutHandle from inspectDocx; re-inspect after any edit. */
+  handle: string
+}
+
 export interface TableOutput {
+  /** Fresh source-checked target for table layout; re-inspect after each edit. */
+  layoutHandle?: string
   occurrence: number
   handle: string
   rowCount: number

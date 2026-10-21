@@ -1,5 +1,37 @@
 # OpenSuite Engine Status
 
+## Native table layout controls (E4, local)
+
+New Rust/N-API `set_table_spacing` / `executeDocxSetTableSpacing` and
+`set_table_row_layout` / `executeDocxSetTableRowLayout` reuse the existing table
+model, source patches, protected-range checks and package writer. Table inspection
+adds fresh `layoutHandle` identities; existing table/row APIs stay unchanged.
+The opt-in separator uses an exact-height paragraph: 8 pt is 160 twips, with zero
+before/after, automatic and line-based spacing. It validates both adjacent tables,
+reuses only its own separator, refuses occupied boundaries, and preserves table
+XML. The row operation writes explicit `tblHeader` flags for a chosen leading
+header count (zero clears), and `cantSplit` true/false for a selected row. Omitted
+settings preserve imported flags; other row properties stay source-backed.
+
+Simple direct body tables are supported; merged/nested/floating/wrapped,
+protected or ambiguous structures, pending property changes, active document
+protection and stale identities fail without output. Generated SDK declarations,
+input schemas and capability metadata include both operations. Details, exact
+bounds, targeting, limitations and native examples are in
+[DOCX table layout controls](docx-engine.md#native-table-layout-controls-e4).
+
+232 DOCX / 20 OPC / 4 protocol / 3 Node Rust and 56 native Node tests pass,
+including 15 new focused Rust and five native tests. Formatting, workspace
+compilation, strict release-crate/CLI Clippy, SDK/schema checks and diff checks
+pass. Four final temporary LibreOffice fixtures produced ten visually reviewed
+pages: one with an observed 8 pt table gap, a three-page table repeating two
+headers on every page, and three-page long-row comparisons. Default splitting
+broke rows 3 and 5; `cantSplit` retained every row on one page. Border centerlines
+are 8.5 pt apart around the gap because of the strokes; their visible edges are
+8 pt apart. No clipping/missing content was observed. Word/Google Docs E4 review
+and oversized-row guarantees remain outside this evidence. No application edits,
+paid model calls, release, version/pin updates, publication or push.
+
 ## Header/footer pictures and embedded image access (E3, local)
 
 The existing picture insertion accepts fresh section handles and explicit

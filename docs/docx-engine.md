@@ -95,6 +95,95 @@ DOCX mutations, including section editing, are exposed through Node/N-API.
 Capability details are kept in [status.md](status.md).
 
 
+## Native table layout controls (E4)
+
+Rust `SetTableSpacing` / Node `executeDocxSetTableSpacing` inserts a gap only
+between two directly adjacent body tables. `before` and `after` each contain a
+fresh `tables.items[].layoutHandle` from `inspectDocx`. These source-stamped
+handles validate the main XML, relationships and related section/settings parts;
+old `t0` handles are not accepted by these new operations. Existing table APIs
+keep their targeting behavior. Re-inspect after edits. `baseRevision` remains
+opaque caller metadata, not an engine revision check.
+
+`spacingPoints` accepts 0.05–1584 points in 0.05-point steps (one twip, or 1/20
+point). An 8 pt request inserts one empty paragraph with `w:line="160"` and
+`w:lineRule="exact"`. Before/after spacing, line-based before/after spacing and
+automatic spacing are explicitly zero; grid snapping, contextual spacing,
+numbering and inherited paragraph pagination flags are disabled. This avoids
+Normal-style spacing turning the requested gap into a taller paragraph. Tables,
+cells, widths, styles and other parts remain unchanged. There is no automatic
+separator insertion. Repeated identical requests with fresh targets preserve the
+same separator XML. A different spacing request updates that separator. An
+existing arbitrary paragraph, nonadjacent/reversed tables, or a separator changed
+by another producer is refused rather than silently reformatted or duplicated.
+Only the exact paragraph shape authored by this operation is recognized.
+
+Rust `SetTableRowLayout` / Node `executeDocxSetTableRowLayout` takes a fresh table
+layout target and one or both of:
+
+- `repeatingHeaderRows`: a count from zero through the row count. It writes
+  `w:tblHeader w:val="1"` on that many consecutive leading rows and explicit
+  `w:val="0"` on the rest, overriding inherited flags. Zero clears repetition;
+  omission preserves imported header flags. A list of non-leading header rows
+  is not a supported selection. Rust never infers which rows are headers.
+- `row` plus `preventSplit`: select one row with an existing row handle such as
+  `t0:r2`, or exact data-row `firstCellText` plus optional zero-based `occurrence`.
+  A row handle is checked against the fresh table identity; optional supplied
+  first-cell text must match. Header rows can use row handles. `true` writes
+  `w:cantSplit w:val="1"`; `false` writes `w:val="0"` to explicitly allow
+  splitting, including overriding an inherited setting. Omission preserves all
+  splitting flags. Unselected rows and unrelated row properties remain unchanged.
+
+Both operations reuse source patches, package preservation, source-range guards,
+and save/reopen verification. Simple rectangular direct body tables are
+supported. Merged/omitted cells, nested/floating/wrapped tables, protected ranges,
+fields, dependent content, pending property revisions, active document
+protection, stale identities, duplicate row properties and ambiguous row targets
+fail without output bytes. Changing a flag with unknown attributes/content is
+refused. Explicit Word namespace prefixes are required for authoring; ordinary
+alternate prefixes are supported. Header repetition and row splitting remain
+renderer instructions: an oversized row cannot be guaranteed to fit on a page,
+and gaps at page boundaries follow the renderer's pagination rules. No page
+layout engine, automatic header detection, or split control for whole tables.
+
+```js
+let page = await engine.inspectDocx(bytes, { focus: { kind: 'tables' } })
+let [first, second] = page.tables.items
+let result = await engine.executeDocxSetTableSpacing(bytes, {
+  before: { handle: first.layoutHandle },
+  after: { handle: second.layoutHandle },
+  spacingPoints: 8,
+})
+if (!result.result.ok) throw new Error(JSON.stringify(result.result.diagnostics))
+bytes = result.output
+
+// Handles must come from the current output.
+page = await engine.inspectDocx(bytes, { focus: { kind: 'tables' } })
+first = page.tables.items[0]
+result = await engine.executeDocxSetTableRowLayout(bytes, {
+  table: { handle: first.layoutHandle },
+  repeatingHeaderRows: 2,
+  row: { handle: first.rows[2].handle },
+  preventSplit: true,
+})
+if (!result.result.ok) throw new Error(JSON.stringify(result.result.diagnostics))
+bytes = result.output
+// Use a fresh target with repeatingHeaderRows: 0 to clear headers, or
+// row + preventSplit: false to restore splitting.
+```
+
+Deterministic Rust/native tests cover exact XML, both boundaries in three-table
+runs, repeated requests, occupied boundaries, invalid/stale identities, multiple
+headers and clearing, long multi-line rows, unrelated row/property/package
+preservation, save/reopen, namespace scope and unsupported/protected inputs.
+Temporary LibreOffice fixtures produced ten reviewed pages: an 8 pt gap on one
+page, a three-page table with two header rows on every page, and two three-page
+long-row comparisons. Default splitting divided rows 3 and 5 across pages;
+`cantSplit` kept all five rows intact (two/two/one rows per page). The gap measured
+8 pt between the table border edges (8.5 pt between border centerlines due to
+stroke width), even with large inherited Normal spacing. No clipping or missing
+content was observed. Word/Google Docs pagination has not been checked for E4.
+
 ## Structural deletion safety
 
 Deleting a table, row, or column refuses before mutation when any affected source

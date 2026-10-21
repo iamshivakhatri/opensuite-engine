@@ -23,6 +23,8 @@ mod page_composition;
 mod pictures;
 mod sections;
 mod table_cell_formatting;
+mod table_layout;
+pub use table_layout::{set_table_row_layout, set_table_spacing};
 mod text_formatting;
 pub use content_controls::execute_docx_set_content_control_text_node;
 pub use hyperlinks::execute_docx_set_hyperlink_node;
@@ -536,6 +538,8 @@ pub struct TableColumnOutput {
 
 #[napi(object)]
 pub struct TableOutput {
+    /// Fresh source-checked target for table layout; re-inspect after each edit.
+    pub layout_handle: Option<String>,
     pub occurrence: u32,
     pub handle: String,
     pub row_count: u32,
@@ -1830,6 +1834,7 @@ fn table_page_output(value: InspectionPage<DocxTable>) -> TablePageOutput {
 
 fn table_output(value: DocxTable) -> TableOutput {
     TableOutput {
+        layout_handle: value.layout_handle,
         occurrence: value.occurrence as u32,
         handle: value.handle,
         row_count: value.row_count as u32,

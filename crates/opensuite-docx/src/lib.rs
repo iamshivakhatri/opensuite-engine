@@ -147,3 +147,6 @@ mod note;
 pub use execution::{execute_docx_delete_note, execute_docx_insert_note, execute_docx_update_note};
 pub use mutation::{delete_note_to_vec, insert_note_to_vec, update_note_to_vec};
 pub use note::{NoteDiagnostic, NoteInspection, NoteSettings, NoteSummary, inspect_docx_notes};
+
+pub use execution::{execute_docx_set_table_row_layout, execute_docx_set_table_spacing};
+pub use mutation::{set_table_row_layout_to_vec, set_table_spacing_to_vec};

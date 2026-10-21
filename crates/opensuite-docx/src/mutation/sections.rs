@@ -582,8 +582,15 @@ pub(super) fn on_off(source: &SourceDocument, id: NodeId) -> bool {
     )
 }
 
-fn settings_part(package: &Package, main: &Part) -> Result<Option<Part>, OperationResult> {
-    let relationships = package.part_relationships(main).map_err(package_failure)?;
+pub(super) fn settings_part(
+    package: &Package,
+    main: &Part,
+) -> Result<Option<Part>, OperationResult> {
+    let relationships = match package.part_relationships(main) {
+        Ok(relationships) => relationships,
+        Err(PackageError::MissingPartRelationships(_)) => return Ok(None),
+        Err(error) => return Err(package_failure(error)),
+    };
     let mut settings = relationships
         .into_iter()
         .filter(|r| r.relationship_type.as_str().ends_with("/settings"));

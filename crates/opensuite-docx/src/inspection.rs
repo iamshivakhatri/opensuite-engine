@@ -685,6 +685,7 @@ fn tables(
             .first()
             .is_none_or(|first| rows.iter().all(|row| row.cells.len() == first.cells.len()));
         items.push(DocxTable {
+            layout_handle: picture_table_index.map(|index| format!("t{index}:{stamp:016x}")),
             occurrence,
             handle: format!("t{occurrence}"),
             row_count,

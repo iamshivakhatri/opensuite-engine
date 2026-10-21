@@ -3063,6 +3063,117 @@
     "jsonInput": true,
     "jsonOutput": false
   },
+  "executeDocxSetTableRowLayout": {
+    "description": "Set the number of repeating leading table header rows and/or prevent a selected row from splitting across pages. Requires a fresh table layoutHandle; row handles must belong to that table. Omitted settings stay unchanged. Refuses merged, nested, floating, wrapped, protected, or ambiguous table structures. Pagination is determined by Word-compatible renderers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "object",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "description": "Fresh tables.items[].layoutHandle from inspectDocx; re-inspect after any edit."
+            }
+          },
+          "required": [
+            "handle"
+          ],
+          "additionalProperties": false
+        },
+        "repeatingHeaderRows": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Count of consecutive leading header rows; zero clears repetition. Omit to preserve headers."
+        },
+        "row": {
+          "type": "object",
+          "properties": {
+            "firstCellText": {
+              "type": "string"
+            },
+            "occurrence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295,
+              "description": "Zero-based occurrence among matching targets. Same convention as find.matches[].occurrence and inspect paragraphs.targetOccurrence / tables.occurrence. Omit when the match is unique."
+            },
+            "handle": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false,
+          "description": "Existing row handle or exact data-row firstCellText selector, required with preventSplit."
+        },
+        "preventSplit": {
+          "type": "boolean",
+          "description": "True prevents row splitting; false explicitly allows it. Oversized rows may still span pages."
+        },
+        "baseRevision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "table"
+      ],
+      "additionalProperties": false
+    },
+    "jsonInput": true,
+    "jsonOutput": false
+  },
+  "executeDocxSetTableSpacing": {
+    "description": "Set an exact paragraph gap in points between two adjacent body tables (8 points = 160 twips). Reuses only an existing engine-authored separator; refuses arbitrary intervening content. Requires fresh layout handles for both tables. Preserves intentional adjacency until explicitly called.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "before": {
+          "type": "object",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "description": "Fresh tables.items[].layoutHandle from inspectDocx; re-inspect after any edit."
+            }
+          },
+          "required": [
+            "handle"
+          ],
+          "additionalProperties": false
+        },
+        "after": {
+          "type": "object",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "description": "Fresh tables.items[].layoutHandle from inspectDocx; re-inspect after any edit."
+            }
+          },
+          "required": [
+            "handle"
+          ],
+          "additionalProperties": false
+        },
+        "spacingPoints": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 1584,
+          "multipleOf": 0.05
+        },
+        "baseRevision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "before",
+        "after",
+        "spacingPoints"
+      ],
+      "additionalProperties": false
+    },
+    "jsonInput": true,
+    "jsonOutput": false
+  },
   "executeDocxSetTextFormatting": {
     "description": "Format exact body text or partial text spans, including supported simple table-cell runs. For known whole table cells, use set_table_cells_formatting. Occurrence is zero-based when ambiguous.",
     "inputSchema": {

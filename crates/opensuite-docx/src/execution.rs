@@ -1192,3 +1192,17 @@ execute_paragraph_mutation!(
     delete_note_to_vec,
     "delete_note"
 );
+
+use crate::{set_table_row_layout_to_vec, set_table_spacing_to_vec};
+execute_paragraph_mutation!(
+    execute_docx_set_table_spacing,
+    opensuite_protocol::SetTableSpacing,
+    set_table_spacing_to_vec,
+    "set_table_spacing"
+);
+execute_paragraph_mutation!(
+    execute_docx_set_table_row_layout,
+    opensuite_protocol::SetTableRowLayout,
+    set_table_row_layout_to_vec,
+    "set_table_row_layout"
+);
