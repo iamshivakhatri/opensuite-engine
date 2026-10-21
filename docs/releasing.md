@@ -133,8 +133,17 @@ Configured in `crates/opensuite-node/package.json` → `napi.targets` and built 
 
 The `artifacts/engine-version` marker comes from the current CI artifact download.
 Old or unmarked artifact folders are skipped locally; they must not overwrite
-the freshly checked host binary. The packaged-consumer check also requires the
-native-reported version to equal its package version.
+the freshly checked host binary. Each build records a `.node.json` file containing
+the source commit, target, package/native versions, capabilities, contract hash and
+binary SHA-256. Recording requires a clean tracked tree and execution on the target
+CPU and OS. Download validation checks these records before copying binaries; package
+validation checks the assembled bytes again and requires identical native inventories
+across all five targets. Cached platform manifests are regenerated with `create-npm-dirs`.
+
+The root archive includes `native-artifacts.json`. Its generated loader checks the
+loaded native version and exports, then matches the actual loaded binary's hash to
+that release's records. This includes optional-package fallback when an adjacent
+development binary is absent. A package version alone cannot certify native identity.
 
 Local Mac/Linux/Windows development builds only the host binding. Cross-platform
 release binaries are produced in CI, not by a single local machine.
@@ -164,8 +173,20 @@ Watch for:
 - Local consumer smoke failure
 - After `--publish`: GitHub Actions **Publish engine** run for tag `vX.Y.Z`
 
-Optional CI-only dry-run (no tag): Actions → Publish engine → `dry_run=true`
-(default) builds/packs tarballs without publishing.
+For candidate verification without publishing, push only a candidate branch (no
+`v*.*.*` tag), then run the existing workflow against that branch:
+
+```bash
+gh workflow run publish-engine.yml --ref <candidate-branch> -f dry_run=true
+```
+
+This builds/packs all six archives without publishing, uploads `npm-tarballs` and
+`native-identity`, and installs the exact archives on five native runners. Linux
+x64 and ARM64 also run inside `node:22-bookworm-slim`, matching the application's
+glibc runtime family. The packed consumer checks text/table edits, body/cell/header
+images, embedded-image reads, save/reopen, hash refusal and missing-binary refusal
+with development overrides unset. These engine checks do not replace application
+database and finished API-image acceptance. Review all candidate jobs before publishing.
 
 ## After publish
 

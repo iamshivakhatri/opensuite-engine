@@ -77,8 +77,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-android-arm64')
         const bindingPackageVersion = require('@opensuitehq/engine-android-arm64/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -93,8 +93,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-android-arm-eabi')
         const bindingPackageVersion = require('@opensuitehq/engine-android-arm-eabi/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -114,8 +114,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-win32-x64-gnu')
         const bindingPackageVersion = require('@opensuitehq/engine-win32-x64-gnu/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -130,8 +130,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-win32-x64-msvc')
         const bindingPackageVersion = require('@opensuitehq/engine-win32-x64-msvc/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -147,8 +147,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-win32-ia32-msvc')
         const bindingPackageVersion = require('@opensuitehq/engine-win32-ia32-msvc/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -163,8 +163,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-win32-arm64-msvc')
         const bindingPackageVersion = require('@opensuitehq/engine-win32-arm64-msvc/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -182,8 +182,8 @@ function requireNative() {
     try {
       const binding = require('@opensuitehq/engine-darwin-universal')
       const bindingPackageVersion = require('@opensuitehq/engine-darwin-universal/package.json').version
-      if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-        throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+      if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
       }
       return binding
     } catch (e) {
@@ -198,8 +198,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-darwin-x64')
         const bindingPackageVersion = require('@opensuitehq/engine-darwin-x64/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -214,8 +214,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-darwin-arm64')
         const bindingPackageVersion = require('@opensuitehq/engine-darwin-arm64/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -234,8 +234,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-freebsd-x64')
         const bindingPackageVersion = require('@opensuitehq/engine-freebsd-x64/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -250,8 +250,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-freebsd-arm64')
         const bindingPackageVersion = require('@opensuitehq/engine-freebsd-arm64/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -271,8 +271,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-x64-musl')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-x64-musl/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -287,8 +287,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-x64-gnu')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-x64-gnu/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -305,8 +305,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-arm64-musl')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-arm64-musl/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -321,8 +321,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-arm64-gnu')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-arm64-gnu/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -339,8 +339,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-arm-musleabihf')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-arm-musleabihf/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -355,8 +355,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-arm-gnueabihf')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-arm-gnueabihf/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -373,8 +373,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-loong64-musl')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-loong64-musl/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -389,8 +389,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-loong64-gnu')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-loong64-gnu/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -407,8 +407,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-riscv64-musl')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-riscv64-musl/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -423,8 +423,8 @@ function requireNative() {
         try {
           const binding = require('@opensuitehq/engine-linux-riscv64-gnu')
           const bindingPackageVersion = require('@opensuitehq/engine-linux-riscv64-gnu/package.json').version
-          if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-            throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -440,8 +440,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-linux-ppc64-gnu')
         const bindingPackageVersion = require('@opensuitehq/engine-linux-ppc64-gnu/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -456,8 +456,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-linux-s390x-gnu')
         const bindingPackageVersion = require('@opensuitehq/engine-linux-s390x-gnu/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -476,8 +476,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-openharmony-arm64')
         const bindingPackageVersion = require('@opensuitehq/engine-openharmony-arm64/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -492,8 +492,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-openharmony-x64')
         const bindingPackageVersion = require('@opensuitehq/engine-openharmony-x64/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -508,8 +508,8 @@ function requireNative() {
       try {
         const binding = require('@opensuitehq/engine-openharmony-arm')
         const bindingPackageVersion = require('@opensuitehq/engine-openharmony-arm/package.json').version
-        if (bindingPackageVersion !== '0.1.8' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+        if (bindingPackageVersion !== '0.1.9' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -648,8 +648,8 @@ if (!nativeBinding || forceWasi) {
       if (!candidateFailed) {
         if (process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           const bindingPackageVersion = require('@opensuitehq/engine-wasm32-wasi/package.json').version
-          if (bindingPackageVersion !== '0.1.8') {
-            throw new Error(`WASI binding package version mismatch, expected 0.1.8 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          if (bindingPackageVersion !== '0.1.9') {
+            throw new Error(`WASI binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
         }
         wasiBinding = require('@opensuitehq/engine-wasm32-wasi')
@@ -697,6 +697,24 @@ if (!nativeBinding) {
     throw error
   }
   throw new Error(`Failed to load native binding`)
+}
+
+
+// Check the native code itself, including when the loader used an optional package.
+const capabilities = nativeBinding.getDocxCapabilities?.()
+if (capabilities?.engineVersion !== "0.1.9" ||
+    ["createBlankDocx","executeDocxAcceptRevision","executeDocxAddComment","executeDocxCreateStyle","executeDocxCreateTable","executeDocxDeleteComment","executeDocxDeleteNote","executeDocxDeletePageBreak","executeDocxDeleteParagraph","executeDocxDeletePicture","executeDocxDeleteTable","executeDocxDeleteTableColumn","executeDocxDeleteTableRow","executeDocxDeleteTrackedText","executeDocxInsertFields","executeDocxInsertNote","executeDocxInsertPageBreak","executeDocxInsertParagraph","executeDocxInsertParagraphs","executeDocxInsertPicture","executeDocxInsertSectionBreak","executeDocxInsertTableColumn","executeDocxInsertTableRow","executeDocxInsertTableRows","executeDocxInsertToc","executeDocxInsertTrackedText","executeDocxMoveParagraph","executeDocxRejectRevision","executeDocxReplacePicture","executeDocxReplaceText","executeDocxReplaceTextWithTrackedChange","executeDocxSetContentControlText","executeDocxSetHeaderFooterText","executeDocxSetHyperlink","executeDocxSetOddEvenHeaders","executeDocxSetPageNumber","executeDocxSetPageSetup","executeDocxSetParagraphFormatting","executeDocxSetParagraphStyle","executeDocxSetParagraphsList","executeDocxSetPictureLayout","executeDocxSetPictureSize","executeDocxSetSectionHeaderFooter","executeDocxSetSectionProperties","executeDocxSetTableCellShading","executeDocxSetTableCellsFormatting","executeDocxSetTableCellsText","executeDocxSetTableColumnWidths","executeDocxSetTableFormatting","executeDocxSetTableRowLayout","executeDocxSetTableSpacing","executeDocxSetTextFormatting","executeDocxUpdateComment","executeDocxUpdateNote","executeDocxUpdateStyle","findDocxText","getDocxCapabilities","inspectDocx","inspectDocxComments","inspectDocxContentControls","inspectDocxFields","inspectDocxImages","inspectDocxLayout","inspectDocxNotes","inspectDocxReferences","inspectDocxSections","inspectDocxStyleSnapshot","inspectDocxTrackedChanges","readDocxEmbeddedImage"].some(name => typeof nativeBinding[name] !== 'function')) {
+  throw new Error('OpenSuite native binding version or exports mismatch; reinstall @opensuitehq/engine@0.1.9')
+}
+const { existsSync } = require('node:fs')
+const metadataPath = require('node:path').join(__dirname, 'native-artifacts.json')
+if (existsSync(metadataPath)) {
+  const records = JSON.parse(readFileSync(metadataPath, 'utf8'))
+  const loaded = Object.values(require.cache).find(entry => entry.exports === nativeBinding && entry.filename.endsWith('.node'))
+  const hash = loaded && require('node:crypto').createHash('sha256').update(readFileSync(loaded.filename)).digest('hex')
+  if (!records.some(record => record.version === "0.1.9" && record.binary === require('node:path').basename(loaded?.filename || '') && record.sha256 === hash)) {
+    throw new Error('OpenSuite native binding hash mismatch; reinstall @opensuitehq/engine@0.1.9')
+  }
 }
 
 module.exports = nativeBinding

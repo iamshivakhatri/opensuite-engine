@@ -4,6 +4,8 @@ crates/opensuite-node/*.node
 crates/opensuite-node/npm/
 crates/opensuite-node/artifacts/
 crates/opensuite-node/dist-tarballs/
+crates/opensuite-node/native-artifacts.json
+crates/opensuite-node/*.node.json
 *.docx
 !tests/fixtures/numbering.docx
 !tests/fixtures/sections.docx

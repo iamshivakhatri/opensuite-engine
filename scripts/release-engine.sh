@@ -376,6 +376,7 @@ have_all_platform_artifacts() {
       return 1
     fi
   done
+  (cd "$NODE_DIR" && node scripts/artifact-metadata.mjs --check-downloads) || return 1
   return 0
 }
 
