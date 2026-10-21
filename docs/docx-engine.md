@@ -53,6 +53,8 @@ the next native release.
   deletion), cell edits, explicit
   column widths, cell shading, atomic structural formatting of several simple cells,
   direct text formatting in simple cells, and basic table formatting.
+  Column-width edits also synchronize an existing absolute table width with the
+  column total, preserving other width attributes and automatic/percentage widths.
 - Read and safe targeted mutation support for simple content controls, typed
   bullet and decimal lists at levels zero through two (including separate,
   source-ordered bullet runs), external/internal bookmark hyperlinks,
@@ -289,6 +291,8 @@ succeed with unchanged XML after safety validation. Other blocks keep their
 relative order. Save/reopen verifies expected semantic order, byte-identical full
 block subtrees and exact main-source patches; untouched package parts remain intact.
 Number labels and pagination follow the renderer and the resulting document order.
+Verification accounts for unrelated content-control paragraphs elsewhere in the
+semantic order; their original XML remains untouched.
 
 Refused: tables/cells as endpoints, dedicated page-break blocks, section-boundary
 paragraphs, cross-section movement, bookmarks (even wholly contained), comments,

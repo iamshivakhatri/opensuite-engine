@@ -1,5 +1,41 @@
 # OpenSuite Engine Status
 
+## DOCX stabilization (E6, local)
+
+Two combined-workflow bugs are corrected without new operations or input changes.
+Setting column widths now keeps an existing absolute table width equal to the
+sum of the columns, so later automatic cell-image fitting does not encounter
+conflicting engine-authored geometry. Only the width attribute value changes;
+other attributes, quoting, automatic/percentage widths and unrelated parts remain
+preserved. Paragraph movement now verifies semantic order using the actual source
+paragraphs when an unrelated content control precedes the targets. Its existing
+section, protected-range and unsupported-structure refusals remain in force.
+Two native regression tests reproduce the earlier failures and pass with the fixes.
+
+All E1–E5B commits are present. The compiled 0.1.8 binding, generated declarations,
+schemas and protocol inventory agree: 70 operation records map to 68 callable
+operation exports, plus capability discovery. The 61 earlier operation inputs
+retain their required fields, types, enum choices and transport classifications.
+No generated artifacts, version pins or dependencies changed.
+
+Four temporary combined scenarios pass 124 successful mutations, seven expected
+refusals, read-only/binary-read byte checks, save/reopen and package checks.
+Unrelated package payloads, imported styles/numbering, review metadata, section
+properties and unknown XML remain preserved. LibreOffice review covers a report,
+an imported document, review markup and three sections: all 14 final pages were
+visually reviewed, with all 42 long financial rows intact and repeating headers.
+The TOC retains its explicit refresh placeholder; the engine does not evaluate it.
+256 DOCX / 20 OPC / 4 protocol / 3 Node Rust / 31 PPTX tests and 74 native Node
+tests pass. Workspace formatting, compilation, strict all-target Clippy, native
+build, SDK/schema/inventory checks, release metadata checks and a packed macOS
+ARM64 consumer pass. Fresh five-platform artifacts are unavailable locally;
+the full six-package assembly check remains a release gate. Table layout after cell
+image insertion still refuses dependent content; apply layout before inserting
+cell pictures. Rich header replacement, broader paragraph movement, field refresh
+and Word/Google Docs interoperability retain their documented limits. Local
+OpenSuite integration can proceed; publication and DOCX V1 freeze still require
+fresh platform builds and manual interoperability checks.
+
 ## Document references and safe paragraph movement (E5B, local)
 
 Rust/N-API `inspect_docx_references` / `inspectDocxReferences` reports main-part

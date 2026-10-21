@@ -14,6 +14,25 @@ async function operation(bytes,from,to,position) {
 }
 async function move(bytes,from,to,position) { return engine.executeDocxMoveParagraph(bytes,await operation(bytes,from,to,position)) }
 
+test('movement verifies semantic order when an unrelated content control precedes the targets', async () => {
+  const control = `<w:sdt><w:sdtPr><w:tag w:val="client"/><w:text/></w:sdtPr><w:sdtContent>${p('Client')}</w:sdtContent></w:sdt>`
+  const input = fixture(control + p('First') + p('Second') + p('Third'))
+  const page = await blocks(input)
+  for (const position of ['before', 'after']) {
+    const output = applied(await engine.executeDocxMoveParagraph(input, {
+      target: { handle: page.find(b => b.text === 'Third').movementHandle },
+      destination: { handle: page.find(b => b.text === 'First').movementHandle },
+      position,
+    }))
+    assert.equal(documentXml(output), documentXml(input).replace(p('Third'), '').replace(
+      p('First'), position === 'before' ? p('Third') + p('First') : p('First') + p('Third'),
+    ))
+    assert.ok(documentXml(output).includes(control))
+    const before = packageParts(input), after = packageParts(output)
+    for (const name of Object.keys(before).filter(name => name !== 'word/document.xml')) assert.deepEqual(after[name], before[name], name)
+  }
+})
+
 test('paragraph moves preserve original styles, numbering, runs, empty paragraphs and unrelated parts', async () => {
   const styled = `<w:p w:rsidR='00112233'><w:pPr><w:pStyle w:val='Normal'/><w:numPr><w:ilvl w:val='0'/><w:numId w:val='1'/></w:numPr><w:keepNext/></w:pPr><w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>Formatted</w:t><w:tab/><w:t>second</w:t></w:r></w:p>`
   const input = fixture(`${p('First')}\n${styled}\n${p('Third')}<w:p/>`)

@@ -134,13 +134,21 @@ pub fn move_paragraph_to_vec(
             },
         ],
     )?;
-    let mut expected = body_texts(source)?
+    // Semantic blocks also include paragraphs inside unrelated content controls.
+    let mut expected = body_texts(source)?;
+    let text_from = expected.iter().position(|(id, _)| *id == target).unwrap();
+    let text_to = expected
+        .iter()
+        .position(|(id, _)| *id == destination)
+        .unwrap();
+    let text_index = text_to + usize::from(after);
+    let text = expected.remove(text_from);
+    expected.insert(text_index - usize::from(text_from < text_index), text);
+    let expected = expected
         .into_iter()
         .map(|(_, text)| text)
         .collect::<Vec<_>>();
-    let text = expected.remove(from);
     let new_index = index - usize::from(from < index);
-    expected.insert(new_index, text);
     let mut expected_xml = blocks
         .iter()
         .map(|id| {

@@ -1,6 +1,35 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import binding from '../index.js'
+import { documentXml, editDocument, image, packageParts } from './picture-support.mjs'
+
+test('changed column totals keep absolute table width consistent for automatic cell pictures', async () => {
+  const created = await binding.executeDocxCreateTable(binding.createBlankDocx(), {
+    rows: [['Item', 'Value'], ['Revenue', '125']], placement: { kind: 'end' },
+  })
+  assert.equal(created.result.ok, true)
+  const input = editDocument(created.output, xml => xml.replace(
+    '<w:tblW w:w="9360" w:type="dxa"/>',
+    "<w:tblW data-keep='9360' w:w='9360' w:type='dxa'/>",
+  ))
+  const result = await binding.executeDocxSetTableColumnWidths(input, {
+    table: { headerCells: ['Item', 'Value'] }, widthsTwips: [3000, 3000],
+  })
+  assert.equal(result.result.ok, true, JSON.stringify(result.result.diagnostics))
+  assert.ok(documentXml(result.output).includes("<w:tblW data-keep='9360' w:w='6000' w:type='dxa'/>"))
+  const before = packageParts(input), after = packageParts(result.output)
+  for (const name of Object.keys(before).filter(name => name !== 'word/document.xml')) assert.deepEqual(after[name], before[name], name)
+  const inspected = await binding.inspectDocx(result.output, { focus: { kind: 'tables' } })
+  const inserted = await binding.executeDocxInsertPicture(result.output, {
+    imageBytes: image(2000, 1000), autoFit: true,
+    placement: { kind: 'tableCell', handle: inspected.tables.items[0].rows[1].pictureCellHandles[0] },
+  })
+  assert.equal(inserted.result.ok, true, JSON.stringify(inserted.result.diagnostics))
+  const images = JSON.parse(await binding.inspectDocxImages(inserted.output))
+  assert.equal(images.total, 1)
+  assert.equal(images.images[0].displayWidthEmu, (3000 - 280) * 635)
+  assert.equal(images.images[0].displayWidthEmu, images.images[0].displayHeightEmu * 2)
+})
 
 test('maps explicit widths and batch header shading', async () => {
   const { createBlankDocx, executeDocxCreateTable, executeDocxSetTableColumnWidths, executeDocxSetTableCellShading } = binding
