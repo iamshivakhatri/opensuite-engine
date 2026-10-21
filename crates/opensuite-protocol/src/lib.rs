@@ -1207,6 +1207,11 @@ pub struct SetPictureSize {
 /// The engine determines the format and dimensions from the supplied bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InsertPicture {
+    /// Fit within declared section page/column bounds without upscaling.
+    /// Inline only; cannot be combined with explicit size.
+    pub auto_fit: bool,
+    /// Alignment of the dedicated inline picture paragraph: left, center, or right.
+    pub alignment: Option<ParagraphAlignment>,
     pub size: Option<PictureSizeChange>,
     pub layout: Option<PictureLayoutPatch>,
     pub image_bytes: Vec<u8>,

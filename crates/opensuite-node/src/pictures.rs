@@ -18,6 +18,11 @@ use crate::{
 
 #[napi(object)]
 pub struct InsertPictureInput {
+    /// Fit inline images to declared section page/column bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout.
+    pub auto_fit: Option<bool>,
+    /// Align the dedicated inline picture paragraph, including paragraphs with no text.
+    /// @schema {"enum":["left","center","right"]}
+    pub alignment: Option<String>,
     pub width_emu: Option<i64>,
     pub height_emu: Option<i64>,
     pub layout: Option<PictureLayoutInput>,
@@ -64,6 +69,17 @@ pub fn execute_docx_insert_picture_node(
         input,
         picture_placement(operation.placement).and_then(|placement| {
             Ok(InsertPicture {
+                auto_fit: operation.auto_fit.unwrap_or(false),
+                alignment: operation
+                    .alignment
+                    .as_deref()
+                    .map(|value| match value {
+                        "left" => Ok(opensuite_protocol::ParagraphAlignment::Left),
+                        "center" => Ok(opensuite_protocol::ParagraphAlignment::Center),
+                        "right" => Ok(opensuite_protocol::ParagraphAlignment::Right),
+                        _ => Err("picture alignment must be left, center, or right"),
+                    })
+                    .transpose()?,
                 size: optional_picture_size(operation.width_emu, operation.height_emu)?,
                 layout: operation.layout.map(layout_patch).transpose()?,
                 image_bytes: operation.image_bytes.to_vec(),

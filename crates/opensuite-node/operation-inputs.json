@@ -900,6 +900,19 @@
     "inputSchema": {
       "type": "object",
       "properties": {
+        "autoFit": {
+          "type": "boolean",
+          "description": "Fit inline images to declared section page/column bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout."
+        },
+        "alignment": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "description": "Align the dedicated inline picture paragraph, including paragraphs with no text."
+        },
         "widthEmu": {
           "type": "integer",
           "minimum": -9007199254740991,

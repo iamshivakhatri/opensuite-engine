@@ -460,6 +460,13 @@ export interface InsertParagraphsInput {
 }
 
 export interface InsertPictureInput {
+  /** Fit inline images to declared section page/column bounds without upscaling. Cannot combine with widthEmu, heightEmu, or floating layout. */
+  autoFit?: boolean
+  /**
+   * Align the dedicated inline picture paragraph, including paragraphs with no text.
+   * @schema {"enum":["left","center","right"]}
+   */
+  alignment?: string
   widthEmu?: number
   heightEmu?: number
   layout?: PictureLayoutInput

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import binding from '../index.js'
+import { deflateSync } from 'node:zlib'
+import { spawnSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 
 const {
   createBlankDocx,
@@ -52,4 +55,123 @@ test('returns a structured picture failure', async () => {
   assert.equal(result.result.ok, false)
   assert.equal(result.result.diagnostics[0].code, 'TARGET_NOT_FOUND')
   assert.equal(result.output, undefined)
+})
+
+// Valid, deterministic PNGs keep the same fixtures usable in external renderers.
+function image(width, height) {
+  function chunk(type, data) {
+    const content = Buffer.concat([Buffer.from(type), data])
+    let crc = 0xffffffff
+    for (const byte of content) {
+      crc ^= byte
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0)
+    }
+    const result = Buffer.alloc(data.length + 12)
+    result.writeUInt32BE(data.length); content.copy(result, 4); result.writeUInt32BE((crc ^ 0xffffffff) >>> 0, result.length - 4)
+    return result
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 2
+  const pixels = Buffer.alloc((width * 3 + 1) * height)
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const offset = y * (width * 3 + 1) + 1 + x * 3
+    const edge = x < 8 || y < 8 || x >= width - 8 || y >= height - 8
+    pixels[offset] = edge ? 20 : 60 + Math.floor(x / width * 100)
+    pixels[offset + 1] = edge ? 40 : 100 + Math.floor(y / height * 100)
+    pixels[offset + 2] = edge ? 60 : 210
+  }
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))])
+}
+function documentXml(bytes) {
+  const result = spawnSync('python3', ['-c', 'import io,sys,zipfile; sys.stdout.buffer.write(zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())).read("word/document.xml"))'], { input: bytes })
+  assert.equal(result.status, 0, result.stderr.toString())
+  return result.stdout.toString()
+}
+function fixture(bytes, mode) {
+  const result = spawnSync('python3', ['-c', `
+import io,sys,zipfile
+source=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()))
+output=io.BytesIO()
+with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as target:
+ for part in source.infolist():
+  data=source.read(part.filename)
+  if part.filename=='word/document.xml':
+   xml=data.decode()
+   if sys.argv[1]=='column': xml=xml.replace('</w:sectPr>','<w:cols w:num="2" w:space="720"/></w:sectPr>')
+   else:
+    section=xml[xml.index('<w:sectPr>'):xml.index('</w:sectPr>')+11]
+    xml=xml.replace('<w:p>','<w:p><w:pPr>'+section+'</w:pPr>',1)
+   data=xml.encode()
+  target.writestr(part,data)
+sys.stdout.buffer.write(output.getvalue())`, mode], { input: bytes })
+  assert.equal(result.status, 0, result.stderr.toString())
+  return result.stdout
+}
+async function layout(bytes) { return JSON.parse(await binding.inspectDocxLayout(bytes, {})) }
+async function applyPicture(bytes, options) {
+  const result = await executeDocxInsertPicture(bytes, { placement: { kind: 'end' }, ...options })
+  assert.equal(result.result.ok, true, JSON.stringify(result.result.diagnostics))
+  return result.output
+}
+
+test('native automatic fitting, alignment, section geometry, and render fixtures', async () => {
+  for (const [name, width, height, expected, alignment] of [
+    ['wide', 2000, 1000, [5943600, 2971800], 'center'],
+    ['tall', 1000, 4000, [2006600, 8026400], 'right'],
+    ['logo', 32, 16, [304800, 152400], 'left'],
+  ]) {
+    const output = await applyPicture(createBlankDocx(), { imageBytes: image(width, height), autoFit: true, alignment })
+    const facts = await layout(output)
+    assert.deepEqual([facts.images[0].displayWidthEmu, facts.images[0].displayHeightEmu], expected)
+    assert.equal(facts.sectionCount, 1)
+    const xml = documentXml(output)
+    assert.ok(xml.includes(`<w:p><w:pPr><w:jc w:val="${alignment}"/></w:pPr><w:r><w:drawing>`))
+    assert.equal((xml.match(/<w:p>/g) ?? []).length, 1)
+    writeFileSync(`/private/tmp/opensuite-a1-${name}.docx`, output)
+  }
+  for (const [name, setup, expected] of [
+    ['landscape', { orientation: 'landscape' }, 8229600],
+    ['margins', { leftMarginTwips: 2880, rightMarginTwips: 2880 }, 4114800],
+  ]) {
+    let bytes = createBlankDocx()
+    const section = JSON.parse(await binding.inspectDocxSections(bytes)).sections[0]
+    const changed = await binding.executeDocxSetSectionProperties(bytes, { handle: section.handle, pageSetup: setup })
+    assert.equal(changed.result.ok, true)
+    bytes = await applyPicture(changed.output, { imageBytes: image(2000, 1000), autoFit: true, alignment: 'center' })
+    assert.equal((await layout(bytes)).images[0].displayWidthEmu, expected)
+    writeFileSync(`/private/tmp/opensuite-a1-${name}.docx`, bytes)
+  }
+  const columns = await applyPicture(fixture(createBlankDocx(), 'column'), { imageBytes: image(2000, 1000), autoFit: true, alignment: 'center' })
+  assert.equal((await layout(columns)).images[0].displayWidthEmu, 2743200)
+  writeFileSync('/private/tmp/opensuite-a1-columns.docx', columns)
+})
+
+test('native deletion keeps section properties and stable relationships after reopen', async () => {
+  let bytes = await applyPicture(createBlankDocx(), { imageBytes: png })
+  bytes = fixture(bytes, 'section')
+  const before = documentXml(bytes)
+  const facts = await layout(bytes)
+  const result = await executeDocxDeletePicture(bytes, { handle: facts.images[0].handle })
+  assert.equal(result.result.ok, true, JSON.stringify(result.result.diagnostics))
+  const after = await layout(result.output)
+  assert.equal(after.imageCount, 0); assert.equal(after.sectionCount, 2)
+  assert.equal(documentXml(result.output), before.replace(/<w:drawing>.*?<\/w:drawing>/s, ''))
+  const next = await applyPicture(result.output, { imageBytes: png, autoFit: true })
+  assert.equal((await layout(next)).imageCount, 1)
+  assert.equal((await layout(next)).sectionCount, 2)
+})
+
+test('native rejects conflicting fit options and invalid alignment without output', async () => {
+  const floating = { horizontal: { reference: 'page', alignment: 'center' }, vertical: { reference: 'page', alignment: 'center' } }
+  for (const options of [
+    { autoFit: true, widthEmu: 100 }, { autoFit: true, heightEmu: 100 },
+    { autoFit: true, layout: floating }, { alignment: 'center', layout: floating },
+    { alignment: 'justify' }, { autoFit: true, imageBytes: Buffer.from('bad image') },
+  ]) {
+    const result = await executeDocxInsertPicture(createBlankDocx(), { imageBytes: png, placement: { kind: 'end' }, ...options })
+    assert.equal(result.result.ok, false); assert.equal(result.output, undefined)
+  }
+  const legacy = await applyPicture(createBlankDocx(), { imageBytes: png, autoFit: false, widthEmu: 123, heightEmu: 456 })
+  assert.equal((await layout(legacy)).images[0].displayWidthEmu, 123)
+  assert.equal((await layout(legacy)).images[0].displayHeightEmu, 456)
 })

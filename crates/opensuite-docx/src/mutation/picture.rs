@@ -1,5 +1,7 @@
+mod inline;
 mod layout;
 use super::*;
+use inline::{automatic_extent, picture_fragment_for_body};
 pub use layout::set_picture_layout_to_vec;
 use layout::{anchored_fragment, sized_extent};
 
@@ -13,6 +15,7 @@ pub(super) const JPEG_CONTENT_TYPE: &str = "image/jpeg";
 
 pub(super) struct InsertedPictureVerification<'a> {
     layout: Option<&'a opensuite_protocol::PictureLayoutPatch>,
+    alignment: Option<opensuite_protocol::ParagraphAlignment>,
     index: usize,
     picture_id: u32,
     width_emu: i64,
@@ -47,16 +50,28 @@ pub fn insert_picture_to_vec(
         i64::from(image.dimensions.width_px) * EMU_PER_PIXEL_AT_96_DPI,
         i64::from(image.dimensions.height_px) * EMU_PER_PIXEL_AT_96_DPI,
     );
-    let size = operation.size.or_else(|| {
-        (original.0 > MAX_INLINE_PICTURE_WIDTH_EMU).then_some(
-            opensuite_protocol::PictureSizeChange::WidthEmu(MAX_INLINE_PICTURE_WIDTH_EMU),
-        )
-    });
-    let (width_emu, height_emu) = sized_extent(original, size)?;
+    if (operation.auto_fit && operation.size.is_some())
+        || (operation.layout.is_some() && (operation.auto_fit || operation.alignment.is_some()))
+    {
+        return Err(OperationResult::failed(
+            "INVALID_OPERATION",
+            "automatic fit requires inline layout and no explicit size; paragraph alignment requires inline layout",
+        ));
+    }
     let placement = resolve_paragraph_placement(source, &operation.placement)?;
     let (body, blocks) = direct_body_blocks(source)?;
     let index = placement_index(&blocks, placement)?;
     let insertion = body_insertion(source, body, &blocks, index)?;
+    let (width_emu, height_emu) = if operation.auto_fit {
+        automatic_extent(package, main, source, insertion, original)?
+    } else {
+        let size = operation.size.or_else(|| {
+            (original.0 > MAX_INLINE_PICTURE_WIDTH_EMU).then_some(
+                opensuite_protocol::PictureSizeChange::WidthEmu(MAX_INLINE_PICTURE_WIDTH_EMU),
+            )
+        });
+        sized_extent(original, size)?
+    };
     let media_name = next_media_part_name(package, extension)?;
     let (relationships_name, relationships_exist, relationships, relationship_id) =
         picture_relationships(package, main)?;
@@ -64,11 +79,11 @@ pub fn insert_picture_to_vec(
     let fragment = picture_fragment_for_body(
         source,
         body,
-        width_emu,
-        height_emu,
+        (width_emu, height_emu),
         picture_id,
         &relationship_id,
         operation.alt_text.as_deref(),
+        operation.alignment,
     )?;
     let fragment = match &operation.layout {
         Some(layout) => anchored_fragment(fragment, layout)?,
@@ -143,6 +158,7 @@ pub fn insert_picture_to_vec(
             &content_types,
             InsertedPictureVerification {
                 layout: operation.layout.as_ref(),
+                alignment: operation.alignment,
                 index,
                 picture_id,
                 width_emu,
@@ -158,6 +174,7 @@ pub fn insert_picture_to_vec(
         &[],
         InsertedPictureVerification {
             layout: operation.layout.as_ref(),
+            alignment: operation.alignment,
             index,
             picture_id,
             width_emu,
@@ -214,15 +231,7 @@ pub(super) fn write_inserted_picture(
     let output = package
         .write_package_with_named_changes_to_vec(&replaced, &added)
         .map_err(|error| OperationResult::failed(error.code(), error.to_string()))?;
-    verify_inserted_picture_bytes(
-        &output,
-        expected.index,
-        expected.picture_id,
-        expected.width_emu,
-        expected.height_emu,
-        expected.image_bytes,
-        expected.layout,
-    )?;
+    verify_inserted_picture_bytes(&output, &expected)?;
     Ok(output)
 }
 
@@ -342,8 +351,8 @@ pub(super) fn append_xml_element(bytes: &[u8], element: &str) -> Result<Vec<u8>,
     Ok(output)
 }
 
-/// Deletes one safe, direct main-body paragraph selected by Current-view text.
-/// Deletes only the source paragraph holding one supported picture. Media and
+/// Deletes a dedicated picture paragraph, or only its drawing when paragraph
+/// properties must remain (including section boundaries). Media and
 /// relationships are deliberately preserved, even when they become unused.
 pub fn delete_picture_to_vec(
     package: &Package,
@@ -386,6 +395,17 @@ pub fn delete_picture_to_vec(
             "delete_picture supports only a dedicated picture paragraph",
         ));
     }
+    if !crate::DocxDocument::new(source)
+        .map_err(document_invalid)?
+        .pictures()
+        .find(|picture| picture.source_id() == drawing)
+        .is_some_and(|picture| picture.is_simple())
+    {
+        return Err(unsupported(
+            "delete_picture requires one simple picture drawing",
+        ));
+    }
+    let keep_paragraph = source.children(paragraph).any(|id| word(source, id, "pPr"));
     let before = body_texts(source)?;
     let index = before
         .iter()
@@ -394,20 +414,22 @@ pub fn delete_picture_to_vec(
             OperationResult::failed("TARGET_NOT_FOUND", "picture paragraph was not found")
         })?;
     let mut expected = before.into_iter().map(|(_, text)| text).collect::<Vec<_>>();
-    expected.remove(index);
+    if !keep_paragraph {
+        expected.remove(index);
+    }
+    let removed = if keep_paragraph { drawing } else { paragraph };
+    let removed_span = source.node(removed).expect("picture source").span();
+    protected_range::ensure_safe_picture_delete(source, removed_span, drawing)?;
     let output = write_patches_to_vec(
         package,
         main,
         source,
         vec![Patch {
-            span: source
-                .node(paragraph)
-                .expect("picture paragraph exists")
-                .span(),
+            span: removed_span,
             replacement: Vec::new(),
         }],
     )?;
-    verify_deleted_picture_bytes(&output, &expected)?;
+    verify_deleted_picture_bytes(&output, &expected, source, removed_span)?;
     Ok(output)
 }
 
@@ -438,10 +460,19 @@ pub fn delete_picture(
 pub(super) fn verify_deleted_picture_bytes(
     output: &[u8],
     expected: &[String],
+    original: &SourceDocument,
+    removed_span: SourceSpan,
 ) -> Result<(), OperationResult> {
     let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
     let (_, source) = crate::open_main_source(&package).map_err(document_invalid)?;
+    let mut expected_xml = original.original_bytes().to_vec();
+    expected_xml.drain(removed_span.start..removed_span.end);
+    if source.original_bytes() != expected_xml {
+        return Err(document_invalid(
+            "picture deletion changed unrelated source",
+        ));
+    }
     let actual = body_texts(&source)?
         .into_iter()
         .map(|(_, text)| text)
@@ -864,13 +895,14 @@ pub(super) fn valid_image(bytes: &[u8], content_type: &str) -> bool {
 
 pub(super) fn verify_inserted_picture_bytes(
     output: &[u8],
-    expected_index: usize,
-    picture_id: u32,
-    width_emu: i64,
-    height_emu: i64,
-    image_bytes: &[u8],
-    expected_layout: Option<&opensuite_protocol::PictureLayoutPatch>,
+    expected: &InsertedPictureVerification<'_>,
 ) -> Result<(), OperationResult> {
+    let expected_index = expected.index;
+    let picture_id = expected.picture_id;
+    let width_emu = expected.width_emu;
+    let height_emu = expected.height_emu;
+    let image_bytes = expected.image_bytes;
+    let expected_layout = expected.layout;
     let package = Package::from_bytes(output.to_vec()).map_err(document_invalid)?;
     package.verify().map_err(document_invalid)?;
     let (main, source) = crate::open_main_source(&package).map_err(document_invalid)?;
@@ -886,6 +918,16 @@ pub(super) fn verify_inserted_picture_bytes(
             "DOCUMENT_INVALID",
             "picture is not at the requested body position",
         ));
+    }
+    let properties = sections::section_child(&source, *paragraph, "pPr")?;
+    let alignment = properties
+        .map(|id| sections::section_child(&source, id, "jc"))
+        .transpose()?
+        .flatten();
+    if alignment.and_then(|id| source.node(id)?.attribute("val"))
+        != expected.alignment.map(alignment_value)
+    {
+        return Err(document_invalid("inserted picture alignment changed"));
     }
     let picture = crate::DocxDocument::new(&source)
         .map_err(document_invalid)?

@@ -208,28 +208,6 @@ pub(super) fn body_closing_start(
         .ok_or_else(|| unsupported("document body has no closing tag"))
 }
 
-pub(super) fn picture_fragment_for_body(
-    source: &SourceDocument,
-    body: NodeId,
-    width_emu: i64,
-    height_emu: i64,
-    picture_id: u32,
-    relationship_id: &str,
-    alt_text: Option<&str>,
-) -> Result<Vec<u8>, OperationResult> {
-    let prefix = word_prefix_for(source, body, "body")?;
-    let name = |local: &str| qualify(&prefix, local);
-    let description = alt_text
-        .filter(|value| !value.is_empty())
-        .map(|value| format!(r#" descr="{}""#, escape(value)))
-        .unwrap_or_default();
-    let picture_name = format!("Picture {picture_id}");
-    Ok(format!(
-        r#"<{}><{}><{}><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{width_emu}" cy="{height_emu}"/><wp:docPr id="{picture_id}" name="{picture_name}"{description}/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{picture_id}" name="{picture_name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{relationship_id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{width_emu}" cy="{height_emu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></{}></{}></{}>"#,
-        name("p"), name("r"), name("drawing"), name("drawing"), name("r"), name("p")
-    ).into_bytes())
-}
-
 pub(super) fn word_prefix_for(
     source: &SourceDocument,
     id: NodeId,

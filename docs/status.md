@@ -1,5 +1,30 @@
 # OpenSuite Engine Status
 
+## Safe automatic inline images (Phase A1, local)
+
+Existing Rust/N-API picture insertion now accepts optional section-aware
+`auto_fit` / Node `autoFit` and inline left/center/right `alignment`. Fitting uses
+declared page/column bounds, margins, a conservative gutter allowance, and resolved
+default paragraph indents/spacing. It preserves aspect ratio with integer math,
+never upscales, and rejects missing/impossible geometry, inherited exact line
+height, explicit-size conflicts, and floating-layout combinations. Omitted options
+retain existing behavior. Picture deletion keeps all owning paragraph properties,
+including section boundaries, removes only the drawing where needed, and refuses
+protected source structures through the existing shared guard. Relationships and
+media remain unchanged; reopen checks require the exact intended source removal.
+
+198 DOCX / 20 OPC / 4 protocol / 3 Node Rust and 40 native Node tests pass;
+workspace compilation, formatting, strict Clippy for DOCX/OPC/protocol/Node/CLI,
+SDK type checks, and diff checks pass. All six temporary LibreOffice PDF renders
+(wide, tall, logo, landscape, changed margins, equal columns) were visually
+checked: one page each, expected alignment, no image clipping. The first tall
+render exposed default paragraph spacing clipping; the final render retains its
+full bottom border after deducting that spacing. Unequal columns, multiple-section
+selection, section-preserving deletion, imported DrawingML, malformed cases, and
+relationship preservation are structurally verified. Word/Google Docs checks are
+pending. See [image behavior and integration](e1-image-layout.md). No application
+TypeScript, version, npm publication, consumer pin, or push changed.
+
 ## Final DOCX acceptance (Phase 8)
 
 Conditional release readiness: supported local edits and the packed macOS ARM64

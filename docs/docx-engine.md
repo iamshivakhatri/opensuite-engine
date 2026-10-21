@@ -57,6 +57,11 @@ the next native release.
   source-ordered bullet runs), external hyperlinks,
   and PNG/JPEG pictures with typed inline/floating insertion, proportional or exact
   size, common wrapping and positioning, and preservation-aware layout patches.
+  Inline insertion optionally fits the insertion section's declared page/column
+  bounds without upscaling and aligns left/center/right on the picture paragraph.
+  Fitting accounts for margins and resolved default paragraph indents/spacing;
+  explicit sizes retain their existing semantics. Picture deletion preserves any
+  owning paragraph properties, including section boundaries.
   See [E1 image layout](e1-image-layout.md).
 - Page breaks and real section boundaries (next/continuous/odd/even page),
   independent section page setup, first-page behavior, numbering restart/continue,

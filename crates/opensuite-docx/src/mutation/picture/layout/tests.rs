@@ -26,15 +26,21 @@ fn layout() -> PictureLayoutPatch {
         },
     }
 }
-fn seed(floating: bool) -> Vec<u8> {
-    // Metadata-only PNG is enough for structural Rust tests; Node dogfood uses a decoded PNG.
+fn png(width: u32, height: u32) -> Vec<u8> {
+    // Metadata-only PNG is enough for structural Rust tests.
     let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
-    png.extend_from_slice(&2u32.to_be_bytes());
-    png.extend_from_slice(&1u32.to_be_bytes());
+    png.extend_from_slice(&width.to_be_bytes());
+    png.extend_from_slice(&height.to_be_bytes());
     png.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    png
+}
+fn seed(floating: bool) -> Vec<u8> {
+    let png = png(2, 1);
     let result = crate::execute_docx_insert_picture(
         crate::create_blank_docx(),
         &InsertPicture {
+            auto_fit: false,
+            alignment: None,
             image_bytes: png,
             placement: ParagraphPlacement::End,
             size: Some(PictureSizeChange::WidthEmu(914_400)),
@@ -462,4 +468,67 @@ fn resize_does_not_target_extension_transforms() {
         },
     );
     assert!(result.output_artifact.is_none());
+}
+
+#[test]
+fn automatic_inline_insertion_preserves_existing_inline_and_floating_drawings() {
+    let bytes = seed(false);
+    let result = crate::execute_docx_insert_picture(
+        bytes,
+        &InsertPicture {
+            image_bytes: png(2, 1),
+            placement: ParagraphPlacement::End,
+            size: Some(PictureSizeChange::WidthEmu(914_400)),
+            layout: Some(layout()),
+            auto_fit: false,
+            alignment: None,
+            alt_text: None,
+            base_revision: None,
+        },
+    );
+    let bytes = result.output_artifact.unwrap();
+    let package = Package::from_bytes(bytes.clone()).unwrap();
+    let (_, source) = crate::open_main_source(&package).unwrap();
+    let old_drawings = crate::DocxDocument::new(&source)
+        .unwrap()
+        .pictures()
+        .map(|picture| {
+            let span = source.node(picture.source_id()).unwrap().span();
+            source.original_bytes()[span.start..span.end].to_vec()
+        })
+        .collect::<Vec<_>>();
+    let result = crate::execute_docx_insert_picture(
+        bytes.clone(),
+        &InsertPicture {
+            image_bytes: png(2000, 1000),
+            placement: ParagraphPlacement::Start,
+            size: None,
+            layout: None,
+            auto_fit: true,
+            alignment: Some(opensuite_protocol::ParagraphAlignment::Center),
+            alt_text: None,
+            base_revision: None,
+        },
+    );
+    let output = result.output_artifact.unwrap();
+    let after = Package::from_bytes(output).unwrap();
+    let (_, source) = crate::open_main_source(&after).unwrap();
+    let drawings = crate::DocxDocument::new(&source)
+        .unwrap()
+        .pictures()
+        .map(|picture| {
+            let span = source.node(picture.source_id()).unwrap().span();
+            source.original_bytes()[span.start..span.end].to_vec()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(&drawings[1..], old_drawings);
+    for name in package.part_names_with_prefix("/") {
+        if name.as_str() != "/word/document.xml" && name.as_str() != "/word/_rels/document.xml.rels"
+        {
+            assert_eq!(
+                package.read_part_by_name(name).unwrap(),
+                after.read_part_by_name(name).unwrap()
+            );
+        }
+    }
 }

@@ -837,6 +837,8 @@ mod tests {
             &main,
             &source,
             &opensuite_protocol::InsertPicture {
+                auto_fit: false,
+                alignment: None,
                 size: None,
                 layout: None,
                 image_bytes: png(),

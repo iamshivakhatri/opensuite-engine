@@ -393,7 +393,9 @@ pub(crate) fn paragraph_property_patches(
 
 pub(super) type AttrChange = (&'static str, Option<String>);
 
-pub(super) fn alignment_value(value: opensuite_protocol::ParagraphAlignment) -> &'static str {
+pub(in crate::mutation) fn alignment_value(
+    value: opensuite_protocol::ParagraphAlignment,
+) -> &'static str {
     match value {
         opensuite_protocol::ParagraphAlignment::Left => "left",
         opensuite_protocol::ParagraphAlignment::Center => "center",

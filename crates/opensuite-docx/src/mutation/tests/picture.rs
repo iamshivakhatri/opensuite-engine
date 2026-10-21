@@ -232,6 +232,8 @@ fn inserts_inline_picture_with_bytes_dimensions_and_collision_safe_ids() {
         &main,
         &source,
         &InsertPicture {
+            auto_fit: false,
+            alignment: None,
             size: None,
             layout: None,
             image_bytes: png(640, 480),
@@ -248,6 +250,8 @@ fn inserts_inline_picture_with_bytes_dimensions_and_collision_safe_ids() {
         &main,
         &source,
         &InsertPicture {
+            auto_fit: false,
+            alignment: None,
             size: None,
             layout: None,
             image_bytes: png(1600, 800),
@@ -292,6 +296,8 @@ fn rejects_malformed_and_unsupported_picture_bytes_without_output() {
                 &main,
                 &source,
                 &InsertPicture {
+                    auto_fit: false,
+                    alignment: None,
                     size: None,
                     layout: None,
                     image_bytes,
@@ -349,6 +355,8 @@ fn inserts_pictures_before_and_after_body_handles() {
                 &main,
                 &source,
                 &InsertPicture {
+                    auto_fit: false,
+                    alignment: None,
                     size: None,
                     layout: None,
                     image_bytes: png(1, 1),
@@ -371,6 +379,8 @@ fn deletes_a_supported_picture_and_preserves_its_media_part() {
         &main,
         &source,
         &InsertPicture {
+            auto_fit: false,
+            alignment: None,
             size: None,
             layout: None,
             image_bytes: png(2, 1),
@@ -444,6 +454,8 @@ fn resizes_one_picture_and_preserves_the_other_picture() {
         &main,
         &source,
         &InsertPicture {
+            auto_fit: false,
+            alignment: None,
             size: None,
             layout: None,
             image_bytes: png(4, 2),
@@ -460,6 +472,8 @@ fn resizes_one_picture_and_preserves_the_other_picture() {
         &main,
         &source,
         &InsertPicture {
+            auto_fit: false,
+            alignment: None,
             size: None,
             layout: None,
             image_bytes: jpeg(4, 2),

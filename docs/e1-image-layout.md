@@ -13,6 +13,25 @@ there is no second drawing parser, relationship model, dependency, or renderer.
   with integer arithmetic. Neither retains intrinsic 96-DPI sizing, capped at
   the existing 6.5-inch default width without automatic upscaling. Explicit
   dimensions may upscale. Insertion creates a dedicated image paragraph.
+- Optional `InsertPicture.auto_fit` (Node `autoFit: true`) fits an inline image to
+  the section at the insertion point. Declared page width/height are authoritative
+  for portrait and landscape pages. Deduct nonnegative margins, a conservative
+  gutter allowance on both axes, equal-column spacing or the narrowest declared
+  unequal column, and resolved default paragraph indents and before/after spacing.
+  New paragraphs inherit document defaults, not adjacent paragraph formatting.
+  Choose the limiting axis with integer arithmetic, preserve intrinsic aspect
+  ratio (round down by less than one EMU), and never upscale from 96-DPI intrinsic
+  size. Height is a full-section bound, never estimated remaining page space.
+  Missing/invalid/impossible geometry fails with `INVALID_PAGE_GEOMETRY`;
+  ambiguous properties and inherited exact line height fail safely as unsupported.
+  Multiple equal columns require declared spacing; unequal columns require
+  positive widths and spacing between columns that fit the page text area.
+  Automatic fit cannot combine with explicit size or floating layout. Omission
+  keeps the legacy width cap and sizing behavior.
+- Optional inline `alignment` accepts left/center/right. It authors `w:jc` inside
+  `w:pPr` on the actual picture paragraph, including paragraphs without text, and
+  creates no extra paragraphs. Omission keeps the previous paragraph XML.
+  Alignment with floating layout is refused; anchor positioning stays separate.
 - An optional floating layout requires both position axes. Each axis has exactly
   one start/center/end alignment or signed offset. Horizontal references are
   page, margin, or column; vertical references are page, margin, or paragraph.
@@ -49,6 +68,14 @@ Resizing patches only the drawing and picture-transform extent attributes.
 Moving patches only requested position properties, wrap, behind-text flag, or
 text-distance attributes. Unknown extensions, effects, crop, alternate text,
 IDs, anchor flags, and unrelated document/package parts stay intact.
+Deletion still removes a plain dedicated picture paragraph. When any paragraph
+properties exist, it removes only the drawing, keeping the paragraph/run and all
+properties, including `w:sectPr`, section boundaries, and property history.
+The shared protected-source guard permits only that selected drawing: enclosing
+ranges/fields/revisions, mixed content, and protected structures within the drawing
+fail safely. Media and relationships remain even when unused. Verification reopens
+output and requires exactly the intended source removal and unchanged body order.
+
 Replacement changes only the media part; dimensions, positioning, wrapping,
 and document XML remain unchanged. Assets shared by multiple images, legacy
 VML references, or other package parts (including headers) are rejected.
@@ -73,6 +100,47 @@ lazily exposes layout updates alongside existing resize tools; dynamic
 The existing working-byte lifecycle rejects unregistered/stale handles and saves
 one verified version at the run boundary. Binary insertion/replacement stay
 programmatic. Agent Core V3, npm pins, and `OPENSUITE_ENGINE_PATH` are unchanged.
+
+## Phase A1 application integration
+
+The existing `executeDocxInsertPicture(bytes, operation)` now accepts optional
+`autoFit: boolean` and `alignment: "left" | "center" | "right"` fields through the
+same binary-buffer input. Example operation:
+
+```js
+{ imageBytes, placement: { kind: "end" }, autoFit: true, alignment: "center" }
+```
+
+Application integration requires forwarding those two fields in the existing
+engine-client picture insertion type/wrapper and choosing them in the calling
+image workflow. Do not send width/height or floating layout with `autoFit: true`.
+Alignment may accompany explicit inline sizing. Continue using verified output
+bytes and fresh handles after edits. Generated SDK declarations and operation
+schemas include the options; capability IDs and export names are unchanged.
+Rust `InsertPicture` callers must supply `auto_fit` and `alignment` explicitly
+(`false`/`None` preserve old behavior). The CLI continues its existing defaults.
+No application TypeScript, engine pin, version, or publication changed in A1.
+
+## Phase A1 verification
+
+Focused fixtures cover wide/tall/logo/photo proportions, explicit legacy sizing,
+landscape pages, margins/gutters, equal/unequal columns, default-style indents,
+section selection on both sides of a boundary, and textless paragraph alignment.
+Deletion checks retain section/property history/unknown paragraph XML and every
+unrelated part, and refuse enclosing ranges, fields, revisions, mixed content,
+and protected structures inside a drawing. Existing inline/floating drawings
+remain byte-identical after automatic insertion. All outputs reopen through the
+package verifier; native deletion/reinsertion retains section count and valid
+image relationships. No large permanent fixtures were added.
+
+`node --test test/pictures.test.mjs` regenerates six temporary
+`/private/tmp/opensuite-a1-{wide,tall,logo,landscape,margins,columns}.docx` files.
+LibreOffice rendered each final fixture to one PDF page; every page was visually
+checked for expected size/alignment and intact image borders. The tall image
+initially clipped at the bottom because the inherited paragraph spacing consumed
+page height; the final fixture deducts that spacing and shows all four borders.
+Unequal columns, section boundaries, and deletion preservation have structural
+verification only. Microsoft Word/Google Docs remain unverified for A1.
 
 ## Evidence and manual artifacts
 

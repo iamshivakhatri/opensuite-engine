@@ -8,6 +8,30 @@ pub(super) fn ensure_safe_source_ranges(
     reason: &'static str,
     allow_comment_overlap: bool,
 ) -> Result<(), OperationResult> {
+    ensure_safe_ranges(source, regions, reason, allow_comment_overlap, None)
+}
+
+pub(super) fn ensure_safe_picture_delete(
+    source: &SourceDocument,
+    region: SourceSpan,
+    drawing: NodeId,
+) -> Result<(), OperationResult> {
+    ensure_safe_ranges(
+        source,
+        &[region],
+        "UNSUPPORTED_PICTURE_DELETE",
+        false,
+        Some(drawing),
+    )
+}
+
+fn ensure_safe_ranges(
+    source: &SourceDocument,
+    regions: &[SourceSpan],
+    reason: &'static str,
+    allow_comment_overlap: bool,
+    removed_drawing: Option<NodeId>,
+) -> Result<(), OperationResult> {
     // Callers supply disjoint regions in source order (including column cells).
     let intersects = |span: SourceSpan| {
         let index = regions.partition_point(|region| region.end <= span.start);
@@ -89,6 +113,7 @@ pub(super) fn ensure_safe_source_ranges(
                 "sdt" => "content control",
                 "hyperlink" => "hyperlink reference",
                 "footnoteReference" | "endnoteReference" => "note reference",
+                "drawing" if Some(id) == removed_drawing => continue,
                 "drawing" | "pict" | "object" | "altChunk" => "dependent package content",
                 "ins" | "del" | "moveFrom" | "moveTo" => "tracked revision",
                 _ if crate::tracked_change::revision_node(source, id) => "tracked revision",
