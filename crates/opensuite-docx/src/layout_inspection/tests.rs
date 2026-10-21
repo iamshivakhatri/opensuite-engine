@@ -22,7 +22,6 @@ fn geometry_section_ownership_and_effective_pagination_controls() {
     let bytes = fixture(
         r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/><w:pageBreakBefore/><w:keepLines/><w:widowControl w:val="0"/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:bottom="1440" w:left="1440" w:right="1440" w:gutter="0"/></w:sectPr></w:pPr><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:r><w:t>Landscape</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/><w:pgMar w:top="720" w:bottom="720" w:left="720" w:right="720" w:gutter="0"/></w:sectPr></w:body></w:document>"#,
     );
-    std::fs::write("/private/tmp/opensuite-layout-explicit.docx", &bytes).unwrap();
     let original = bytes.clone();
     let layout = inspect(bytes.clone());
     assert!(layout.ok);
