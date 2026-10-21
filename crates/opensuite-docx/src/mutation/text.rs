@@ -15,6 +15,9 @@ pub fn replace_text(
             "output path must differ from input path",
         );
     }
+    if let Err(result) = ensure_document_unprotected(package, main) {
+        return result;
+    }
     let target = match resolve_target(source, operation) {
         Ok(target) => target,
         Err(result) => return result,
@@ -62,6 +65,7 @@ pub fn replace_text_to_vec(
     source: &SourceDocument,
     operation: &ReplaceText,
 ) -> Result<Vec<u8>, OperationResult> {
+    ensure_document_unprotected(package, main)?;
     let target = resolve_target(source, operation)?;
     if target.value != operation.expected_current_text {
         return Err(OperationResult::failed(
@@ -114,6 +118,46 @@ pub(super) fn resolve_target(
         matches.into_iter().next().expect("one match")
     };
     let patches = patches_for_match(source, &matched, &operation.replacement)?;
+    let first = source
+        .node(matched.segments.first().unwrap().id)
+        .unwrap()
+        .span()
+        .start;
+    let last = source
+        .node(matched.segments.last().unwrap().id)
+        .unwrap()
+        .span()
+        .end;
+    protected_range::ensure_safe_source_ranges(
+        source,
+        &[SourceSpan {
+            start: first,
+            end: last,
+        }],
+        "UNSAFE_TEXT_SELECTION",
+        false,
+    )?;
+    // Source properties can carry pending revisions that visible text search omits.
+    for segment in &matched.segments {
+        let Some(run) = ordinary_run(source, segment.id) else {
+            continue;
+        };
+        let paragraph = source.node(run).and_then(|node| node.parent()).unwrap();
+        let properties = source
+            .children(paragraph)
+            .filter(|id| word(source, *id, "pPr"))
+            .chain(source.children(run).filter(|id| word(source, *id, "rPr")))
+            .map(|id| source.node(id).unwrap().span())
+            .collect::<Vec<_>>();
+        for span in properties {
+            protected_range::ensure_safe_source_ranges(
+                source,
+                &[span],
+                "UNSAFE_TEXT_SELECTION",
+                false,
+            )?;
+        }
+    }
     Ok(ResolvedText {
         value: matched.text,
         patches,

@@ -302,3 +302,61 @@ fn ordinary_replacement_refuses_hidden_markup_between_runs() {
         fs::remove_file(input).unwrap();
     }
 }
+
+#[test]
+fn replacement_refuses_enclosing_ranges_and_preserves_independent_text() {
+    for (start, end) in [
+        (
+            r#"<w:bookmarkStart w:id="4" w:name="reference"/>"#,
+            r#"<w:bookmarkEnd w:id="4"/>"#,
+        ),
+        (
+            r#"<w:commentRangeStart w:id="3"/>"#,
+            r#"<w:commentRangeEnd w:id="3"/>"#,
+        ),
+        (r#"<w:permStart w:id="2"/>"#, r#"<w:permEnd w:id="2"/>"#),
+        (
+            r#"<w:customXmlInsRangeStart w:id="1"/>"#,
+            r#"<w:customXmlInsRangeEnd w:id="1"/>"#,
+        ),
+    ] {
+        let input = table_fixture(&format!(
+            r#"<w:document xmlns:w="{WORD}"><w:body>{start}<w:p><w:r><w:t>Protected October</w:t></w:r></w:p>{end}<w:p><w:r><w:t>Independent text</w:t></w:r></w:p></w:body></w:document>"#
+        ));
+        let bytes = fs::read(&input).unwrap();
+        let refused = crate::execute_docx_replace_text(
+            bytes.clone(),
+            &operation("October", "October", "November"),
+        );
+        assert!(refused.output_artifact.is_none());
+        assert_eq!(
+            refused.operation.diagnostics[0].reason_code.as_deref(),
+            Some("UNSAFE_TEXT_SELECTION")
+        );
+        let allowed = crate::execute_docx_replace_text(
+            bytes.clone(),
+            &operation("Independent text", "Independent text", "Safe edit"),
+        );
+        assert!(allowed.output_artifact.is_some());
+        assert_eq!(fs::read(&input).unwrap(), bytes);
+        fs::remove_file(input).unwrap();
+    }
+}
+
+#[test]
+fn replacement_refuses_pending_text_and_paragraph_property_revisions() {
+    for properties in [
+        r#"<w:pPr><w:pPrChange w:id="1"><w:pPr/></w:pPrChange></w:pPr><w:r>"#,
+        r#"<w:r><w:rPr><w:rPrChange w:id="1"><w:rPr/></w:rPrChange></w:rPr>"#,
+    ] {
+        let input = table_fixture(&format!(
+            r#"<w:document xmlns:w="{WORD}"><w:body><w:p>{properties}<w:t>October</w:t></w:r></w:p></w:body></w:document>"#
+        ));
+        let result = crate::execute_docx_replace_text(
+            fs::read(&input).unwrap(),
+            &operation("October", "October", "November"),
+        );
+        assert!(result.output_artifact.is_none());
+        fs::remove_file(input).unwrap();
+    }
+}

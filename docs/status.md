@@ -1,5 +1,16 @@
 # OpenSuite Engine Status
 
+## Safe ordinary text replacement (local)
+
+The `safe_text_replacement` Node feature flag certifies that `replace_text`
+uses the shared protected-range guard, checks active document protection and
+refuses selected paragraph/run property revisions. Enclosing bookmarks,
+comments, permission and other paired ranges now refuse even when their markers
+lie outside the selected text. Existing field/boundary error codes and separate
+bounded content-control/table mutations retain their behavior. No operation
+inputs, package versions or dependencies changed. This flag is absent from the
+published 0.1.8 package; consumers must check the loaded native capabilities.
+
 ## DOCX stabilization (E6, local)
 
 Two combined-workflow bugs are corrected without new operations or input changes.

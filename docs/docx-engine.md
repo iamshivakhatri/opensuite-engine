@@ -31,6 +31,12 @@ without an explicit occurrence/index. Table handles with expected header labels
 must agree. No new mutation inputs or durable handle protocol; npm consumers need
 the next native release.
 
+The local `safe_text_replacement` feature flag adds no operation or input. It
+identifies ordinary replacements guarded against enclosing protected ranges,
+active document protection and selected paragraph/run property history. Safe
+consumers must require the flag instead of assuming support from version 0.1.8.
+Bounded content-control and table updates keep their existing separate checks.
+
 ## Current Capability Groups
 
 - Package opening, source-aware semantic inspection, exact text search, bounded
