@@ -144,6 +144,8 @@ The root archive includes `native-artifacts.json`. Its generated loader checks t
 loaded native version and exports, then matches the actual loaded binary's hash to
 that release's records. This includes optional-package fallback when an adjacent
 development binary is absent. A package version alone cannot certify native identity.
+Local native builds remove this generated release-only file; full package validation
+regenerates it from the checked CI artifacts before packing.
 
 Local Mac/Linux/Windows development builds only the host binding. Cross-platform
 release binaries are produced in CI, not by a single local machine.

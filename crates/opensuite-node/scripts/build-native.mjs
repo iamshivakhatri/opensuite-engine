@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process'
 import { generateInputs } from './generate-inputs.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+// A development rebuild replaces release bytes; packaging regenerates their hashes.
+rmSync(join(root, 'native-artifacts.json'), { force: true })
 const folder = mkdtempSync(join(tmpdir(), 'opensuite-types-'))
 const args = process.argv.slice(2)
 const napiArgs = ['napi', 'build', '--platform', ...(args.includes('--debug') ? [] : ['--release']), '--no-js', '--dts', '.native-cli.d.ts', ...args.filter((arg) => arg !== '--debug')]
