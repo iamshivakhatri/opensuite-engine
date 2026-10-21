@@ -25,12 +25,26 @@ pub(super) fn ensure_safe_picture_delete(
     )
 }
 
+pub(super) fn ensure_safe_hyperlink_edit(
+    source: &SourceDocument,
+    region: SourceSpan,
+    hyperlink: NodeId,
+) -> Result<(), OperationResult> {
+    ensure_safe_ranges(
+        source,
+        &[region],
+        "UNSAFE_HYPERLINK_RANGE",
+        false,
+        Some(hyperlink),
+    )
+}
+
 fn ensure_safe_ranges(
     source: &SourceDocument,
     regions: &[SourceSpan],
     reason: &'static str,
     allow_comment_overlap: bool,
-    removed_drawing: Option<NodeId>,
+    allowed_node: Option<NodeId>,
 ) -> Result<(), OperationResult> {
     // Callers supply disjoint regions in source order (including column cells).
     let intersects = |span: SourceSpan| {
@@ -111,9 +125,10 @@ fn ensure_safe_ranges(
                 "fldChar" | "fldSimple" | "instrText" => "field range",
                 "commentReference" => "comment reference",
                 "sdt" => "content control",
+                "hyperlink" if Some(id) == allowed_node => continue,
                 "hyperlink" => "hyperlink reference",
                 "footnoteReference" | "endnoteReference" => "note reference",
-                "drawing" if Some(id) == removed_drawing => continue,
+                "drawing" if Some(id) == allowed_node => continue,
                 "drawing" | "pict" | "object" | "altChunk" => "dependent package content",
                 "ins" | "del" | "moveFrom" | "moveTo" => "tracked revision",
                 _ if crate::tracked_change::revision_node(source, id) => "tracked revision",

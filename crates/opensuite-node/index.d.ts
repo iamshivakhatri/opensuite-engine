@@ -23,6 +23,7 @@ export interface AffordanceOutput {
 
 export interface BodyBlockOutput {
   handle: string
+  movementHandle?: string
   kind: string
   text?: string
   styleName?: string
@@ -252,6 +253,9 @@ export declare function executeDocxInsertToc(input: Buffer, op: InsertTocInput):
 /** Insert text as a real Word tracked insertion before/after an exact ordinary text anchor in one body paragraph. Default after. Inherits formatting at the insertion boundary. Author is explicit; the client supplies current UTC when date is omitted. Fields, wrappers, tables, and selections crossing revisions or protected ranges are unsupported. Re-inspect after editing. */
 export declare function executeDocxInsertTrackedText(input: Buffer, op: InsertTrackedTextInput): Promise<ExecuteDocxReplaceTextOutput>
 
+/** Move an original ordinary body paragraph before/after another in the same section. Both need fresh movementHandle identities. Preserves original XML, styles and numbering; refuses protected/dependent structures, section boundaries and stale targets. Same-position requests succeed without XML changes. baseRevision is caller metadata only. */
+export declare function executeDocxMoveParagraph(input: Buffer, operation: MoveParagraphInput): Promise<ExecuteDocxReplaceTextOutput>
+
 /** Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported. */
 export declare function executeDocxRejectRevision(input: Buffer, op: RevisionDecisionInput): Promise<ExecuteDocxReplaceTextOutput>
 
@@ -278,7 +282,7 @@ export declare function executeDocxSetContentControlText(input: Buffer, operatio
 /** Set or clear header/footer text. */
 export declare function executeDocxSetHeaderFooterText(input: Buffer, operation: SetHeaderFooterTextInput): Promise<ExecuteDocxReplaceTextOutput>
 
-/** Add or clear an external hyperlink on a text target. */
+/** Add an external URL or internal bookmark link on exact ordinary text, or clear an exact hyperlink. */
 export declare function executeDocxSetHyperlink(input: Buffer, operation: SetHyperlinkInput): Promise<ExecuteDocxReplaceTextOutput>
 
 /** Explicitly enable or disable different odd/even headers and footers for the ENTIRE document. This affects every section; it preserves all variant parts. */
@@ -631,6 +635,12 @@ export interface InspectDocxOutput {
 }
 
 /**
+ * Inspect main-document bookmarks and internal/external hyperlinks in source order, including part/paragraph locations, bookmarkName destinations, exact text targets and malformed/ambiguous reasons. Default 20/max 100 records; strings capped at 2000 characters. Does not change XML. Copy bookmarkName into set_hyperlink; refresh body-block movementHandle values before moving paragraphs.
+ * @jsonOutput
+ */
+export declare function inspectDocxReferences(input: Buffer, options?: ReferenceInspectionInput | undefined | null): Promise<string>
+
+/**
  * Inspect ordered Word sections with fresh handles, page setup, numbering, and owned/inherited header/footer variants. Re-inspect after every section edit.
  * @jsonOutput
  */
@@ -672,6 +682,14 @@ export interface LineSpacingInput {
   rule?: string
 }
 
+export interface MoveParagraphInput {
+  target: ParagraphMoveTargetInput
+  destination: ParagraphMoveTargetInput
+  /** @schema {"enum":["before","after"]} */
+  position: string
+  baseRevision?: string
+}
+
 export interface NoteInspectionInput {
   offset?: number
   /** @schema {"minimum":1,"maximum":100} */
@@ -702,6 +720,11 @@ export interface ParagraphListOutput {
   kind: string
   level: number
   supported: boolean
+}
+
+export interface ParagraphMoveTargetInput {
+  /** Fresh movementHandle from inspectDocx body_blocks; ordinary bN handles are refused. */
+  handle: string
 }
 
 export interface ParagraphOutput {
@@ -784,6 +807,12 @@ export interface ReadEmbeddedImageOutput {
   imageBytes?: Buffer
 }
 
+export interface ReferenceInspectionInput {
+  offset?: number
+  /** @schema {"minimum":1,"maximum":100} */
+  limit?: number
+}
+
 export interface ReplacePictureInput {
   handle: string
   replacementBytes: Buffer
@@ -853,8 +882,10 @@ export interface SetHeaderFooterTextInput {
 
 export interface SetHyperlinkInput {
   target: TextTargetInput
-  /** @schema {"description":"External URL. Omit to clear the hyperlink."} */
+  /** @schema {"description":"External HTTP(S) URL. Supply url or bookmarkName; omit both to clear."} */
   url?: string
+  /** Exact existing bookmark name; no new bookmark or relationship is created. */
+  bookmarkName?: string
   baseRevision?: string
 }
 

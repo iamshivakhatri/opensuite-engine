@@ -320,6 +320,7 @@ fn body_blocks(
         return invalid_bounds();
     };
     let body = document.body_id();
+    let movement_stamp = crate::mutation::section_fingerprint(package, main, source).ok();
     let mut total = 0;
     let mut items = Vec::new();
     let mut table_index = 0;
@@ -440,6 +441,9 @@ fn body_blocks(
         if index >= page.0 && items.len() < page.1 {
             items.push(DocxBodyBlock {
                 handle: format!("b{index}"),
+                movement_handle: (kind == DocxBodyBlockKind::Paragraph)
+                    .then(|| movement_stamp.map(|stamp| format!("b{index}:{stamp:016x}")))
+                    .flatten(),
                 kind,
                 text,
                 style_name,

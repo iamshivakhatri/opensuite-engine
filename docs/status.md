@@ -1,5 +1,45 @@
 # OpenSuite Engine Status
 
+## Document references and safe paragraph movement (E5B, local)
+
+Rust/N-API `inspect_docx_references` / `inspectDocxReferences` reports main-part
+bookmarks and internal/external hyperlinks in source order, with paragraph/body
+locations, exact bookmark destinations, text selectors and malformed/ambiguous
+reasons. Default 20/max 100 records; strings capped at 2,000 characters. Inspection
+reuses the reference parser and never changes imported XML.
+
+Existing `set_hyperlink` adds optional `bookmarkName`, mutually exclusive with
+`url`. It validates an existing unique complete bookmark, preserves selected run
+formatting and writes `w:anchor` without adding relationships. Existing external
+URL/clear inputs remain supported. Hidden/enclosing protected ranges and unsafe
+run/wrapper structures refuse; imported tooltip/history/extra attributes survive
+destination changes. Reused bookmark IDs are now diagnosed even when the earlier
+pair has already ended.
+
+Rust/N-API `move_paragraph` / `executeDocxMoveParagraph` relocates original XML
+before/after another ordinary body paragraph in the same validated section.
+Fresh body-block `movementHandle` values reject stale targets. Styles, numbering,
+paragraph/run properties and ordinary inline content remain byte-identical;
+self/adjacent requests are deterministic XML no-ops. Section boundaries,
+cross-section movement, comments/bookmarks/fields/revisions, dependent content,
+floating paragraph frames, unfamiliar descendant XML and unknown intervening
+body structures refuse without output. Save/reopen checks verify text, complete
+block XML/order and exact patched main XML. No general relocation system.
+
+256 DOCX / 20 OPC / 4 protocol / 3 Node Rust tests and 72 native Node tests pass;
+the workspace's 31 existing PPTX tests also pass. Formatting, workspace compilation,
+strict DOCX/OPC/protocol/Node/CLI Clippy, SDK declarations/schema checks and diff
+checks pass. Three temporary LibreOffice renders produced three reviewed pages:
+correct moved list order, numbering and retained bold/italic/color, with no missing
+text or clipping observed. PDF annotations retain internal destinations and the
+external URL. A committed LibreOffice-produced reference fixture covers native
+inspection, link creation and movement; all ten unrelated imported package
+payloads stayed byte-identical. Fresh Word-produced reference/save checks and
+Google Docs review remain unverified. Application integration needs a native build,
+JSON decoding for the new read, the optional bookmark input and refreshed movement
+handles; see [E5B contracts](docx-engine.md#document-references-and-safe-paragraph-movement-e5b).
+No application changes, dependencies, paid model calls, versions/pins, publish or push.
+
 ## Content controls, cell alignment and character styles (E5A, local)
 
 New read-only Rust/N-API `inspect_docx_content_controls` /
@@ -29,7 +69,7 @@ alignment and character style rendering; clearing restored inheritance while
 retaining bold, shading and borders. Imported style definitions and all nine
 unrelated package parts remained byte-identical during native edits. No
 clipping/missing text was observed. Word/Google Docs checks and application tool
-integration remain pending; E5B is unstarted. Engine-only: no application
+integration remain pending; E5B is recorded above. Engine-only: no application
 TypeScript, paid calls, version/pin changes, publishing or push.
 
 ## Native table layout controls (E4, local)
@@ -242,7 +282,7 @@ now skipped instead of overwriting the checked host binary.
 - Creates and patches real paragraph and character Word styles with explicit IDs,
   validated inheritance/next targets, and source-local preservation. Default style
   selection and deletion remain unavailable.
-- Creates blank DOCX files and inserts or deletes safe direct-body paragraphs.
+- Creates blank DOCX files and inserts, deletes or safely moves direct-body paragraphs within a section.
   It replaces text, assigns existing paragraph styles, and applies supported
   direct paragraph and text formatting, including color, underline, highlight,
   strikethrough, and superscript/subscript.
@@ -253,7 +293,7 @@ now skipped instead of overwriting the checked host binary.
 - Supports simple text content controls and typed bullet or decimal lists at
   levels zero through two, including safe continuation and restart; one bullet
   request may safely target separate source-ordered direct-body runs,
-  external HTTP(S) hyperlinks, inline PNG/JPEG insertion and replacement,
+  external HTTP(S) and internal bookmark hyperlinks, inline PNG/JPEG insertion and replacement,
   supported picture deletion and proportional resizing.
 - Supports real next/continuous/odd/even-page section breaks, independently
   targeted page setup, first-page behavior, numbering restart/continue, simple

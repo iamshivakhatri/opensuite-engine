@@ -19,6 +19,13 @@ async function sectionEdit(bytes, index, method, operation) {
   return apply(bytes, method, { handle: sections[index].handle, ...operation })
 }
 
+// Source-stamped movement identities change after section edits; content must not.
+async function bodyContents(bytes) {
+  const result = await binding.inspectDocx(bytes, { focus: { kind: 'body_blocks' } })
+  result.bodyBlocks.items = result.bodyBlocks.items.map(({ movementHandle, ...block }) => block)
+  return result
+}
+
 test('three-section native dogfood reopens with independent page setup and variants', async () => {
   let bytes = binding.createBlankDocx()
   bytes = await apply(bytes, 'executeDocxInsertParagraphs', { texts: ['OpenSuite E1: Three-section report', 'Section 1: portrait overview', 'This document demonstrates independent Word sections.'], placement: { kind: 'end' } })
@@ -58,13 +65,13 @@ test('three-section native dogfood reopens with independent page setup and varia
   writeFileSync('/private/tmp/opensuite-e1-three-sections.json', JSON.stringify(sections, null, 2))
 
   // Updating an existing multi-section document must preserve section 1 facts/content.
-  const beforeBlocks = await binding.inspectDocx(bytes, { focus: { kind: 'body_blocks' } })
+  const beforeBlocks = await bodyContents(bytes)
   const oldHandle = sections[2].handle
   bytes = await sectionEdit(bytes, 1, 'executeDocxSetSectionProperties', { pageSetup: { topMarginTwips: 900 } })
   bytes = await sectionEdit(bytes, 2, 'executeDocxSetSectionHeaderFooter', { kind: 'footer', variant: 'default', action: 'text', text: 'Updated conclusion' })
   const updated = await inspect(bytes)
   assert.deepEqual({ ...updated[0], handle: '' }, { ...sections[0], handle: '' })
-  assert.deepEqual(await binding.inspectDocx(bytes, { focus: { kind: 'body_blocks' } }), beforeBlocks)
+  assert.deepEqual(await bodyContents(bytes), beforeBlocks)
   const stale = await binding.executeDocxSetSectionProperties(bytes, { handle: oldHandle, differentFirstPage: true })
   assert.equal(stale.result.ok, false)
   assert.equal(stale.result.diagnostics[0].code, 'PRECONDITION_FAILED')
@@ -90,13 +97,13 @@ test('edits a python-docx multi-section fixture with shared imported headers', a
   const before = await inspect(bytes)
   assert.equal(before.length, 3)
   assert.equal(before[1].headersFooters[0].linkedToPrevious, true)
-  const blocks = await binding.inspectDocx(bytes, { focus: { kind: 'body_blocks' } })
+  const blocks = await bodyContents(bytes)
   bytes = await sectionEdit(bytes, 1, 'executeDocxSetSectionProperties', { pageSetup: { orientation: 'landscape' } })
   bytes = await sectionEdit(bytes, 2, 'executeDocxSetSectionHeaderFooter', { kind: 'footer', variant: 'default', action: 'text', text: 'Updated imported footer' })
   const after = await inspect(bytes)
   assert.deepEqual({ ...before[0], handle: '' }, { ...after[0], handle: '' })
   assert.equal(after[1].orientation, 'landscape')
   assert.equal(after[2].headersFooters[3].text, 'Updated imported footer')
-  assert.deepEqual(await binding.inspectDocx(bytes, { focus: { kind: 'body_blocks' } }), blocks)
+  assert.deepEqual(await bodyContents(bytes), blocks)
   writeFileSync('/private/tmp/opensuite-e1-imported-updated.docx', bytes)
 })

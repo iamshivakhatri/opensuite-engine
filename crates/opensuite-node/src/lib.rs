@@ -20,7 +20,11 @@ mod content_controls;
 mod hyperlinks;
 mod lists;
 mod page_composition;
+mod paragraph_move;
+pub use paragraph_move::execute_move_paragraph;
+pub use references::inspect_references;
 mod pictures;
+mod references;
 mod sections;
 mod table_cell_formatting;
 mod table_layout;
@@ -485,6 +489,7 @@ pub struct ParagraphListOutput {
 #[napi(object)]
 pub struct BodyBlockOutput {
     pub handle: String,
+    pub movement_handle: Option<String>,
     pub kind: String,
     pub text: Option<String>,
     pub style_name: Option<String>,
@@ -1796,6 +1801,7 @@ fn body_block_page_output(value: InspectionPage<DocxBodyBlock>) -> BodyBlockPage
             .into_iter()
             .map(|item| BodyBlockOutput {
                 handle: item.handle,
+                movement_handle: item.movement_handle,
                 kind: item.kind.as_str().to_owned(),
                 text: item.text,
                 style_name: item.style_name,

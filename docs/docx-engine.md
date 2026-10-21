@@ -46,7 +46,7 @@ the next native release.
 - Complete Node paragraph patches reuse Rust alignment, spacing/line spacing, all
   indents, keep rules, and clear-to-inherit semantics; text patches also clear all
   supported properties. No new formatting semantics or version change.
-- Paragraph creation and deletion, text replacement, existing paragraph styles,
+- Paragraph creation, deletion and safe movement within a section, text replacement, existing paragraph styles,
   direct paragraph formatting, and direct text formatting including color,
   underline, highlight, strikethrough, and superscript/subscript.
 - Simple-table creation, deletion, row/column lifecycle (including semantic row
@@ -55,7 +55,7 @@ the next native release.
   direct text formatting in simple cells, and basic table formatting.
 - Read and safe targeted mutation support for simple content controls, typed
   bullet and decimal lists at levels zero through two (including separate,
-  source-ordered bullet runs), external hyperlinks,
+  source-ordered bullet runs), external/internal bookmark hyperlinks,
   and PNG/JPEG pictures with typed inline/floating insertion, proportional or exact
   size, common wrapping and positioning, and preservation-aware layout patches.
   Inline insertion optionally fits the insertion section's declared page/column
@@ -222,9 +222,120 @@ correct for single and multiple paragraphs. The character style changed size,
 color and italics while retaining direct bold; clearing restored inherited text
 formatting and left/top cell positions while preserving shading/borders. No
 clipping or missing text was observed. Word/Google Docs review remains untested.
-E5B is unstarted; application integration and broader interoperability checks
+E5B is recorded below; application integration and broader interoperability checks
 remain follow-up work. Richer SDT authoring/editing and a general style cascade
 remain outside this change.
+
+## Document references and safe paragraph movement (E5B)
+
+Read-only Rust `inspect_docx_references` / Node `inspectDocxReferences` inspects
+the main document, including table-cell references. It reuses bookmark pairing,
+hyperlink relationship resolution and semantic text search. A single source-order
+`references` page contains bookmark starts (plus orphan ends) and hyperlink
+elements; bookmark ends normally belong to their start record. Defaults: offset
+zero, 20 records, maximum 100 and 2,000 characters per string. `total`, `offset`
+and `hasMore` support paging. Inspection preserves every imported XML byte.
+
+Records expose `kind`, source `index`, original bookmark/relationship `id`,
+bookmark `name`, `partName`, zero-based main-part `paragraphIndex`, bookmark
+`endParagraphIndex`, direct `bodyBlockHandle` when available, and `container`.
+Hyperlinks include bounded display `text`, `targetKind` (`bookmark`, `external`
+or unsupported `packagePart`) and `target`. Exact complete hyperlink text may
+supply a `textTarget` with the existing occurrence convention; this is a selector,
+not a guarantee that mutation supports the surrounding structure. Bookmark records
+supply `bookmarkName` only for unique, complete, authorable destinations.
+`truncated`, record `reasons` and top-level `diagnostics` report missing,
+duplicate, unmatched, mixed or unsupported references. Malformed bookmark pairing
+conservatively disables all bookmark destinations without hiding the markers.
+Rich hyperlink children may have incomplete direct-run text and are explicitly
+flagged unsupported. Other document parts and field-code hyperlinks/cross-references
+remain outside this read; use the existing field inspector for fields.
+
+Existing Rust `SetHyperlink` adds `bookmark_name`; Node `executeDocxSetHyperlink`
+adds optional `bookmarkName`. Supply either that exact existing bookmark name or
+an HTTP(S) `url`; omit both to clear an exact supported hyperlink. The engine
+never creates bookmarks or REF/PAGEREF fields. Missing/duplicate targets and
+malformed bookmark IDs/pairing refuse. Authored anchor names must be at most
+40 characters, start with a letter/underscore and contain only letters, numbers
+or underscores. Internal writing requires an explicit Word namespace prefix
+(ordinary alternate prefixes work). Internal links use `w:anchor` and create no
+relationship. Destination changes retain imported wrapper metadata and child XML;
+unused external relationships remain preserved when converting/clearing links.
+
+Creation supports exact selections across simple runs in one direct body
+paragraph, including partial runs with different formatting. It retains run
+properties and visible text. Existing-link conversion/clear requires the exact
+whole ordinary hyperlink. Active document protection, hidden or enclosing protected
+ranges, fields, revisions, pending property changes and unsupported wrappers refuse
+without output. Save/reopen verifies text and the requested link destination.
+Unrelated bookmarks, hyperlinks, fields and package parts stay source-backed.
+
+New Rust `MoveParagraph` / Node `executeDocxMoveParagraph` takes `target` and
+`destination`, each `{ handle: movementHandle }`, plus `position: 'before' | 'after'`.
+Get these new source-stamped identities from `inspectDocx` with `body_blocks`
+focus. Ordinary `bN` handles cannot be used for movement. The stamp reuses section
+identity checks over main XML, main relationships and related settings/header/footer
+parts. Refresh after changes; `baseRevision` remains opaque caller metadata.
+A movement handle identifies a paragraph, including duplicates/empty paragraphs;
+it does not promise that its content is safe to move.
+
+The operation requires ordinary direct body paragraphs and an unambiguous section
+layout with final body section properties. Both endpoints must belong to the same
+section and pass the existing protected-source guard. It copies the original
+paragraph subtree, preserving runs, style and numbering references, paragraph/run
+properties, whitespace, tabs, line breaks and supported ordinary inline content.
+It never reconstructs text or formatting. Self and already-adjacent placements
+succeed with unchanged XML after safety validation. Other blocks keep their
+relative order. Save/reopen verifies expected semantic order, byte-identical full
+block subtrees and exact main-source patches; untouched package parts remain intact.
+Number labels and pagination follow the renderer and the resulting document order.
+
+Refused: tables/cells as endpoints, dedicated page-break blocks, section-boundary
+paragraphs, cross-section movement, bookmarks (even wholly contained), comments,
+fields, protected ranges, revisions/property history, hyperlinks, controls, note/
+media/object references, paragraph frames, unfamiliar descendant XML and unknown
+intervening body blocks. Malformed global range/field markers also refuse.
+No dependency repair, bulk reorder, cross-document move or durable paragraph ID.
+There is no remaining native blocker for this bounded operation; richer movement
+remains deliberately unsupported.
+
+```js
+const refs = JSON.parse(await engine.inspectDocxReferences(bytes, { limit: 20 }))
+const bookmark = refs.references.find(r => r.bookmarkName)
+let result = await engine.executeDocxSetHyperlink(bytes, {
+  target: { text: 'See the findings' }, bookmarkName: bookmark.bookmarkName,
+})
+if (!result.result.ok) throw new Error(JSON.stringify(result.result.diagnostics))
+bytes = result.output
+
+const page = await engine.inspectDocx(bytes, { focus: { kind: 'body_blocks' } })
+result = await engine.executeDocxMoveParagraph(bytes, {
+  target: { handle: page.bodyBlocks.items[2].movementHandle },
+  destination: { handle: page.bodyBlocks.items[0].movementHandle },
+  position: 'before',
+})
+if (!result.result.ok) throw new Error(JSON.stringify(result.result.diagnostics))
+bytes = result.output
+```
+
+Native inventory, declarations and schemas expose both additions. Application
+consumers need a native build containing E5B, JSON decoding for the new read,
+`bookmarkName` on the existing hyperlink tool, and a movement tool that obtains
+fresh handles and uses the existing save/verification flow. No application code,
+publication or version change is included here.
+
+Focused Rust/native tests cover reference paging/bounds and diagnostics, internal/
+external conversion/clear, multiple/missing/duplicate targets, formatted selections,
+plain/styled/numbered/empty/duplicate paragraphs, before/after/no-op order, stale
+targets, section/dependency refusals and unrelated-source/package preservation.
+`tests/fixtures/libreoffice-references.docx` was produced by LibreOffice 26.2.5.2
+from an engine-authored document with paired bookmarks, both link types and a
+formatted decimal list. Native edits to that import retain all ten unrelated
+package payloads byte-for-byte. Three temporary LibreOffice PDFs (source, native
+move, imported edit) produced three visually reviewed pages with correct order,
+numbering and bold/italic/color; no clipping/missing text observed. PDF link
+annotations contain the internal destinations and external URL. Fresh Word-produced
+reference/save tests and Google Docs review remain unverified.
 
 ## Native table layout controls (E4)
 
@@ -461,7 +572,7 @@ manual-review DOCX; Microsoft Word/Google Docs review remains pending.
 
 ## Add Only When Benchmarks Need It
 
-- Long-document structure beyond the common TOC: bookmarks and cross-references.
+- Long-document authoring beyond bounded bookmark inspection/internal links: richer cross-reference fields and bookmark authoring.
 - Review workflow: richer revision decisions beyond ordinary run insertions/deletions.
 - Other page, header/footer, section, field, or layout features demonstrated as
   necessary by the benchmark documents.

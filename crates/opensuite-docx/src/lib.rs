@@ -18,7 +18,9 @@ mod layout_inspection;
 mod mutation;
 mod numbering;
 mod picture;
+mod reference_inspection;
 mod references;
+pub use reference_inspection::*;
 mod section;
 mod semantic;
 mod source;
@@ -29,6 +31,7 @@ mod text_search;
 mod tracked_change;
 
 pub use blank::create_blank_docx;
+pub use execution::execute_docx_move_paragraph;
 pub use execution::{
     DocxExecutionResult, execute_docx_accept_revision, execute_docx_add_comment,
     execute_docx_create_style, execute_docx_create_table, execute_docx_delete_comment,
@@ -63,6 +66,7 @@ pub use image_dimensions::{
 };
 pub use inspection::inspect_docx_document;
 pub use layout_inspection::{LayoutOptions, LayoutSnapshot, inspect_docx_layout};
+pub use mutation::move_paragraph_to_vec;
 pub use mutation::{
     HeaderFooterInspection, PageNumberInspection, PageSetupInspection,
     SectionHeaderFooterInspection, SectionInspection, accept_revision_to_vec, create_style_to_vec,

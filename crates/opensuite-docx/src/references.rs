@@ -114,7 +114,7 @@ pub(crate) fn bookmarks(source: &SourceDocument) -> Result<Vec<Bookmark>, Refere
                 .attribute("name")
                 .ok_or(ReferenceError::MissingBookmarkName)?
                 .to_owned();
-            if starts.insert(bookmark_id, (id, name)).is_some() {
+            if complete.contains(&bookmark_id) || starts.insert(bookmark_id, (id, name)).is_some() {
                 return Err(ReferenceError::DuplicateBookmarkStart(bookmark_id));
             }
         } else if word(source, id, "bookmarkEnd") {

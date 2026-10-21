@@ -17,8 +17,8 @@ use crate::{
     delete_table_column_to_vec, delete_table_row_to_vec, delete_table_to_vec,
     insert_page_break_to_vec, insert_paragraph_to_vec, insert_paragraphs_to_vec,
     insert_picture_to_vec, insert_section_break_to_vec, insert_table_column_after_to_vec,
-    insert_table_row_after_to_vec, insert_table_rows_after_to_vec, open_main_source,
-    replace_picture_to_vec, replace_text_to_vec, set_content_control_text_to_vec,
+    insert_table_row_after_to_vec, insert_table_rows_after_to_vec, move_paragraph_to_vec,
+    open_main_source, replace_picture_to_vec, replace_text_to_vec, set_content_control_text_to_vec,
     set_header_footer_text_to_vec, set_hyperlink_to_vec, set_odd_even_headers_to_vec,
     set_page_number_to_vec, set_page_setup_to_vec, set_paragraph_formatting_to_vec,
     set_paragraph_style_to_vec, set_paragraphs_list_to_vec, set_picture_size_to_vec,
@@ -1205,4 +1205,11 @@ execute_paragraph_mutation!(
     opensuite_protocol::SetTableRowLayout,
     set_table_row_layout_to_vec,
     "set_table_row_layout"
+);
+
+execute_paragraph_mutation!(
+    execute_docx_move_paragraph,
+    opensuite_protocol::MoveParagraph,
+    move_paragraph_to_vec,
+    "move_paragraph"
 );

@@ -916,6 +916,7 @@ fn set_hyperlink(
                 occurrence: None,
             },
             url: (value != "--clear").then_some(value),
+            bookmark_name: None,
             base_revision: None,
         },
     )

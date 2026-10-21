@@ -1555,6 +1555,58 @@
     "jsonInput": true,
     "jsonOutput": false
   },
+  "executeDocxMoveParagraph": {
+    "description": "Move an original ordinary body paragraph before/after another in the same section. Both need fresh movementHandle identities. Preserves original XML, styles and numbering; refuses protected/dependent structures, section boundaries and stale targets. Same-position requests succeed without XML changes. baseRevision is caller metadata only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "object",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "description": "Fresh movementHandle from inspectDocx body_blocks; ordinary bN handles are refused."
+            }
+          },
+          "required": [
+            "handle"
+          ],
+          "additionalProperties": false
+        },
+        "destination": {
+          "type": "object",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "description": "Fresh movementHandle from inspectDocx body_blocks; ordinary bN handles are refused."
+            }
+          },
+          "required": [
+            "handle"
+          ],
+          "additionalProperties": false
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        "baseRevision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "destination",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "jsonInput": true,
+    "jsonOutput": false
+  },
   "executeDocxRejectRevision": {
     "description": "Reject one supported insertion or deletion using its fresh inspect_tracked_changes handle. Removes inserted content or restores deleted content with its formatting. For replacement, decide both records individually and re-inspect after each successful decision. Complex revisions are unsupported.",
     "inputSchema": {
@@ -1770,7 +1822,7 @@
     "jsonOutput": false
   },
   "executeDocxSetHyperlink": {
-    "description": "Add or clear an external hyperlink on a text target.",
+    "description": "Add an external URL or internal bookmark link on exact ordinary text, or clear an exact hyperlink.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1795,7 +1847,11 @@
         },
         "url": {
           "type": "string",
-          "description": "External URL. Omit to clear the hyperlink."
+          "description": "External HTTP(S) URL. Supply url or bookmarkName; omit both to clear."
+        },
+        "bookmarkName": {
+          "type": "string",
+          "description": "Exact existing bookmark name; no new bookmark or relationship is created."
         },
         "baseRevision": {
           "type": "string"
@@ -3733,6 +3789,28 @@
   },
   "inspectDocxNotes": {
     "description": "Inspect ordinary footnotes and endnotes, fresh handles, note IDs, text, zero-based body paragraph and source reference indexes, reference counts, structural status, and imported numbering settings. Separators are excluded and protected. IDs differ from visible note numbers. Default 20, maximum 100 records per page; note text capped at 2000 characters. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "jsonInput": true,
+    "jsonOutput": true
+  },
+  "inspectDocxReferences": {
+    "description": "Inspect main-document bookmarks and internal/external hyperlinks in source order, including part/paragraph locations, bookmarkName destinations, exact text targets and malformed/ambiguous reasons. Default 20/max 100 records; strings capped at 2000 characters. Does not change XML. Copy bookmarkName into set_hyperlink; refresh body-block movementHandle values before moving paragraphs.",
     "inputSchema": {
       "type": "object",
       "properties": {

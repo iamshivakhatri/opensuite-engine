@@ -7,6 +7,7 @@ mod page_number;
 mod page_setup;
 mod paragraph;
 mod paragraph_formatting;
+mod paragraph_move;
 mod picture;
 mod support;
 mod table_cell;
